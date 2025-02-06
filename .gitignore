@@ -1,0 +1,46 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environment
+env/
+
+# Pygame cache
+*.pygame-cache/
+
+# Distribution / packaging
+build/
+dist/
+*.egg-info/
+
+# Logs and debugging files
+*.log
+*.out
+*.err
+debug.log
+
+# System files
+.DS_Store
+Thumbs.db
+
+# IDEs and Editors
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Python virtual environment (alternative names)
+venv/
+.venv/
+
+# Jupyter Notebook checkpoints
+.ipynb_checkpoints/
+
+# Secrets and credentials (if any)
+*.env
+config.json
+
+# Shell scripts
+codebase.sh
+
