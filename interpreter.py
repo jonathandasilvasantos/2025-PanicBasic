@@ -70,15 +70,22 @@ class BasicInterpreter:
         }
         self.subroutines: dict = {}
         self.delay_until: int = 0
+        self.labels: dict = {}  # Store labels and their corresponding line numbers
 
     def reset(self, program_lines: List[str]) -> None:
         self.subroutines = {}
+        self.labels = {}
         main_program = []
         i = 0
         while i < len(program_lines):
             line = program_lines[i]
-            if line.strip().upper().startswith("SUB"):
-                parts = line.strip().split()
+            clean_line = line.strip()
+            if clean_line.endswith(":"):
+                self.labels[clean_line[:-1].upper()] = len(main_program)  # Store label and line number
+                i += 1
+                continue
+            if clean_line.upper().startswith("SUB"):
+                parts = clean_line.split()
                 if len(parts) >= 2:
                     sub_name = parts[1].upper()
                     sub_lines = []
@@ -517,6 +524,15 @@ class BasicInterpreter:
         if up_line == "END":
             self.running = False
             return False
+        
+        if up_line.startswith("GOTO"):
+            label = line[4:].strip().upper()
+            if label in self.labels:
+                self.pc = self.labels[label]
+            else:
+                print(f"Error: Label '{label}' not found.")
+            return False
+
 
         try:
             self.eval_expr(line)
