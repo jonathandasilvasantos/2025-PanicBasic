@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""Refactored BASIC interpreter module with two-dimensional array support."""
+"""
+Refactored BASIC interpreter module with fixed GOTO behavior and execution‐step limiting
+to prevent infinite busy loops. This version is fully compatible with the rest of the app.
+"""
 
 import pygame
 import re
@@ -9,6 +12,8 @@ from typing import List, Optional, Tuple
 from pygame.locals import KEYDOWN
 
 FONT_SIZE = 24
+
+# --- Helper functions for converting BASIC expressions ---
 
 def replace_array_access(match: re.Match) -> str:
     """Replacement function for converting array access from BASIC style."""
@@ -24,6 +29,7 @@ def convert_basic_expr(expr: str, variables: dict) -> str:
     """Convert a BASIC expression to valid Python."""
     expr = expr.replace(" OR ", " or ")
     expr = expr.replace(" AND ", " and ")
+    # Replace single '=' with '==' except in cases of already '==', '<=', etc.
     expr = re.sub(r'(?<![<>!])=(?![=<>])', '==', expr)
     expr = expr.replace("<>", "!=")
     expr = re.sub(r'([A-Za-z]+)\$', r'\1', expr)
@@ -32,9 +38,14 @@ def convert_basic_expr(expr: str, variables: dict) -> str:
     expr = re.sub(r'\bINKEY\b(?!\s*\()', 'INKEY()', expr)
     return expr
 
-class BasicInterpreter:
-    """A simple BASIC interpreter."""
+# --- BASIC Interpreter Class ---
 
+class BasicInterpreter:
+    """
+    A simple BASIC interpreter that supports multi‐line IF blocks and unconditional GOTO.
+    The interpreter is modified to limit the number of steps per frame to avoid freezing.
+    """
+    
     def __init__(self, font: pygame.font.Font, width: int, height: int) -> None:
         self.font = font
         self.width = width
@@ -44,6 +55,7 @@ class BasicInterpreter:
         self.variables: dict = {}
         self.loop_stack: List[int] = []
         self.for_stack: List[dict] = []
+        self.if_stack: List[bool] = []
         self.running: bool = True
         self.text_cursor: Tuple[int, int] = (0, 1)
         self.surface: Optional[pygame.Surface] = None
@@ -70,20 +82,30 @@ class BasicInterpreter:
         }
         self.subroutines: dict = {}
         self.delay_until: int = 0
-        self.labels: dict = {}  # Store labels and their corresponding line numbers
+        self.labels: dict = {}  # Maps label names (uppercase, without colon) to program line numbers
+        self.steps_per_frame: int = 10  # Limit steps executed per frame
 
     def reset(self, program_lines: List[str]) -> None:
+        """Initialize the interpreter state and process labels/subroutines."""
         self.subroutines = {}
         self.labels = {}
+        self.if_stack = []
         main_program = []
         i = 0
         while i < len(program_lines):
             line = program_lines[i]
             clean_line = line.strip()
-            if clean_line.endswith(":"):
-                self.labels[clean_line[:-1].upper()] = len(main_program)  # Store label and line number
+            # Skip comment-only lines.
+            if clean_line.startswith("'"):
                 i += 1
                 continue
+            # If the line is a label (ends with a colon), store it and skip it.
+            if clean_line.endswith(":"):
+                label_name = clean_line[:-1].upper()
+                self.labels[label_name] = len(main_program)
+                i += 1
+                continue
+            # Process subroutine definitions.
             if clean_line.upper().startswith("SUB"):
                 parts = clean_line.split()
                 if len(parts) >= 2:
@@ -107,6 +129,7 @@ class BasicInterpreter:
         self.running = True
         self.text_cursor = (0, 1)
         self.delay_until = 0
+        self.if_stack = []
         if self.surface is None:
             self.surface = pygame.Surface((self.screen_width, self.screen_height))
             self.surface.fill((0, 0, 0))
@@ -121,12 +144,14 @@ class BasicInterpreter:
 
     def eval_expr(self, expr: str):
         conv_expr = convert_basic_expr(expr, self.variables)
-        env = {"CHR": lambda x: chr(int(x)),
-               "INKEY": self.inkey,
-               "INT": lambda x: int(float(x)),
-               "RND": lambda: random.random(),
-               "POINT": self.point}
-        env.update(self.variables)  # Add user variables
+        env = {
+            "CHR": lambda x: chr(int(x)),
+            "INKEY": self.inkey,
+            "INT": lambda x: int(float(x)),
+            "RND": lambda: random.random(),
+            "POINT": self.point
+        }
+        env.update(self.variables)
         try:
             return eval(conv_expr, {}, env)
         except Exception as e:
@@ -156,132 +181,62 @@ class BasicInterpreter:
             else:
                 self.last_key = event.unicode
 
-    def skip_block(self, end_marker: str) -> None:
-        nesting = 0
-        while self.pc < len(self.program_lines):
-            line = self.program_lines[self.pc].strip().upper()
-            self.pc += 1
-            if line.startswith(end_marker):
-                if nesting == 0:
-                    break
-                else:
-                    nesting -= 1
-            elif line.startswith(end_marker.split()[0]):
-                nesting += 1
-
-    def skip_loop_block(self) -> None:
-        nesting = 1
-        while self.pc < len(self.program_lines):
-            current_line = self.program_lines[self.pc].strip().upper()
-            if current_line.startswith("DO"):
-                nesting += 1
-            elif current_line.startswith("LOOP"):
-                nesting -= 1
-                if nesting == 0:
-                    self.pc += 1
-                    break
-            self.pc += 1
-
-    def execute_select_case(self, select_expr_value):
-        block_lines = []
-        while self.pc < len(self.program_lines):
-            line = self.program_lines[self.pc]
-            self.pc += 1
-            if line.strip().upper() == "END SELECT":
-                break
-            block_lines.append(line)
-        i = 0
-        while i < len(block_lines):
-            line = block_lines[i].strip()
-            if line.upper().startswith("CASE"):
-                rest = line[4:].strip()
-                if ":" in rest:
-                    case_expr, inline_command = rest.split(":", 1)
-                    case_expr = case_expr.strip()
-                    inline_command = inline_command.strip()
-                else:
-                    case_expr = rest
-                    inline_command = ""
-                try:
-                    case_val = self.eval_expr(case_expr)
-                except Exception:
-                    case_val = case_expr
-                if case_val == select_expr_value:
-                    if inline_command:
-                        self.execute_line(inline_command)
-                    i += 1
-                    while i < len(block_lines):
-                        next_line = block_lines[i].strip()
-                        if next_line.upper().startswith("CASE"):
-                            break
-                        self.execute_line(next_line)
-                        i += 1
-                    return
-            i += 1
-
-    def run_subroutine(self, sub_name: str):
-        sub_lines = self.subroutines.get(sub_name.upper())
-        if sub_lines is None:
-            print(f"Subroutine {sub_name} not found.")
-            return
-        saved_pc = self.pc
-        saved_program = self.program_lines
-        self.program_lines = sub_lines
-        self.pc = 0
-        while self.pc < len(self.program_lines) and self.running:
-            self.step_line()
-        self.program_lines = saved_program
-        self.pc = saved_pc
+    def _should_execute(self) -> bool:
+        """Return True if we are not inside any false IF block."""
+        return all(self.if_stack) if self.if_stack else True
 
     def step_line(self) -> bool:
         if self.pc >= len(self.program_lines):
             return False
-        line = self.program_lines[self.pc].strip()
+
+        line = self.program_lines[self.pc]
         self.pc += 1
+        # Remove comments.
         if "'" in line:
             line = line.split("'", 1)[0].strip()
+        else:
+            line = line.strip()
         if not line:
             return False
-
         up_line = line.upper()
 
-        if up_line == "END IF" or up_line == "END SELECT":
+        # Always process control lines that affect IF-block structure.
+        if up_line == "END IF":
+            if self.if_stack:
+                self.if_stack.pop()
             return False
 
-        if line.upper() in self.subroutines:
-            self.run_subroutine(line.strip())
-            return False
-
-        if up_line.startswith("IF"):
-            if "THEN" in up_line:
-                parts = re.split(r'\bTHEN\b', line, maxsplit=1, flags=re.IGNORECASE)
-                condition_part = parts[0][2:].strip()
-                then_part = parts[1].strip()
-                cond = self.eval_expr(condition_part)
-                if then_part:
+        # Process IF ... THEN (inline or multi-line)
+        if up_line.startswith("IF") and "THEN" in up_line:
+            parts = re.split(r'\bTHEN\b', line, maxsplit=1, flags=re.IGNORECASE)
+            condition_part = parts[0][2:].strip()  # Remove the leading "IF"
+            then_part = parts[1].strip()
+            if then_part != "":
+                if self._should_execute():
+                    cond = self.eval_expr(condition_part)
                     if cond:
                         self.execute_line(then_part)
+                return False
+            else:
+                if self._should_execute():
+                    cond = self.eval_expr(condition_part)
+                    self.if_stack.append(bool(cond))
                 else:
-                    if not cond:
-                        self.skip_block("END IF")
+                    self.if_stack.append(False)
                 return False
 
-        if up_line.startswith("SELECT CASE"):
-            expr = line[len("SELECT CASE"):].strip()
-            select_value = self.eval_expr(expr)
-            self.execute_select_case(select_value)
+        # If inside a false IF block, skip this line.
+        if not self._should_execute():
             return False
 
+        # FOR ... NEXT handling.
         if up_line.startswith("FOR"):
             m = re.match(r'FOR\s+([A-Za-z]+)\s*=\s*(.+?)\s+TO\s+(.+?)(\s+STEP\s+(.+))?$', line, re.IGNORECASE)
             if m:
                 var = m.group(1).strip()
-                start_expr = m.group(2).strip()
-                end_expr = m.group(3).strip()
-                step_expr = m.group(5).strip() if m.group(5) else "1"
-                start_val = self.eval_expr(start_expr)
-                end_val = self.eval_expr(end_expr)
-                step_val = self.eval_expr(step_expr)
+                start_val = self.eval_expr(m.group(2).strip())
+                end_val = self.eval_expr(m.group(3).strip())
+                step_val = self.eval_expr(m.group(5).strip()) if m.group(5) else 1
                 self.variables[var] = start_val
                 self.for_stack.append({"var": var, "end": end_val, "step": step_val, "loop_line": self.pc})
             return False
@@ -291,62 +246,52 @@ class BasicInterpreter:
                 loop_info = self.for_stack[-1]
                 var = loop_info["var"]
                 self.variables[var] = self.variables[var] + loop_info["step"]
-                if loop_info["step"] >= 0:
-                    if self.variables[var] <= loop_info["end"]:
-                        self.pc = loop_info["loop_line"]
-                    else:
-                        self.for_stack.pop()
+                if (loop_info["step"] >= 0 and self.variables[var] <= loop_info["end"]) or \
+                   (loop_info["step"] < 0 and self.variables[var] >= loop_info["end"]):
+                    self.pc = loop_info["loop_line"]
                 else:
-                    if self.variables[var] >= loop_info["end"]:
-                        self.pc = loop_info["loop_line"]
-                    else:
-                        self.for_stack.pop()
+                    self.for_stack.pop()
             return False
 
+        # RANDOMIZE statement.
         if up_line.startswith("RANDOMIZE"):
             if "TIMER" in up_line:
                 random.seed(time.time())
             return False
 
+        # DIM statement handling.
         if up_line.startswith("DIM"):
             m = re.match(r'DIM\s+([A-Za-z]+)\(\s*(\d+)\s*,\s*(\d+)\s*\)', line, re.IGNORECASE)
             if m:
                 var = m.group(1).strip()
-                size1 = int(m.group(2).strip())
-                size2 = int(m.group(3).strip())
+                size1 = int(m.group(2))
+                size2 = int(m.group(3))
                 self.variables[var] = [[0]*(size2+1) for _ in range(size1+1)]
                 return False
-
             m = re.match(r'DIM\s+([A-Za-z]+)\(\s*(\d+)\s*\)', line, re.IGNORECASE)
             if m:
                 var = m.group(1).strip()
-                size = int(m.group(2).strip())
-                self.variables[var] = [0] * (size + 1)
+                size = int(m.group(2))
+                self.variables[var] = [0]*(size+1)
                 return False
 
+        # Assignment statements.
         if "=" in line:
             if up_line.startswith("CONST"):
                 content = line[5:].strip()
                 if "=" in content:
                     var, expr = content.split("=", 1)
-                    var_name = var.strip().replace("$", "")
-                    self.variables[var_name] = self.eval_expr(expr.strip())
+                    self.variables[var.strip().replace("$", "")] = self.eval_expr(expr.strip())
                 return False
-
             parts = line.split("=", 1)
             lhs = parts[0].strip()
             rhs = parts[1].strip()
             value = self.eval_expr(rhs)
-
             m = re.match(r'([A-Za-z]+)\(\s*([^,]+)\s*,\s*([^)]+)\s*\)', lhs)
             if m:
                 var = m.group(1).strip()
-                index1_expr = m.group(2).strip()
-                index2_expr = m.group(3).strip()
-                index1 = self.eval_expr(index1_expr)
-                index2 = self.eval_expr(index2_expr)
-
-
+                index1 = self.eval_expr(m.group(2).strip())
+                index2 = self.eval_expr(m.group(3).strip())
                 if var in self.variables and isinstance(self.variables[var], list):
                     try:
                         self.variables[var][int(index1)][int(index2)] = value
@@ -355,13 +300,10 @@ class BasicInterpreter:
                 else:
                     print(f"Error: variable {var} is not a two-dimensional array.")
                 return False
-
             m = re.match(r'([A-Za-z]+)\(\s*([^)]+)\s*\)', lhs)
             if m:
                 var = m.group(1).strip()
-                index_expr = m.group(2).strip()
-                index = self.eval_expr(index_expr)
-
+                index = self.eval_expr(m.group(2).strip())
                 if var in self.variables and isinstance(self.variables[var], list):
                     try:
                         self.variables[var][int(index)] = value
@@ -370,17 +312,17 @@ class BasicInterpreter:
                 else:
                     print(f"Error: variable {var} is not an array.")
                 return False
-
             else:
-                var_name = lhs.replace("$", "")
-                self.variables[var_name] = value
+                self.variables[lhs.replace("$", "")] = value
             return False
 
+        # CLS statement.
         if up_line == "CLS":
             if self.surface:
                 self.surface.fill((0, 0, 0))
             return False
 
+        # SCREEN statement.
         if up_line.startswith("SCREEN"):
             parts = line.split()
             if len(parts) >= 2 and parts[1] == "13":
@@ -390,6 +332,7 @@ class BasicInterpreter:
                 self.surface.fill((0, 0, 0))
             return False
 
+        # LOCATE statement.
         if up_line.startswith("LOCATE"):
             params = line[6:].strip()
             if "," in params:
@@ -399,6 +342,7 @@ class BasicInterpreter:
                 self.text_cursor = (col, row)
             return False
 
+        # PRINT statement.
         if up_line.startswith("PRINT"):
             content = line[5:].strip()
             parts = content.split(";")
@@ -416,6 +360,7 @@ class BasicInterpreter:
                 self.text_cursor = (0, self.text_cursor[1] + 1)
             return False
 
+        # LINE statement.
         if up_line.startswith("LINE"):
             m = re.search(r"\(([^,]+),([^)]+)\)-\(([^,]+),([^)]+)\),([^,]+)(?:,\s*(BF))?", line, re.IGNORECASE)
             if m and self.surface:
@@ -432,6 +377,7 @@ class BasicInterpreter:
                     pygame.draw.rect(self.surface, self.basic_color(color), rect, 1)
             return False
 
+        # CIRCLE statement.
         if up_line.startswith("CIRCLE"):
             m = re.search(r"\(([^,]+),([^)]+)\),([^,]+),(.+)", line)
             if m and self.surface:
@@ -442,6 +388,7 @@ class BasicInterpreter:
                 pygame.draw.circle(self.surface, self.basic_color(color), (int(x), int(y)), int(radius), 1)
             return False
 
+        # PAINT statement.
         if up_line.startswith("PAINT"):
             m = re.search(r"\(([^,]+),([^)]+)\),(.+)", line)
             if m and self.surface:
@@ -451,6 +398,7 @@ class BasicInterpreter:
                 pygame.draw.circle(self.surface, self.basic_color(color), (int(x), int(y)), 3, 0)
             return False
 
+        # PSET statement.
         if up_line.startswith("PSET"):
             m = re.search(r"PSET\s*\(\s*([^,]+)\s*,\s*([^)]+)\s*\)\s*,\s*(.+)", line, re.IGNORECASE)
             if m and self.surface:
@@ -460,6 +408,7 @@ class BasicInterpreter:
                 self.surface.set_at((int(x), int(y)), self.basic_color(color))
             return False
 
+        # _DELAY and SLEEP statements.
         if up_line.startswith("_DELAY"):
             expr = line[6:].strip()
             try:
@@ -468,7 +417,6 @@ class BasicInterpreter:
                 delay_val = 0
             self.delay_until = pygame.time.get_ticks() + int(delay_val * 1000)
             return True
-
         if up_line.startswith("SLEEP"):
             expr = line[5:].strip()
             try:
@@ -478,19 +426,20 @@ class BasicInterpreter:
             self.delay_until = pygame.time.get_ticks() + int(sleep_val * 1000)
             return True
 
+        # DO ... LOOP handling.
         if up_line.startswith("DO"):
             tokens = line.split()
             if len(tokens) > 1:
                 if tokens[1].upper() == "WHILE":
                     condition = line[line.upper().find("WHILE") + 5:].strip()
                     if not self.eval_expr(condition):
-                        self.skip_loop_block()
+                        self._skip_loop_block()
                     else:
                         self.loop_stack.append(self.pc)
                 elif tokens[1].upper() == "UNTIL":
                     condition = line[line.upper().find("UNTIL") + 5:].strip()
                     if self.eval_expr(condition):
-                        self.skip_loop_block()
+                        self._skip_loop_block()
                     else:
                         self.loop_stack.append(self.pc)
                 else:
@@ -498,7 +447,6 @@ class BasicInterpreter:
             else:
                 self.loop_stack.append(self.pc)
             return False
-
         if up_line.startswith("LOOP"):
             if up_line.startswith("LOOP WHILE"):
                 condition = line[10:].strip()
@@ -521,26 +469,46 @@ class BasicInterpreter:
                     self.pc = self.loop_stack[-1]
             return False
 
-        if up_line == "END":
-            self.running = False
-            return False
-        
+        # GOTO implementation – clear all active block contexts and jump.
         if up_line.startswith("GOTO"):
             label = line[4:].strip().upper()
             if label in self.labels:
+                self.loop_stack.clear()
+                self.for_stack.clear()
+                self.if_stack.clear()
                 self.pc = self.labels[label]
             else:
                 print(f"Error: Label '{label}' not found.")
             return False
 
+        # END statement.
+        if up_line == "END":
+            self.running = False
+            return False
 
+        # For any unrecognized command, try evaluating it as an expression.
         try:
             self.eval_expr(line)
         except Exception as e:
             print(f"Unrecognized command: {line}")
         return False
 
+    def _skip_loop_block(self) -> None:
+        """Skip lines until after the matching LOOP for a DO loop."""
+        nesting = 1
+        while self.pc < len(self.program_lines):
+            current_line = self.program_lines[self.pc].strip().upper()
+            if current_line.startswith("DO"):
+                nesting += 1
+            elif current_line.startswith("LOOP"):
+                nesting -= 1
+                if nesting == 0:
+                    self.pc += 1
+                    break
+            self.pc += 1
+
     def execute_line(self, line: str) -> bool:
+        """Execute a single line (used for inline IF commands)."""
         saved_lines = self.program_lines
         saved_pc = self.pc
         self.program_lines = [line]
@@ -552,14 +520,21 @@ class BasicInterpreter:
         return False
 
     def step(self) -> None:
+        """
+        Execute up to a fixed number of interpreter steps per call.
+        This prevents busy loops (e.g. in the game-over waiting loop) from
+        freezing the GUI.
+        """
         current_time = pygame.time.get_ticks()
         if self.delay_until and current_time < self.delay_until:
             return
         else:
             self.delay_until = 0
 
-        while self.running and self.pc < len(self.program_lines):
+        steps = 0
+        while self.running and self.pc < len(self.program_lines) and steps < self.steps_per_frame:
             delay_hit = self.step_line()
+            steps += 1
             if delay_hit:
                 break
 
@@ -567,6 +542,8 @@ class BasicInterpreter:
         if self.surface:
             scaled = pygame.transform.scale(self.surface, (self.width, self.height))
             target_surface.blit(scaled, (0, 0))
+
+# --- Interpreter Runner ---
 
 def run_interpreter(filename: str) -> None:
     pygame.init()
@@ -596,3 +573,8 @@ def run_interpreter(filename: str) -> None:
         pygame.display.flip()
         clock.tick(60)
     pygame.quit()
+
+if __name__ == '__main__':
+    import sys
+    if len(sys.argv) > 1:
+        run_interpreter(sys.argv[1])

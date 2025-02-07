@@ -18,7 +18,17 @@ player_y_velocity = 0
 obstacle_x = 320
 obstacle_height = 50
 score = 0
+high_score = 0
 is_jumping = 0
+
+' Initialize the game
+start:
+player_y_velocity = 0
+obstacle_x = 320
+obstacle_height = 50
+score = 0
+is_jumping = 0
+PLAYER_Y = 180
 
 ' Main Game Loop
 DO
@@ -57,7 +67,7 @@ DO
     ' Collision Detection
     IF PLAYER_X + PLAYER_SIZE > obstacle_x AND PLAYER_X < obstacle_x + OBSTACLE_WIDTH THEN
         IF PLAYER_Y + PLAYER_SIZE > FLOOR_HEIGHT - obstacle_height THEN
-            GOTO game_over ' Game Over if collision
+            GOTO game_over
         END IF
     END IF
 
@@ -80,7 +90,23 @@ LOOP
 
 game_over:
 CLS
-LOCATE 10, 10
+IF score > high_score THEN
+    high_score = score
+END IF
+
+LOCATE 8, 10
 PRINT "Game Over!"
-PRINT "Final Score: "; score
+LOCATE 10, 10
+PRINT "Score: " ; score
+LOCATE 12, 10
+PRINT "High Score: " ; high_score
+LOCATE 14, 10
+PRINT "Press Space to Retry"
+
+DO
+    a$ = INKEY$
+    IF a$ = " " THEN
+        GOTO start
+    END IF
+LOOP
 END
