@@ -1,4 +1,4 @@
-' Simple Infinite Runner
+' Simple Infinite Runner with Gradually Increasing Speed
 SCREEN 13
 CLS
 
@@ -20,6 +20,7 @@ obstacle_height = 50
 score = 0
 high_score = 0
 is_jumping = 0
+obstacle_speed = 5    ' New: initial obstacle speed
 
 ' Initialize the game
 start:
@@ -29,6 +30,7 @@ obstacle_height = 50
 score = 0
 is_jumping = 0
 PLAYER_Y = 180
+obstacle_speed = 5    ' Reset speed at start
 
 ' Main Game Loop
 DO
@@ -48,20 +50,20 @@ DO
     player_y_velocity = player_y_velocity + GRAVITY
     PLAYER_Y = PLAYER_Y + player_y_velocity
 
-    'Floor collision
+    ' Floor collision
     IF PLAYER_Y > FLOOR_HEIGHT - PLAYER_SIZE THEN
         PLAYER_Y = FLOOR_HEIGHT - PLAYER_SIZE
         player_y_velocity = 0
         is_jumping = 0
     END IF
 
-
     ' Update Obstacle Position
-    obstacle_x = obstacle_x - 5
+    obstacle_x = obstacle_x - obstacle_speed
     IF obstacle_x < -OBSTACLE_WIDTH THEN
         obstacle_x = 320
         obstacle_height = INT(RND * 80) + 20  ' Random obstacle height
         score = score + 1
+        obstacle_speed = obstacle_speed + 0.2   ' Increase speed gradually
     END IF
 
     ' Collision Detection
