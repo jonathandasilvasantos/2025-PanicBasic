@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
-Refactored BASIC interpreter module with fixed GOTO behavior and execution‐step limiting
-to prevent infinite busy loops. This version is fully compatible with the rest of the app.
+Refactored BASIC interpreter module with improved performance.
+This version pre-compiles regex patterns and caches expression conversions,
+and buffers the scaled output surface to reduce redundant scaling.
 """
 
 import pygame
@@ -12,8 +13,19 @@ from typing import List, Optional, Tuple
 from pygame.locals import KEYDOWN
 
 FONT_SIZE = 24
+INITIAL_WIDTH = 800
+INITIAL_HEIGHT = 600
 
-# --- Helper functions for converting BASIC expressions ---
+# --- Precompiled Regex Patterns for Expression Conversion ---
+
+_eq_re = re.compile(r'(?<![<>!])=(?![=<>])')
+_dollar_re = re.compile(r'([A-Za-z]+)\$')
+_array_access_re = re.compile(r'\b(?!CHR\b|INKEY\b|RND\b|INT\b|POINT\b)([A-Za-z]+)\s*\(\s*([^)]+)\s*\)')
+_rnd_re = re.compile(r'\bRND\b(?!\()')
+_inkey_re = re.compile(r'\bINKEY\b(?!\s*\()')
+
+# Cache for converted expressions (maps BASIC expression string to Python code string)
+_expr_cache = {}
 
 def replace_array_access(match: re.Match) -> str:
     """Replacement function for converting array access from BASIC style."""
@@ -26,26 +38,47 @@ def replace_array_access(match: re.Match) -> str:
         return f"{name}[int({indices.strip()})]"
 
 def convert_basic_expr(expr: str, variables: dict) -> str:
-    """Convert a BASIC expression to valid Python."""
-    expr = expr.replace(" OR ", " or ")
-    expr = expr.replace(" AND ", " and ")
-    # Replace single '=' with '==' except in cases of already '==', '<=', etc.
-    expr = re.sub(r'(?<![<>!])=(?![=<>])', '==', expr)
-    expr = expr.replace("<>", "!=")
-    expr = re.sub(r'([A-Za-z]+)\$', r'\1', expr)
-    expr = re.sub(r'\b(?!CHR\b|INKEY\b|RND\b|INT\b|POINT\b)([A-Za-z]+)\s*\(\s*([^)]+)\s*\)', replace_array_access, expr)
-    expr = re.sub(r'\bRND\b(?!\()', 'RND()', expr)
-    expr = re.sub(r'\bINKEY\b(?!\s*\()', 'INKEY()', expr)
-    return expr
+    """Convert a BASIC expression to valid Python and cache the result."""
+    try:
+        return _expr_cache[expr]
+    except KeyError:
+        converted = expr.replace(" OR ", " or ").replace(" AND ", " and ")
+        converted = _eq_re.sub("==", converted)
+        converted = converted.replace("<>", "!=")
+        converted = _dollar_re.sub(r'\1', converted)
+        converted = _array_access_re.sub(replace_array_access, converted)
+        converted = _rnd_re.sub("RND()", converted)
+        converted = _inkey_re.sub("INKEY()", converted)
+        _expr_cache[expr] = converted
+        return converted
+
+# --- Precompiled Regex Patterns for Interpreter Commands ---
+
+_for_re = re.compile(
+    r'FOR\s+([A-Za-z]+)\s*=\s*(.+?)\s+TO\s+(.+?)(?:\s+STEP\s+(.+))?$', re.IGNORECASE)
+_dim2_re = re.compile(r'DIM\s+([A-Za-z]+)\(\s*(\d+)\s*,\s*(\d+)\s*\)', re.IGNORECASE)
+_dim1_re = re.compile(r'DIM\s+([A-Za-z]+)\(\s*(\d+)\s*\)', re.IGNORECASE)
+_assign_2d_re = re.compile(r'([A-Za-z]+)\(\s*([^,]+)\s*,\s*([^)]+)\s*\)')
+_assign_1d_re = re.compile(r'([A-Za-z]+)\(\s*([^)]+)\s*\)')
+_line_re = re.compile(
+    r"\(([^,]+),([^)]+)\)-\(([^,]+),([^)]+)\),([^,]+)(?:,\s*(BF))?", re.IGNORECASE)
+_circle_re = re.compile(
+    r"\(([^,]+),([^)]+)\),([^,]+),(.+)", re.IGNORECASE)
+_paint_re = re.compile(r"\(([^,]+),([^)]+)\),(.+)")
+_pset_re = re.compile(
+    r"PSET\s*\(\s*([^,]+)\s*,\s*([^)]+)\s*\)\s*,\s*(.+)", re.IGNORECASE)
 
 # --- BASIC Interpreter Class ---
 
 class BasicInterpreter:
     """
-    A simple BASIC interpreter that supports multi‐line IF blocks and unconditional GOTO.
-    The interpreter is modified to limit the number of steps per frame to avoid freezing.
-    """
+    A simple BASIC interpreter that supports multi‐line IF blocks, FOR/NEXT loops,
+    DO/LOOP constructs, GOTO statements, and other common BASIC commands.
+    Execution is limited to a fixed number of steps per frame.
     
+    This version buffers the scaled output surface to improve rendering performance.
+    """
+
     def __init__(self, font: pygame.font.Font, width: int, height: int) -> None:
         self.font = font
         self.width = width
@@ -85,6 +118,14 @@ class BasicInterpreter:
         self.labels: dict = {}  # Maps label names (uppercase, without colon) to program line numbers
         self.steps_per_frame: int = 10  # Limit steps executed per frame
 
+        # For caching the scaled output.
+        self._dirty = True
+        self._cached_scaled_surface: Optional[pygame.Surface] = None
+
+    def mark_dirty(self) -> None:
+        """Mark the internal surface as having changed so that the next draw will re‑scale it."""
+        self._dirty = True
+
     def reset(self, program_lines: List[str]) -> None:
         """Initialize the interpreter state and process labels/subroutines."""
         self.subroutines = {}
@@ -99,7 +140,7 @@ class BasicInterpreter:
             if clean_line.startswith("'"):
                 i += 1
                 continue
-            # If the line is a label (ends with a colon), store it and skip it.
+            # Label: line ending with colon.
             if clean_line.endswith(":"):
                 label_name = clean_line[:-1].upper()
                 self.labels[label_name] = len(main_program)
@@ -131,8 +172,9 @@ class BasicInterpreter:
         self.delay_until = 0
         self.if_stack = []
         if self.surface is None:
-            self.surface = pygame.Surface((self.screen_width, self.screen_height))
+            self.surface = pygame.Surface((self.screen_width, self.screen_height)).convert()
             self.surface.fill((0, 0, 0))
+            self.mark_dirty()
 
     def basic_color(self, c: int) -> Tuple[int, int, int]:
         return self.colors.get(c, (255, 255, 255))
@@ -200,43 +242,41 @@ class BasicInterpreter:
             return False
         up_line = line.upper()
 
-        # Always process control lines that affect IF-block structure.
+        # END IF: Pop IF context.
         if up_line == "END IF":
             if self.if_stack:
                 self.if_stack.pop()
             return False
 
-        # Process IF ... THEN (inline or multi-line)
+        # IF ... THEN handling (inline or block)
         if up_line.startswith("IF") and "THEN" in up_line:
             parts = re.split(r'\bTHEN\b', line, maxsplit=1, flags=re.IGNORECASE)
-            condition_part = parts[0][2:].strip()  # Remove the leading "IF"
+            condition_part = parts[0][2:].strip()  # Remove leading "IF"
             then_part = parts[1].strip()
-            if then_part != "":
+            if then_part:
                 if self._should_execute():
-                    cond = self.eval_expr(condition_part)
-                    if cond:
+                    if self.eval_expr(condition_part):
                         self.execute_line(then_part)
                 return False
             else:
                 if self._should_execute():
-                    cond = self.eval_expr(condition_part)
-                    self.if_stack.append(bool(cond))
+                    self.if_stack.append(bool(self.eval_expr(condition_part)))
                 else:
                     self.if_stack.append(False)
                 return False
 
-        # If inside a false IF block, skip this line.
+        # Skip if inside a false IF block.
         if not self._should_execute():
             return False
 
         # FOR ... NEXT handling.
         if up_line.startswith("FOR"):
-            m = re.match(r'FOR\s+([A-Za-z]+)\s*=\s*(.+?)\s+TO\s+(.+?)(\s+STEP\s+(.+))?$', line, re.IGNORECASE)
+            m = _for_re.match(line)
             if m:
                 var = m.group(1).strip()
                 start_val = self.eval_expr(m.group(2).strip())
                 end_val = self.eval_expr(m.group(3).strip())
-                step_val = self.eval_expr(m.group(5).strip()) if m.group(5) else 1
+                step_val = self.eval_expr(m.group(4).strip()) if m.group(4) else 1
                 self.variables[var] = start_val
                 self.for_stack.append({"var": var, "end": end_val, "step": step_val, "loop_line": self.pc})
             return False
@@ -259,20 +299,20 @@ class BasicInterpreter:
                 random.seed(time.time())
             return False
 
-        # DIM statement handling.
+        # DIM statement.
         if up_line.startswith("DIM"):
-            m = re.match(r'DIM\s+([A-Za-z]+)\(\s*(\d+)\s*,\s*(\d+)\s*\)', line, re.IGNORECASE)
-            if m:
-                var = m.group(1).strip()
-                size1 = int(m.group(2))
-                size2 = int(m.group(3))
-                self.variables[var] = [[0]*(size2+1) for _ in range(size1+1)]
+            m2 = _dim2_re.match(line)
+            if m2:
+                var = m2.group(1).strip()
+                size1 = int(m2.group(2))
+                size2 = int(m2.group(3))
+                self.variables[var] = [[0] * (size2 + 1) for _ in range(size1 + 1)]
                 return False
-            m = re.match(r'DIM\s+([A-Za-z]+)\(\s*(\d+)\s*\)', line, re.IGNORECASE)
-            if m:
-                var = m.group(1).strip()
-                size = int(m.group(2))
-                self.variables[var] = [0]*(size+1)
+            m1 = _dim1_re.match(line)
+            if m1:
+                var = m1.group(1).strip()
+                size = int(m1.group(2))
+                self.variables[var] = [0] * (size + 1)
                 return False
 
         # Assignment statements.
@@ -287,7 +327,7 @@ class BasicInterpreter:
             lhs = parts[0].strip()
             rhs = parts[1].strip()
             value = self.eval_expr(rhs)
-            m = re.match(r'([A-Za-z]+)\(\s*([^,]+)\s*,\s*([^)]+)\s*\)', lhs)
+            m = _assign_2d_re.match(lhs)
             if m:
                 var = m.group(1).strip()
                 index1 = self.eval_expr(m.group(2).strip())
@@ -300,7 +340,7 @@ class BasicInterpreter:
                 else:
                     print(f"Error: variable {var} is not a two-dimensional array.")
                 return False
-            m = re.match(r'([A-Za-z]+)\(\s*([^)]+)\s*\)', lhs)
+            m = _assign_1d_re.match(lhs)
             if m:
                 var = m.group(1).strip()
                 index = self.eval_expr(m.group(2).strip())
@@ -316,10 +356,11 @@ class BasicInterpreter:
                 self.variables[lhs.replace("$", "")] = value
             return False
 
-        # CLS statement.
+        # CLS: Clear the screen.
         if up_line == "CLS":
             if self.surface:
                 self.surface.fill((0, 0, 0))
+                self.mark_dirty()
             return False
 
         # SCREEN statement.
@@ -328,8 +369,9 @@ class BasicInterpreter:
             if len(parts) >= 2 and parts[1] == "13":
                 self.screen_width = 320
                 self.screen_height = 200
-                self.surface = pygame.Surface((self.screen_width, self.screen_height))
+                self.surface = pygame.Surface((self.screen_width, self.screen_height)).convert()
                 self.surface.fill((0, 0, 0))
+                self.mark_dirty()
             return False
 
         # LOCATE statement.
@@ -352,17 +394,18 @@ class BasicInterpreter:
                 if part:
                     out_text += str(self.eval_expr(part))
             if self.surface:
-                txt_surf = self.font.render(out_text, True, (255, 255, 255))
+                txt_surf = self.font.render(out_text, True, (255, 255, 255)).convert_alpha()
                 cell_w = self.font.size("A")[0]
                 x = self.text_cursor[0] * cell_w
                 y = (self.text_cursor[1] - 1) * self.font.get_height()
                 self.surface.blit(txt_surf, (x, y))
                 self.text_cursor = (0, self.text_cursor[1] + 1)
+                self.mark_dirty()
             return False
 
         # LINE statement.
         if up_line.startswith("LINE"):
-            m = re.search(r"\(([^,]+),([^)]+)\)-\(([^,]+),([^)]+)\),([^,]+)(?:,\s*(BF))?", line, re.IGNORECASE)
+            m = _line_re.search(line)
             if m and self.surface:
                 x1 = self.eval_expr(m.group(1).strip())
                 y1 = self.eval_expr(m.group(2).strip())
@@ -375,37 +418,41 @@ class BasicInterpreter:
                     pygame.draw.rect(self.surface, self.basic_color(color), rect, 0)
                 else:
                     pygame.draw.rect(self.surface, self.basic_color(color), rect, 1)
+                self.mark_dirty()
             return False
 
         # CIRCLE statement.
         if up_line.startswith("CIRCLE"):
-            m = re.search(r"\(([^,]+),([^)]+)\),([^,]+),(.+)", line)
+            m = _circle_re.search(line)
             if m and self.surface:
                 x = self.eval_expr(m.group(1).strip())
                 y = self.eval_expr(m.group(2).strip())
                 radius = self.eval_expr(m.group(3).strip())
                 color = int(self.eval_expr(m.group(4).strip()))
                 pygame.draw.circle(self.surface, self.basic_color(color), (int(x), int(y)), int(radius), 1)
+                self.mark_dirty()
             return False
 
         # PAINT statement.
         if up_line.startswith("PAINT"):
-            m = re.search(r"\(([^,]+),([^)]+)\),(.+)", line)
+            m = _paint_re.search(line)
             if m and self.surface:
                 x = self.eval_expr(m.group(1).strip())
                 y = self.eval_expr(m.group(2).strip())
                 color = int(self.eval_expr(m.group(3).strip()))
                 pygame.draw.circle(self.surface, self.basic_color(color), (int(x), int(y)), 3, 0)
+                self.mark_dirty()
             return False
 
         # PSET statement.
         if up_line.startswith("PSET"):
-            m = re.search(r"PSET\s*\(\s*([^,]+)\s*,\s*([^)]+)\s*\)\s*,\s*(.+)", line, re.IGNORECASE)
+            m = _pset_re.search(line)
             if m and self.surface:
                 x = self.eval_expr(m.group(1).strip())
                 y = self.eval_expr(m.group(2).strip())
                 color = int(self.eval_expr(m.group(3).strip()))
                 self.surface.set_at((int(x), int(y)), self.basic_color(color))
+                self.mark_dirty()
             return False
 
         # _DELAY and SLEEP statements.
@@ -469,7 +516,7 @@ class BasicInterpreter:
                     self.pc = self.loop_stack[-1]
             return False
 
-        # GOTO implementation – clear all active block contexts and jump.
+        # GOTO: Clear block contexts and jump.
         if up_line.startswith("GOTO"):
             label = line[4:].strip().upper()
             if label in self.labels:
@@ -522,8 +569,7 @@ class BasicInterpreter:
     def step(self) -> None:
         """
         Execute up to a fixed number of interpreter steps per call.
-        This prevents busy loops (e.g. in the game-over waiting loop) from
-        freezing the GUI.
+        This prevents busy loops from freezing the GUI.
         """
         current_time = pygame.time.get_ticks()
         if self.delay_until and current_time < self.delay_until:
@@ -539,15 +585,25 @@ class BasicInterpreter:
                 break
 
     def draw(self, target_surface: pygame.Surface) -> None:
+        """
+        Draw the interpreter's internal surface onto the target_surface.
+        The internal surface is scaled to the target size. The scaled version is cached
+        and only re‑computed when the internal surface has changed.
+        """
         if self.surface:
-            scaled = pygame.transform.scale(self.surface, (self.width, self.height))
-            target_surface.blit(scaled, (0, 0))
+            if self._dirty or self._cached_scaled_surface is None:
+                # Scale the internal surface and cache the result.
+                self._cached_scaled_surface = pygame.transform.scale(self.surface, (self.width, self.height))
+                self._dirty = False
+            target_surface.blit(self._cached_scaled_surface, (0, 0))
 
 # --- Interpreter Runner ---
 
 def run_interpreter(filename: str) -> None:
     pygame.init()
-    screen = pygame.display.set_mode((800, 600), pygame.RESIZABLE)
+    # Use hardware acceleration, double buffering and resizable window.
+    screen = pygame.display.set_mode((INITIAL_WIDTH, INITIAL_HEIGHT),
+                                     pygame.RESIZABLE | pygame.DOUBLEBUF | pygame.HWSURFACE)
     pygame.display.set_caption(f"BASIC Interpreter - {filename}")
     font = pygame.font.SysFont("monospace", FONT_SIZE)
     interpreter = BasicInterpreter(font, 800, 600)
