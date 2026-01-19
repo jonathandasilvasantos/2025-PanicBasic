@@ -219,6 +219,23 @@ INPUT "Value", n               ' Custom prompt without "? " (uses comma)
 INPUT "Values: "; a, b, c      ' Read multiple values separated by commas
 ```
 
+### LINE INPUT
+
+```basic
+LINE INPUT text$               ' Read entire line into text$
+LINE INPUT "Enter text: "; s$  ' With prompt, reads line including commas
+' Unlike INPUT, LINE INPUT does not parse commas or quotes
+' It reads the entire line exactly as typed
+```
+
+### ERASE
+
+```basic
+DIM arr(10)
+ERASE arr                      ' Remove array from memory
+ERASE a, b, c                  ' Remove multiple arrays
+```
+
 ### ON...GOTO / ON...GOSUB
 
 ```basic
@@ -278,6 +295,14 @@ COLOR 15, 1                ' Set foreground to white, background to blue
 ```basic
 PSET (x, y), color         ' Draw a single pixel
 PSET (100, 50), 15         ' Draw white pixel at (100, 50)
+```
+
+### PRESET (Plot Point with Background Color)
+
+```basic
+PRESET (x, y)              ' Draw pixel using background color
+PRESET (x, y), color       ' Draw pixel with specified color
+' PRESET defaults to background color, PSET defaults to foreground
 ```
 
 ### LINE
@@ -389,6 +414,35 @@ PRINT                      ' Print blank line
 | `POS(0)` | Get current cursor column (1-based) | `c = POS(0)` |
 | `TAB(n)` | Move to column n in PRINT (returns spaces) | `PRINT TAB(10); "Hello"` |
 | `SPC(n)` | Generate n spaces for use in PRINT | `PRINT "A"; SPC(5); "B"` |
+
+### Array Functions
+
+| Function | Description | Example |
+|----------|-------------|---------|
+| `LBOUND(arr, dim)` | Get lower bound of array dimension | `L = LBOUND("arr", 1)` returns `0` |
+| `UBOUND(arr, dim)` | Get upper bound of array dimension | `U = UBOUND("arr", 1)` |
+
+Note: Array names must be passed as strings. Arrays are 0-based.
+
+---
+
+## Sound Commands
+
+### BEEP
+
+```basic
+BEEP                       ' Play a short beep sound (800 Hz, 0.2 seconds)
+```
+
+### SOUND
+
+```basic
+SOUND frequency, duration  ' Play tone with frequency (Hz) and duration (clock ticks)
+SOUND 440, 18              ' Play 440 Hz (A4 note) for ~1 second
+SOUND 880, 9               ' Play 880 Hz (A5 note) for ~0.5 seconds
+' Duration is in clock ticks (18.2 ticks per second in QBasic)
+' Frequency range: 37-32767 Hz
+```
 
 ---
 

@@ -17,8 +17,9 @@ This document lists QBasic 4.5 features and instructions that are **not currentl
 | `VIEW` | Define graphics viewport |
 | `VIEW PRINT` | Define text viewport |
 | `WINDOW` | Define logical coordinate system |
-| `PRESET` | Plot point (like PSET but inverts) |
 | `SCREEN` (modes other than 13) | Only SCREEN 13 (320x200) is supported |
+
+Note: `PRESET` IS now supported.
 
 ---
 
@@ -26,9 +27,9 @@ This document lists QBasic 4.5 features and instructions that are **not currentl
 
 | Command | Description |
 |---------|-------------|
-| `SOUND` | Generate tone (frequency, duration) |
 | `PLAY` | Play music using MML strings |
-| `BEEP` | System beep |
+
+Note: `SOUND` and `BEEP` ARE now supported.
 
 ---
 
@@ -62,11 +63,10 @@ This document lists QBasic 4.5 features and instructions that are **not currentl
 
 | Command | Description |
 |---------|-------------|
-| `LINE INPUT` | Input entire line from keyboard |
 | `INPUT$` | Read specific number of characters |
 | `INPUT$(n, #filenum)` | Read characters from file |
 
-Note: `INPUT` IS now supported.
+Note: `INPUT` and `LINE INPUT` ARE now supported.
 
 ---
 
@@ -116,14 +116,13 @@ Note: `ON...GOTO` and `ON...GOSUB` ARE now supported.
 | `POKE` | Write memory byte |
 | `DEF SEG` | Set memory segment |
 | `CLEAR` | Clear variables and set stack |
-| `ERASE` | Erase arrays |
 | `REDIM` | Redimension dynamic array |
-| `LBOUND` | Get array lower bound |
-| `UBOUND` | Get array upper bound |
 | `VARPTR` | Get variable address |
 | `VARSEG` | Get variable segment |
 | `SADD` | Get string address |
 | `FRE` | Get free memory |
+
+Note: `ERASE`, `LBOUND`, and `UBOUND` ARE now supported.
 
 ---
 
@@ -235,7 +234,6 @@ Some unsupported features have workarounds:
 | Unsupported | Alternative |
 |-------------|-------------|
 | `SUB/FUNCTION` | Use `GOSUB...RETURN` |
-| `LINE INPUT` | Use `INPUT` for simple text input |
 
 ---
 
@@ -243,7 +241,7 @@ Some unsupported features have workarounds:
 
 These features would have high impact if added:
 
-1. **SOUND/PLAY** - Audio support
+1. **PLAY** - Music Macro Language (MML) support
 2. **GET/PUT** - Sprite graphics
 3. **SUB/FUNCTION** - User-defined procedures
-4. **LINE INPUT** - Input entire line from keyboard
+4. **INPUT$** - Read specific number of characters

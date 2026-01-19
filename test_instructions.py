@@ -1622,6 +1622,220 @@ def test_input_complete_multiple():
     print("  INPUT complete multiple: PASSED")
 
 # ============================================================
+# LINE INPUT STATEMENT TESTS
+# ============================================================
+
+def test_line_input_state_setup():
+    """Test LINE INPUT statement sets up input mode correctly."""
+    print("Testing LINE INPUT state setup...")
+    interp = setup()
+    interp.reset([
+        'SCREEN 13',
+        'LINE INPUT "Enter text: "; text$'
+    ])
+    interp.step()
+    assert interp.input_mode == True, "Expected input_mode to be True"
+    assert interp.input_prompt == "Enter text: ", f"Expected prompt 'Enter text: ', got '{interp.input_prompt}'"
+    assert interp.input_variables == ['text$'], f"Expected variables ['text$'], got {interp.input_variables}"
+    assert interp._line_input_mode == True, "Expected _line_input_mode to be True"
+    print("  LINE INPUT state setup: PASSED")
+
+def test_line_input_no_comma_parsing():
+    """Test LINE INPUT doesn't parse commas."""
+    print("Testing LINE INPUT no comma parsing...")
+    interp = setup()
+    interp.reset([
+        'SCREEN 13',
+        'LINE INPUT text$'
+    ])
+    interp.step()
+
+    # Simulate typing text with commas
+    interp.input_buffer = "Hello, World, How are you?"
+    interp._complete_input()
+
+    # Should get entire string including commas
+    result = interp.variables.get('TEXT$')
+    assert result == "Hello, World, How are you?", f"Expected full text with commas, got '{result}'"
+    print("  LINE INPUT no comma parsing: PASSED")
+
+def test_line_input_no_question_mark():
+    """Test LINE INPUT doesn't show question mark by default."""
+    print("Testing LINE INPUT no question mark...")
+    interp = setup()
+    interp.reset([
+        'SCREEN 13',
+        'LINE INPUT s$'
+    ])
+    interp.step()
+    # LINE INPUT doesn't show "?" by default (unlike INPUT)
+    assert interp.input_prompt == "", f"Expected empty prompt, got '{interp.input_prompt}'"
+    print("  LINE INPUT no question mark: PASSED")
+
+# ============================================================
+# SOUND TESTS (state verification only - actual sound is not tested)
+# ============================================================
+
+def test_beep_executes():
+    """Test BEEP statement executes without error."""
+    print("Testing BEEP executes...")
+    # BEEP should execute without error
+    interp, _ = run_program([
+        'X = 1',
+        'BEEP',
+        'X = 2'
+    ])
+    assert interp.variables.get('X') == 2, f"Expected X=2, got X={interp.variables.get('X')}"
+    print("  BEEP executes: PASSED")
+
+def test_sound_executes():
+    """Test SOUND statement executes without error."""
+    print("Testing SOUND executes...")
+    # SOUND should execute without error
+    interp, _ = run_program([
+        'X = 1',
+        'SOUND 440, 1',  # 440 Hz for ~0.05 seconds
+        'X = 2'
+    ])
+    assert interp.variables.get('X') == 2, f"Expected X=2, got X={interp.variables.get('X')}"
+    print("  SOUND executes: PASSED")
+
+def test_sound_with_expressions():
+    """Test SOUND statement with expressions."""
+    print("Testing SOUND with expressions...")
+    interp, _ = run_program([
+        'freq = 440',
+        'dur = 2',
+        'SOUND freq * 2, dur',  # 880 Hz
+        'X = 1'
+    ])
+    assert interp.variables.get('X') == 1
+    print("  SOUND with expressions: PASSED")
+
+# ============================================================
+# PRESET TESTS
+# ============================================================
+
+def test_preset_basic():
+    """Test basic PRESET command."""
+    print("Testing PRESET basic...")
+    interp, _ = run_program([
+        'SCREEN 13',
+        'COLOR 15, 1',  # Set background to blue (1)
+        'PRESET (100, 50)'  # Should plot with background color (blue)
+    ])
+    # Check that pixel was set (to background color by default)
+    if interp.surface:
+        color = interp.surface.get_at((100, 50))
+        expected = interp.basic_color(1)  # Background color (blue)
+        assert color[:3] == expected[:3], f"Expected {expected}, got {color}"
+    print("  PRESET basic: PASSED")
+
+def test_preset_with_color():
+    """Test PRESET with explicit color."""
+    print("Testing PRESET with color...")
+    interp, _ = run_program([
+        'SCREEN 13',
+        'PRESET (50, 50), 14'  # Yellow
+    ])
+    if interp.surface:
+        color = interp.surface.get_at((50, 50))
+        expected = interp.basic_color(14)
+        assert color[:3] == expected[:3], f"Expected {expected}, got {color}"
+    print("  PRESET with color: PASSED")
+
+# ============================================================
+# LBOUND AND UBOUND TESTS
+# ============================================================
+
+def test_lbound_1d():
+    """Test LBOUND with 1D array."""
+    print("Testing LBOUND 1D...")
+    interp, _ = run_program([
+        'DIM arr(10)',
+        'X = LBOUND("arr")'
+    ])
+    # Arrays are 0-based
+    assert interp.variables.get('X') == 0, f"Expected 0, got {interp.variables.get('X')}"
+    print("  LBOUND 1D: PASSED")
+
+def test_ubound_1d():
+    """Test UBOUND with 1D array."""
+    print("Testing UBOUND 1D...")
+    interp, _ = run_program([
+        'DIM arr(10)',
+        'X = UBOUND("arr")'
+    ])
+    # DIM arr(10) creates array with indices 0-10, so UBOUND is 10
+    assert interp.variables.get('X') == 10, f"Expected 10, got {interp.variables.get('X')}"
+    print("  UBOUND 1D: PASSED")
+
+def test_ubound_2d():
+    """Test UBOUND with 2D array."""
+    print("Testing UBOUND 2D...")
+    interp, _ = run_program([
+        'DIM grid(5, 10)',
+        'X = UBOUND("grid", 1)',
+        'Y = UBOUND("grid", 2)'
+    ])
+    # DIM grid(5, 10) creates 6x11 array
+    assert interp.variables.get('X') == 5, f"Expected 5, got {interp.variables.get('X')}"
+    assert interp.variables.get('Y') == 10, f"Expected 10, got {interp.variables.get('Y')}"
+    print("  UBOUND 2D: PASSED")
+
+def test_ubound_nonexistent():
+    """Test UBOUND with non-existent array returns -1."""
+    print("Testing UBOUND nonexistent...")
+    interp, _ = run_program([
+        'X = UBOUND("nonexistent")'
+    ])
+    assert interp.variables.get('X') == -1, f"Expected -1, got {interp.variables.get('X')}"
+    print("  UBOUND nonexistent: PASSED")
+
+# ============================================================
+# ERASE TESTS
+# ============================================================
+
+def test_erase_array():
+    """Test ERASE removes array."""
+    print("Testing ERASE array...")
+    interp, _ = run_program([
+        'DIM arr(10)',
+        'arr(5) = 100',
+        'X = arr(5)',
+        'ERASE arr'
+    ])
+    # After ERASE, array should be removed
+    assert interp.variables.get('X') == 100  # Value was read before ERASE
+    assert 'ARR' not in interp.variables or not isinstance(interp.variables.get('ARR'), list), "Array should be erased"
+    print("  ERASE array: PASSED")
+
+def test_erase_multiple():
+    """Test ERASE with multiple arrays."""
+    print("Testing ERASE multiple...")
+    interp, _ = run_program([
+        'DIM a(5)',
+        'DIM b(5)',
+        'DIM c(5)',
+        'ERASE a, b'
+    ])
+    assert 'A' not in interp.variables or not isinstance(interp.variables.get('A'), list), "Array A should be erased"
+    assert 'B' not in interp.variables or not isinstance(interp.variables.get('B'), list), "Array B should be erased"
+    assert 'C' in interp.variables and isinstance(interp.variables.get('C'), list), "Array C should still exist"
+    print("  ERASE multiple: PASSED")
+
+def test_erase_string_array():
+    """Test ERASE with string array."""
+    print("Testing ERASE string array...")
+    interp, _ = run_program([
+        'DIM names$(3)',
+        'names$(0) = "Hello"',
+        'ERASE names$'
+    ])
+    assert 'NAMES$' not in interp.variables or not isinstance(interp.variables.get('NAMES$'), list), "String array should be erased"
+    print("  ERASE string array: PASSED")
+
+# ============================================================
 # RUN ALL TESTS
 # ============================================================
 
@@ -1820,6 +2034,31 @@ def run_all_tests():
         test_input_complete_numeric,
         test_input_complete_string,
         test_input_complete_multiple,
+
+        # LINE INPUT statement
+        test_line_input_state_setup,
+        test_line_input_no_comma_parsing,
+        test_line_input_no_question_mark,
+
+        # SOUND/BEEP
+        test_beep_executes,
+        test_sound_executes,
+        test_sound_with_expressions,
+
+        # PRESET
+        test_preset_basic,
+        test_preset_with_color,
+
+        # LBOUND/UBOUND
+        test_lbound_1d,
+        test_ubound_1d,
+        test_ubound_2d,
+        test_ubound_nonexistent,
+
+        # ERASE
+        test_erase_array,
+        test_erase_multiple,
+        test_erase_string_array,
     ]
 
     passed = 0

@@ -108,10 +108,22 @@ _restore_re = re.compile(r"RESTORE(?:\s+([a-zA-Z0-9_]+))?", re.IGNORECASE)
 
 # INPUT statement: INPUT ["prompt"{;|,}] variable[, variable...]
 _input_re = re.compile(r"INPUT\s+(.*)", re.IGNORECASE)
+# LINE INPUT statement: LINE INPUT ["prompt"{;|,}] variable$
+_line_input_re = re.compile(r"LINE\s+INPUT\s+(.*)", re.IGNORECASE)
 
 # ON...GOTO and ON...GOSUB for computed branches
 _on_goto_re = re.compile(r"ON\s+(.+?)\s+GOTO\s+(.+)", re.IGNORECASE)
 _on_gosub_re = re.compile(r"ON\s+(.+?)\s+GOSUB\s+(.+)", re.IGNORECASE)
+
+# Sound commands
+_beep_re = re.compile(r"BEEP", re.IGNORECASE)
+_sound_re = re.compile(r"SOUND\s+([^,]+)\s*,\s*(.+)", re.IGNORECASE)
+
+# PRESET - like PSET but uses background color by default
+_preset_re = re.compile(r"PRESET\s*\(\s*([^,]+)\s*,\s*([^)]+)\s*\)\s*(?:,\s*(.+))?", re.IGNORECASE)
+
+# ERASE - erase arrays
+_erase_re = re.compile(r"ERASE\s+(.+)", re.IGNORECASE)
 
 _expr_cache: Dict[str, str] = {}
 _python_keywords = {'and', 'or', 'not', 'in', 'is', 'lambda', 'if', 'else', 'elif', 'while', 'for', 'try', 'except', 'finally', 'with', 'as', 'def', 'class', 'import', 'from', 'pass', 'break', 'continue', 'return', 'yield', 'global', 'nonlocal', 'assert', 'del', 'True', 'False', 'None'}
@@ -127,7 +139,9 @@ _basic_function_names = {
     # Date/time functions
     'DATE', 'TIME',
     # Cursor/screen functions
-    'CSRLIN', 'POS', 'TAB', 'SPC'
+    'CSRLIN', 'POS', 'TAB', 'SPC',
+    # Array functions
+    'LBOUND', 'UBOUND'
 }
 
 # --- Expression Conversion Logic ---
@@ -352,6 +366,7 @@ class BasicInterpreter:
         self.input_prompt: str = ""
         self.input_variables: List[str] = []
         self.input_cursor_pos: int = 0
+        self._line_input_mode: bool = False  # True for LINE INPUT (no comma parsing)
 
         # Environment for eval() - functions available to BASIC expressions
         self.eval_env_funcs = {
@@ -392,6 +407,9 @@ class BasicInterpreter:
             "POS": self._basic_pos,  # Get current cursor column
             "TAB": self._basic_tab,  # Tab to column (returns spaces)
             "SPC": self._basic_spc,  # Generate n spaces (same as SPACE)
+            # Array functions
+            "LBOUND": self._basic_lbound,  # Get array lower bound
+            "UBOUND": self._basic_ubound,  # Get array upper bound
         }
 
     def _basic_val(self, s_val: str) -> Any:
@@ -506,6 +524,38 @@ class BasicInterpreter:
     def _basic_spc(self, n: int) -> str:
         """SPC(n) - Returns n spaces for use in PRINT."""
         return " " * max(0, int(n))
+
+    def _basic_lbound(self, array_name: str, dimension: int = 1) -> int:
+        """LBOUND(array, dimension) - Returns lower bound of array dimension.
+        In QBasic, arrays default to 0-based unless OPTION BASE 1 is used."""
+        # Array names are stored in uppercase
+        name = str(array_name).upper()
+        # Also try without type suffix
+        if name not in self.variables:
+            name = name.rstrip('$%')
+        if name in self.variables and isinstance(self.variables[name], list):
+            # Our arrays are 0-based
+            return 0
+        return 0  # Default for non-existent arrays
+
+    def _basic_ubound(self, array_name: str, dimension: int = 1) -> int:
+        """UBOUND(array, dimension) - Returns upper bound of array dimension."""
+        name = str(array_name).upper()
+        # Also try without type suffix
+        if name not in self.variables:
+            name = name.rstrip('$%')
+        if name in self.variables:
+            arr = self.variables[name]
+            dim = int(dimension)
+            if hasattr(arr, 'shape'):  # numpy array
+                if dim <= len(arr.shape):
+                    return arr.shape[dim - 1] - 1
+            elif isinstance(arr, list):
+                if dim == 1:
+                    return len(arr) - 1
+                elif dim == 2 and arr and isinstance(arr[0], list):
+                    return len(arr[0]) - 1
+        return -1  # Return -1 for non-existent arrays or invalid dimension
 
     def _parse_data_values(self, data_str: str) -> None:
         """Parse DATA statement values and add to data_values list."""
@@ -1447,13 +1497,38 @@ class BasicInterpreter:
                 if color_e and color_e.strip():
                     color_idx = int(self.eval_expr(color_e.strip()))
                     if not self.running: return False
-                
+
                 if 0 <= px < self.screen_width and 0 <= py < self.screen_height:
                     self.surface.set_at((px, py), self.basic_color(color_idx))
                     self.lpr = (px, py) # Update LPR
                     self.mark_dirty()
             except Exception as e:
                 print(f"Error in PSET statement '{statement}': {e} at PC {current_pc_num}"); self.running = False
+            return False
+
+        # PRESET - like PSET but defaults to background color
+        m_preset = _preset_re.match(statement)
+        if m_preset and self.surface:
+            try:
+                px_e, py_e = m_preset.group(1), m_preset.group(2)
+                color_e = m_preset.group(3)
+
+                px = int(self.eval_expr(px_e.strip()))
+                py = int(self.eval_expr(py_e.strip()))
+                if not self.running: return False
+
+                # PRESET defaults to background color (unlike PSET which uses foreground)
+                color_idx = self.current_bg_color
+                if color_e and color_e.strip():
+                    color_idx = int(self.eval_expr(color_e.strip()))
+                    if not self.running: return False
+
+                if 0 <= px < self.screen_width and 0 <= py < self.screen_height:
+                    self.surface.set_at((px, py), self.basic_color(color_idx))
+                    self.lpr = (px, py) # Update LPR
+                    self.mark_dirty()
+            except Exception as e:
+                print(f"Error in PRESET statement '{statement}': {e} at PC {current_pc_num}"); self.running = False
             return False
 
         if _goto_re.fullmatch(statement):
@@ -1701,6 +1776,11 @@ class BasicInterpreter:
                 self.data_pointer = 0  # Reset to beginning
             return False
 
+        # --- LINE INPUT statement (must come before INPUT) ---
+        m_line_input = _line_input_re.fullmatch(statement)
+        if m_line_input:
+            return self._handle_line_input(m_line_input.group(1).strip(), current_pc_num)
+
         # --- INPUT statement ---
         m_input = _input_re.fullmatch(statement)
         if m_input:
@@ -1715,6 +1795,23 @@ class BasicInterpreter:
         m_on_gosub = _on_gosub_re.fullmatch(statement)
         if m_on_gosub:
             return self._handle_on_goto_gosub(m_on_gosub.group(1), m_on_gosub.group(2), "GOSUB", current_pc_num)
+
+        # --- BEEP statement ---
+        if _beep_re.fullmatch(up_stmt):
+            self._do_beep()
+            return False
+
+        # --- SOUND statement ---
+        m_sound = _sound_re.fullmatch(statement)
+        if m_sound:
+            self._do_sound(m_sound.group(1).strip(), m_sound.group(2).strip(), current_pc_num)
+            return False
+
+        # --- ERASE statement ---
+        m_erase = _erase_re.fullmatch(statement)
+        if m_erase:
+            self._do_erase(m_erase.group(1).strip(), current_pc_num)
+            return False
 
         if _end_re.fullmatch(up_stmt):
             self.running = False
@@ -1844,23 +1941,29 @@ class BasicInterpreter:
     def _complete_input(self) -> bool:
         """Complete input processing and assign values to variables."""
         self.input_mode = False
+        is_line_input = getattr(self, '_line_input_mode', False)
+        self._line_input_mode = False  # Reset for next input
 
         # Parse input values
         input_values = []
         if self.input_buffer:
-            # Split by comma, respecting quoted strings
-            current = ""
-            in_string = False
-            for char in self.input_buffer:
-                if char == '"':
-                    in_string = not in_string
-                elif char == ',' and not in_string:
+            if is_line_input:
+                # LINE INPUT: take entire line as single value, no comma parsing
+                input_values = [self.input_buffer]
+            else:
+                # Regular INPUT: Split by comma, respecting quoted strings
+                current = ""
+                in_string = False
+                for char in self.input_buffer:
+                    if char == '"':
+                        in_string = not in_string
+                    elif char == ',' and not in_string:
+                        input_values.append(current.strip())
+                        current = ""
+                        continue
+                    current += char
+                if current:
                     input_values.append(current.strip())
-                    current = ""
-                    continue
-                current += char
-            if current:
-                input_values.append(current.strip())
 
         # Assign values to variables
         for i, var_name in enumerate(self.input_variables):
@@ -1869,8 +1972,8 @@ class BasicInterpreter:
                 # Determine type based on variable name
                 var_upper = var_name.upper()
                 if var_upper.endswith('$'):
-                    # String variable - remove quotes if present
-                    if value.startswith('"') and value.endswith('"'):
+                    # String variable - remove quotes if present (only for regular INPUT)
+                    if not is_line_input and value.startswith('"') and value.endswith('"'):
                         value = value[1:-1]
                 else:
                     # Numeric variable - try to convert
@@ -1921,6 +2024,126 @@ class BasicInterpreter:
             return self._do_goto(target_label)
         else:  # GOSUB
             return self._do_gosub(target_label)
+
+    def _handle_line_input(self, input_content: str, pc: int) -> bool:
+        """Handle LINE INPUT statement. QBasic 4.5 format: LINE INPUT ["prompt"{;|,}] var$
+        Unlike INPUT, LINE INPUT reads the entire line without parsing commas."""
+        prompt = ""
+        show_question = False  # LINE INPUT doesn't show "?" by default
+
+        content = input_content.strip()
+
+        # Check for prompt string
+        if content.startswith('"'):
+            end_quote = content.find('"', 1)
+            if end_quote > 0:
+                prompt = content[1:end_quote]
+                content = content[end_quote + 1:].strip()
+                # Check separator after prompt
+                if content.startswith(';'):
+                    content = content[1:].strip()
+                elif content.startswith(','):
+                    content = content[1:].strip()
+
+        # LINE INPUT only accepts one variable (must be string)
+        var_name = content.strip()
+        if not var_name:
+            print(f"Error: LINE INPUT statement requires a variable at PC {pc}")
+            self.running = False
+            return False
+
+        # Set up input mode (reuse INPUT mode infrastructure)
+        self.input_mode = True
+        self.input_buffer = ""
+        self.input_prompt = prompt
+        self.input_variables = [var_name]
+        self.input_cursor_pos = 0
+        # Mark as LINE INPUT mode to skip comma parsing
+        self._line_input_mode = True
+
+        # Display prompt
+        if self.surface and self.font and self.input_prompt:
+            self._draw_input_prompt()
+
+        return True
+
+    def _do_beep(self) -> None:
+        """Execute BEEP command - plays a short beep sound."""
+        try:
+            # Generate a simple beep using pygame
+            if not pygame.mixer.get_init():
+                pygame.mixer.init(frequency=22050, size=-16, channels=1)
+
+            # Create a simple sine wave beep (800 Hz, 0.2 seconds)
+            import array
+            sample_rate = 22050
+            frequency = 800
+            duration = 0.2
+            n_samples = int(sample_rate * duration)
+
+            # Generate sine wave
+            samples = array.array('h', [0] * n_samples)
+            for i in range(n_samples):
+                t = i / sample_rate
+                samples[i] = int(32767 * 0.5 * math.sin(2 * math.pi * frequency * t))
+
+            # Create and play sound
+            sound = pygame.mixer.Sound(buffer=samples)
+            sound.play()
+        except Exception:
+            pass  # Silently fail if audio not available
+
+    def _do_sound(self, freq_expr: str, duration_expr: str, pc: int) -> None:
+        """Execute SOUND command - generates tone with specified frequency and duration.
+        SOUND frequency, duration (duration in clock ticks, 18.2 ticks per second)"""
+        try:
+            frequency = float(self.eval_expr(freq_expr))
+            duration_ticks = float(self.eval_expr(duration_expr))
+            if not self.running:
+                return
+
+            # Convert duration from clock ticks to seconds (18.2 ticks per second in QBasic)
+            duration = duration_ticks / 18.2
+
+            # Limit duration to reasonable value
+            duration = min(duration, 10.0)
+
+            # Frequency must be between 37 and 32767 Hz in QBasic
+            if frequency < 37 or frequency > 32767:
+                return
+
+            if not pygame.mixer.get_init():
+                pygame.mixer.init(frequency=22050, size=-16, channels=1)
+
+            import array
+            sample_rate = 22050
+            n_samples = int(sample_rate * duration)
+
+            # Generate sine wave
+            samples = array.array('h', [0] * n_samples)
+            for i in range(n_samples):
+                t = i / sample_rate
+                samples[i] = int(32767 * 0.5 * math.sin(2 * math.pi * frequency * t))
+
+            # Create and play sound
+            sound = pygame.mixer.Sound(buffer=samples)
+            sound.play()
+        except Exception as e:
+            print(f"Error in SOUND statement at PC {pc}: {e}")
+
+    def _do_erase(self, array_list: str, pc: int) -> None:
+        """Execute ERASE command - erases (clears) specified arrays."""
+        array_names = [name.strip().upper() for name in array_list.split(',')]
+
+        for name in array_names:
+            # Try the name as-is first
+            if name in self.variables and isinstance(self.variables[name], list):
+                del self.variables[name]
+            else:
+                # Try without type suffix
+                base_name = name.rstrip('$%')
+                if base_name in self.variables and isinstance(self.variables[base_name], list):
+                    del self.variables[base_name]
 
     def _assign_variable(self, var_str: str, value: Any, pc: int) -> None:
         """Assign a value to a variable (scalar or array element)."""
