@@ -1252,6 +1252,376 @@ def test_restore_label():
     print("  RESTORE with label: PASSED")
 
 # ============================================================
+# ON...GOTO / ON...GOSUB TESTS
+# ============================================================
+
+def test_on_goto_basic():
+    """Test basic ON...GOTO computed branch."""
+    print("Testing ON...GOTO basic...")
+    interp, _ = run_program([
+        'X = 2',
+        'ON X GOTO label1, label2, label3',
+        'R = 0',
+        'GOTO done',
+        'label1:',
+        '  R = 10',
+        '  GOTO done',
+        'label2:',
+        '  R = 20',
+        '  GOTO done',
+        'label3:',
+        '  R = 30',
+        '  GOTO done',
+        'done:'
+    ])
+    assert interp.variables.get('R') == 20, f"Expected R=20, got R={interp.variables.get('R')}"
+    print("  ON...GOTO basic: PASSED")
+
+def test_on_goto_first():
+    """Test ON...GOTO with index 1."""
+    print("Testing ON...GOTO first...")
+    interp, _ = run_program([
+        'X = 1',
+        'ON X GOTO a, b, c',
+        'R = 0',
+        'GOTO done',
+        'a:',
+        '  R = 1',
+        '  GOTO done',
+        'b:',
+        '  R = 2',
+        '  GOTO done',
+        'c:',
+        '  R = 3',
+        '  GOTO done',
+        'done:'
+    ])
+    assert interp.variables.get('R') == 1
+    print("  ON...GOTO first: PASSED")
+
+def test_on_goto_out_of_range():
+    """Test ON...GOTO with out-of-range index (should continue)."""
+    print("Testing ON...GOTO out of range...")
+    interp, _ = run_program([
+        'X = 5',  # Out of range (only 3 labels)
+        'ON X GOTO a, b, c',
+        'R = 99',  # Should execute this since index is out of range
+        'GOTO done',
+        'a:',
+        '  R = 1',
+        '  GOTO done',
+        'b:',
+        '  R = 2',
+        '  GOTO done',
+        'c:',
+        '  R = 3',
+        '  GOTO done',
+        'done:'
+    ])
+    assert interp.variables.get('R') == 99, f"Expected R=99, got R={interp.variables.get('R')}"
+    print("  ON...GOTO out of range: PASSED")
+
+def test_on_goto_zero_index():
+    """Test ON...GOTO with index 0 (should continue)."""
+    print("Testing ON...GOTO zero index...")
+    interp, _ = run_program([
+        'X = 0',
+        'ON X GOTO a, b, c',
+        'R = 99',
+        'GOTO done',
+        'a:',
+        '  R = 1',
+        '  GOTO done',
+        'b:',
+        '  R = 2',
+        '  GOTO done',
+        'c:',
+        '  R = 3',
+        '  GOTO done',
+        'done:'
+    ])
+    assert interp.variables.get('R') == 99
+    print("  ON...GOTO zero index: PASSED")
+
+def test_on_gosub_basic():
+    """Test basic ON...GOSUB computed branch."""
+    print("Testing ON...GOSUB basic...")
+    interp, _ = run_program([
+        'R = 0',
+        'X = 2',
+        'ON X GOSUB sub1, sub2, sub3',
+        'GOTO done',
+        'sub1:',
+        '  R = 10',
+        '  RETURN',
+        'sub2:',
+        '  R = 20',
+        '  RETURN',
+        'sub3:',
+        '  R = 30',
+        '  RETURN',
+        'done:'
+    ])
+    assert interp.variables.get('R') == 20, f"Expected R=20, got R={interp.variables.get('R')}"
+    print("  ON...GOSUB basic: PASSED")
+
+def test_on_gosub_returns():
+    """Test ON...GOSUB properly returns to next statement."""
+    print("Testing ON...GOSUB returns...")
+    interp, _ = run_program([
+        'A = 0',
+        'B = 0',
+        'X = 1',
+        'ON X GOSUB addTen, addTwenty',
+        'B = 100',  # This should execute after RETURN
+        'GOTO done',
+        'addTen:',
+        '  A = 10',
+        '  RETURN',
+        'addTwenty:',
+        '  A = 20',
+        '  RETURN',
+        'done:'
+    ])
+    assert interp.variables.get('A') == 10
+    assert interp.variables.get('B') == 100, f"Expected B=100 (returned), got B={interp.variables.get('B')}"
+    print("  ON...GOSUB returns: PASSED")
+
+def test_on_goto_expression():
+    """Test ON...GOTO with expression as selector."""
+    print("Testing ON...GOTO expression...")
+    interp, _ = run_program([
+        'A = 1',
+        'B = 1',
+        'ON A + B GOTO first, second, third',
+        'R = 0',
+        'GOTO done',
+        'first:',
+        '  R = 1',
+        '  GOTO done',
+        'second:',
+        '  R = 2',
+        '  GOTO done',
+        'third:',
+        '  R = 3',
+        '  GOTO done',
+        'done:'
+    ])
+    # A + B = 2, so should go to second
+    assert interp.variables.get('R') == 2
+    print("  ON...GOTO expression: PASSED")
+
+# ============================================================
+# CSRLIN AND POS TESTS
+# ============================================================
+
+def test_csrlin():
+    """Test CSRLIN function (cursor row)."""
+    print("Testing CSRLIN...")
+    interp, _ = run_program([
+        'SCREEN 13',
+        'LOCATE 5, 10',
+        'R = CSRLIN'
+    ])
+    assert interp.variables.get('R') == 5, f"Expected row 5, got {interp.variables.get('R')}"
+    print("  CSRLIN: PASSED")
+
+def test_pos():
+    """Test POS(0) function (cursor column)."""
+    print("Testing POS...")
+    interp, _ = run_program([
+        'SCREEN 13',
+        'LOCATE 5, 10',
+        'C = POS(0)'
+    ])
+    assert interp.variables.get('C') == 10, f"Expected column 10, got {interp.variables.get('C')}"
+    print("  POS: PASSED")
+
+def test_csrlin_after_print():
+    """Test CSRLIN after PRINT advances row."""
+    print("Testing CSRLIN after PRINT...")
+    interp, _ = run_program([
+        'SCREEN 13',
+        'LOCATE 1, 1',
+        'PRINT "Line 1"',
+        'PRINT "Line 2"',
+        'R = CSRLIN'
+    ])
+    # After two PRINTs starting at row 1, cursor should be at row 3
+    assert interp.variables.get('R') == 3, f"Expected row 3, got {interp.variables.get('R')}"
+    print("  CSRLIN after PRINT: PASSED")
+
+# ============================================================
+# TAB AND SPC TESTS
+# ============================================================
+
+def test_tab():
+    """Test TAB function in PRINT."""
+    print("Testing TAB...")
+    interp = setup()
+    interp.reset([
+        'SCREEN 13',
+        'LOCATE 1, 1',
+        'X$ = TAB(10)'
+    ])
+    # Run until complete
+    max_steps = 100
+    steps = 0
+    while interp.running and steps < max_steps:
+        interp.step()
+        steps += 1
+    # TAB(10) when at column 1 should return 9 spaces
+    result = interp.variables.get('X$')
+    assert result == "         ", f"Expected 9 spaces, got '{result}' (len={len(result) if result else 0})"
+    print("  TAB: PASSED")
+
+def test_spc():
+    """Test SPC function."""
+    print("Testing SPC...")
+    interp, _ = run_program([
+        'X$ = SPC(5)'
+    ])
+    result = interp.variables.get('X$')
+    assert result == "     ", f"Expected 5 spaces, got '{result}' (len={len(result) if result else 0})"
+    print("  SPC: PASSED")
+
+def test_spc_zero():
+    """Test SPC(0) returns empty string."""
+    print("Testing SPC zero...")
+    interp, _ = run_program([
+        'X$ = SPC(0)'
+    ])
+    result = interp.variables.get('X$')
+    assert result == "", f"Expected empty string, got '{result}'"
+    print("  SPC zero: PASSED")
+
+def test_spc_negative():
+    """Test SPC with negative returns empty string."""
+    print("Testing SPC negative...")
+    interp, _ = run_program([
+        'X$ = SPC(-5)'
+    ])
+    result = interp.variables.get('X$')
+    assert result == "", f"Expected empty string, got '{result}'"
+    print("  SPC negative: PASSED")
+
+# ============================================================
+# INPUT STATEMENT TESTS (state setup verification)
+# ============================================================
+
+def test_input_state_setup():
+    """Test INPUT statement sets up input mode correctly."""
+    print("Testing INPUT state setup...")
+    interp = setup()
+    interp.reset([
+        'SCREEN 13',
+        'INPUT "Enter name: "; name$'
+    ])
+    # Run one step to hit the INPUT statement
+    interp.step()
+    # Check that input mode was activated
+    assert interp.input_mode == True, "Expected input_mode to be True"
+    assert interp.input_prompt == "Enter name: ? ", f"Expected prompt 'Enter name: ? ', got '{interp.input_prompt}'"
+    assert interp.input_variables == ['name$'], f"Expected variables ['name$'], got {interp.input_variables}"
+    print("  INPUT state setup: PASSED")
+
+def test_input_prompt_no_question():
+    """Test INPUT with comma separator (no question mark)."""
+    print("Testing INPUT no question mark...")
+    interp = setup()
+    interp.reset([
+        'SCREEN 13',
+        'INPUT "Name", name$'
+    ])
+    interp.step()
+    assert interp.input_mode == True
+    assert interp.input_prompt == "Name", f"Expected prompt 'Name', got '{interp.input_prompt}'"
+    print("  INPUT no question mark: PASSED")
+
+def test_input_multiple_variables():
+    """Test INPUT with multiple variables."""
+    print("Testing INPUT multiple vars...")
+    interp = setup()
+    interp.reset([
+        'SCREEN 13',
+        'INPUT "Values: "; a, b, c'
+    ])
+    interp.step()
+    assert interp.input_mode == True
+    assert interp.input_variables == ['a', 'b', 'c'], f"Expected ['a', 'b', 'c'], got {interp.input_variables}"
+    print("  INPUT multiple vars: PASSED")
+
+def test_input_no_prompt():
+    """Test INPUT without prompt string."""
+    print("Testing INPUT no prompt...")
+    interp = setup()
+    interp.reset([
+        'SCREEN 13',
+        'INPUT x'
+    ])
+    interp.step()
+    assert interp.input_mode == True
+    assert interp.input_prompt == "? ", f"Expected prompt '? ', got '{interp.input_prompt}'"
+    assert interp.input_variables == ['x']
+    print("  INPUT no prompt: PASSED")
+
+def test_input_complete_numeric():
+    """Test INPUT completion assigns numeric value."""
+    print("Testing INPUT complete numeric...")
+    interp = setup()
+    interp.reset([
+        'SCREEN 13',
+        'INPUT "Value: "; x'
+    ])
+    interp.step()  # Enter input mode
+    assert interp.input_mode == True
+
+    # Simulate typing "42" and pressing Enter
+    interp.input_buffer = "42"
+    interp._complete_input()
+
+    assert interp.input_mode == False, "Expected input_mode to be False after completion"
+    assert interp.variables.get('X') == 42, f"Expected X=42, got X={interp.variables.get('X')}"
+    print("  INPUT complete numeric: PASSED")
+
+def test_input_complete_string():
+    """Test INPUT completion assigns string value."""
+    print("Testing INPUT complete string...")
+    interp = setup()
+    interp.reset([
+        'SCREEN 13',
+        'INPUT "Name: "; name$'
+    ])
+    interp.step()  # Enter input mode
+
+    # Simulate typing "Hello" and pressing Enter
+    interp.input_buffer = "Hello"
+    interp._complete_input()
+
+    assert interp.input_mode == False
+    assert interp.variables.get('NAME$') == "Hello", f"Expected NAME$='Hello', got NAME$={interp.variables.get('NAME$')}"
+    print("  INPUT complete string: PASSED")
+
+def test_input_complete_multiple():
+    """Test INPUT completion assigns multiple values."""
+    print("Testing INPUT complete multiple...")
+    interp = setup()
+    interp.reset([
+        'SCREEN 13',
+        'INPUT "Values: "; a, b, c'
+    ])
+    interp.step()
+
+    # Simulate typing "10, 20, 30" and pressing Enter
+    interp.input_buffer = "10, 20, 30"
+    interp._complete_input()
+
+    assert interp.variables.get('A') == 10
+    assert interp.variables.get('B') == 20
+    assert interp.variables.get('C') == 30
+    print("  INPUT complete multiple: PASSED")
+
+# ============================================================
 # RUN ALL TESTS
 # ============================================================
 
@@ -1421,6 +1791,35 @@ def run_all_tests():
         test_data_multiple_lines,
         test_restore,
         test_restore_label,
+
+        # ON...GOTO / ON...GOSUB
+        test_on_goto_basic,
+        test_on_goto_first,
+        test_on_goto_out_of_range,
+        test_on_goto_zero_index,
+        test_on_gosub_basic,
+        test_on_gosub_returns,
+        test_on_goto_expression,
+
+        # CSRLIN and POS
+        test_csrlin,
+        test_pos,
+        test_csrlin_after_print,
+
+        # TAB and SPC
+        test_tab,
+        test_spc,
+        test_spc_zero,
+        test_spc_negative,
+
+        # INPUT statement
+        test_input_state_setup,
+        test_input_prompt_no_question,
+        test_input_multiple_variables,
+        test_input_no_prompt,
+        test_input_complete_numeric,
+        test_input_complete_string,
+        test_input_complete_multiple,
     ]
 
     passed = 0

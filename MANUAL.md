@@ -210,6 +210,46 @@ SWAP A, B          ' Now A=20, B=10
 SWAP arr(0), arr(1)
 ```
 
+### INPUT
+
+```basic
+INPUT x                        ' Prompt with "? " and read into x
+INPUT "Enter name: "; name$    ' Custom prompt with "? "
+INPUT "Value", n               ' Custom prompt without "? " (uses comma)
+INPUT "Values: "; a, b, c      ' Read multiple values separated by commas
+```
+
+### ON...GOTO / ON...GOSUB
+
+```basic
+' Computed GOTO - jump based on expression value
+ON choice GOTO opt1, opt2, opt3
+' If choice=1, goes to opt1; if choice=2, goes to opt2; etc.
+' If choice < 1 or > number of labels, continues to next line
+
+opt1:
+    PRINT "Option 1"
+    GOTO done
+opt2:
+    PRINT "Option 2"
+    GOTO done
+opt3:
+    PRINT "Option 3"
+done:
+
+' Computed GOSUB - same but with RETURN
+ON n GOSUB sub1, sub2
+PRINT "Returned from subroutine"
+GOTO skip
+sub1:
+    PRINT "Subroutine 1"
+    RETURN
+sub2:
+    PRINT "Subroutine 2"
+    RETURN
+skip:
+```
+
 ---
 
 ## Graphics Commands
@@ -340,6 +380,15 @@ PRINT                      ' Print blank line
 | `DATE$` | Current date (MM-DD-YYYY) | `d$ = DATE$` |
 | `TIME$` | Current time (HH:MM:SS) | `t$ = TIME$` |
 | `POINT(x, y)` | Get pixel color at position | `c = POINT(100, 50)` |
+
+### Cursor/Screen Functions
+
+| Function | Description | Example |
+|----------|-------------|---------|
+| `CSRLIN` | Get current cursor row (1-based) | `r = CSRLIN` |
+| `POS(0)` | Get current cursor column (1-based) | `c = POS(0)` |
+| `TAB(n)` | Move to column n in PRINT (returns spaces) | `PRINT TAB(10); "Hello"` |
+| `SPC(n)` | Generate n spaces for use in PRINT | `PRINT "A"; SPC(5); "B"` |
 
 ---
 

@@ -43,6 +43,7 @@ _timer_re = re.compile(r'\bTIMER\b(?!\s*\()', re.IGNORECASE)  # TIMER -> TIMER()
 _date_re = re.compile(r'\bDATE\$', re.IGNORECASE)  # DATE$ -> DATE()
 _time_re = re.compile(r'\bTIME\$', re.IGNORECASE)  # TIME$ -> TIME()
 _rnd_bare_re = re.compile(r'\bRND\b(?!\s*\()', re.IGNORECASE)  # RND -> RND()
+_csrlin_re = re.compile(r'\bCSRLIN\b(?!\s*\()', re.IGNORECASE)  # CSRLIN -> CSRLIN()
 
 # General pattern for NAME(...) or NAME$(...) which could be a function call or array access
 _func_or_array_re = re.compile(
@@ -105,6 +106,13 @@ _data_re = re.compile(r"DATA\s+(.*)", re.IGNORECASE)
 _read_re = re.compile(r"READ\s+(.*)", re.IGNORECASE)
 _restore_re = re.compile(r"RESTORE(?:\s+([a-zA-Z0-9_]+))?", re.IGNORECASE)
 
+# INPUT statement: INPUT ["prompt"{;|,}] variable[, variable...]
+_input_re = re.compile(r"INPUT\s+(.*)", re.IGNORECASE)
+
+# ON...GOTO and ON...GOSUB for computed branches
+_on_goto_re = re.compile(r"ON\s+(.+?)\s+GOTO\s+(.+)", re.IGNORECASE)
+_on_gosub_re = re.compile(r"ON\s+(.+?)\s+GOSUB\s+(.+)", re.IGNORECASE)
+
 _expr_cache: Dict[str, str] = {}
 _python_keywords = {'and', 'or', 'not', 'in', 'is', 'lambda', 'if', 'else', 'elif', 'while', 'for', 'try', 'except', 'finally', 'with', 'as', 'def', 'class', 'import', 'from', 'pass', 'break', 'continue', 'return', 'yield', 'global', 'nonlocal', 'assert', 'del', 'True', 'False', 'None'}
 # Python builtins used in generated code (for array indexing) - keep lowercase
@@ -117,7 +125,9 @@ _basic_function_names = {
     # New math functions
     'LOG', 'EXP', 'CINT',
     # Date/time functions
-    'DATE', 'TIME'
+    'DATE', 'TIME',
+    # Cursor/screen functions
+    'CSRLIN', 'POS', 'TAB', 'SPC'
 }
 
 # --- Expression Conversion Logic ---
@@ -265,6 +275,7 @@ def convert_basic_expr(expr: str, known_identifiers: Optional[set] = None) -> st
     expr = _date_re.sub("DATE()", expr)
     expr = _time_re.sub("TIME()", expr)
     expr = _rnd_bare_re.sub("RND()", expr)
+    expr = _csrlin_re.sub("CSRLIN()", expr)
 
     # 2. General function calls OR array access: NAME(...) / NAME$(...)
     expr = _func_or_array_re.sub(_replace_func_or_array_access, expr)
@@ -334,7 +345,14 @@ class BasicInterpreter:
         self._dirty = True
         self._cached_scaled_surface: Optional[pygame.Surface] = None
         self.last_rnd_value: Optional[float] = None
-        
+
+        # INPUT statement state
+        self.input_mode: bool = False
+        self.input_buffer: str = ""
+        self.input_prompt: str = ""
+        self.input_variables: List[str] = []
+        self.input_cursor_pos: int = 0
+
         # Environment for eval() - functions available to BASIC expressions
         self.eval_env_funcs = {
             # Original functions
@@ -369,6 +387,11 @@ class BasicInterpreter:
             # Date/time functions
             "DATE": self._basic_date,  # Current date string
             "TIME": self._basic_time,  # Current time string
+            # Cursor/screen functions
+            "CSRLIN": self._basic_csrlin,  # Get current cursor row
+            "POS": self._basic_pos,  # Get current cursor column
+            "TAB": self._basic_tab,  # Tab to column (returns spaces)
+            "SPC": self._basic_spc,  # Generate n spaces (same as SPACE)
         }
 
     def _basic_val(self, s_val: str) -> Any:
@@ -463,6 +486,26 @@ class BasicInterpreter:
         """TIME$ - Returns current time as HH:MM:SS."""
         from datetime import datetime
         return datetime.now().strftime("%H:%M:%S")
+
+    def _basic_csrlin(self) -> int:
+        """CSRLIN - Returns current cursor row (1-based)."""
+        return self.text_cursor[1]
+
+    def _basic_pos(self, dummy: Any = 0) -> int:
+        """POS(0) - Returns current cursor column (1-based)."""
+        return self.text_cursor[0]
+
+    def _basic_tab(self, col: int) -> str:
+        """TAB(n) - Returns spaces to move to column n in PRINT."""
+        target_col = int(col)
+        current_col = self.text_cursor[0]
+        if target_col > current_col:
+            return " " * (target_col - current_col)
+        return ""
+
+    def _basic_spc(self, n: int) -> str:
+        """SPC(n) - Returns n spaces for use in PRINT."""
+        return " " * max(0, int(n))
 
     def _parse_data_values(self, data_str: str) -> None:
         """Parse DATA statement values and add to data_values list."""
@@ -717,6 +760,21 @@ class BasicInterpreter:
 
     def handle_event(self, event: pygame.event.Event) -> None:
         if event.type == KEYDOWN:
+            # Handle INPUT mode - route key presses to input handler
+            if self.input_mode:
+                key = ""
+                if event.key == pygame.K_RETURN:
+                    key = chr(13)
+                elif event.key == pygame.K_BACKSPACE:
+                    key = chr(8)
+                elif event.key == pygame.K_ESCAPE:
+                    key = chr(27)
+                elif event.unicode:
+                    key = event.unicode
+                if key:
+                    self._process_input_key(key)
+                return  # Don't process other keys in input mode
+
             if event.key == pygame.K_UP: self.last_key = chr(0) + "H"
             elif event.key == pygame.K_DOWN: self.last_key = chr(0) + "P"
             elif event.key == pygame.K_LEFT: self.last_key = chr(0) + "K"
@@ -1643,6 +1701,21 @@ class BasicInterpreter:
                 self.data_pointer = 0  # Reset to beginning
             return False
 
+        # --- INPUT statement ---
+        m_input = _input_re.fullmatch(statement)
+        if m_input:
+            return self._handle_input(m_input.group(1).strip(), current_pc_num)
+
+        # --- ON...GOTO statement ---
+        m_on_goto = _on_goto_re.fullmatch(statement)
+        if m_on_goto:
+            return self._handle_on_goto_gosub(m_on_goto.group(1), m_on_goto.group(2), "GOTO", current_pc_num)
+
+        # --- ON...GOSUB statement ---
+        m_on_gosub = _on_gosub_re.fullmatch(statement)
+        if m_on_gosub:
+            return self._handle_on_goto_gosub(m_on_gosub.group(1), m_on_gosub.group(2), "GOSUB", current_pc_num)
+
         if _end_re.fullmatch(up_stmt):
             self.running = False
             return False # END statement, stop execution
@@ -1667,6 +1740,187 @@ class BasicInterpreter:
             self.pc = target_pc_idx # Set PC for GOSUB target
             return True # Indicate PC has changed
         print(f"Error: Label '{label}' not found for GOSUB at PC {self.pc-1}."); self.running = False; return False
+
+    def _handle_input(self, input_content: str, pc: int) -> bool:
+        """Handle INPUT statement. QBasic 4.5 format: INPUT ["prompt"{;|,}] var[, var...]"""
+        # Parse the INPUT statement content
+        prompt = ""
+        show_question = True  # Show "?" by default
+
+        content = input_content.strip()
+
+        # Check for prompt string
+        if content.startswith('"'):
+            # Find end of string
+            end_quote = content.find('"', 1)
+            if end_quote > 0:
+                prompt = content[1:end_quote]
+                content = content[end_quote + 1:].strip()
+                # Check separator after prompt
+                if content.startswith(';'):
+                    show_question = True
+                    content = content[1:].strip()
+                elif content.startswith(','):
+                    show_question = False
+                    content = content[1:].strip()
+
+        # Parse variable names
+        var_names = [v.strip() for v in content.split(',') if v.strip()]
+        if not var_names:
+            print(f"Error: INPUT statement requires at least one variable at PC {pc}")
+            self.running = False
+            return False
+
+        # Set up input mode
+        self.input_mode = True
+        self.input_buffer = ""
+        self.input_prompt = prompt + ("? " if show_question else "")
+        self.input_variables = var_names
+        self.input_cursor_pos = 0
+
+        # Display prompt
+        if self.surface and self.font and self.input_prompt:
+            self._draw_input_prompt()
+
+        return True  # Indicates interpreter should pause for input
+
+    def _draw_input_prompt(self) -> None:
+        """Draw the input prompt and current buffer."""
+        if not self.surface or not self.font:
+            return
+
+        f_w = self.font.size(" ")[0] if self.font.size(" ")[0] > 0 else 8
+        f_h = self.font.get_height()
+
+        x_pos = (self.text_cursor[0] - 1) * f_w
+        y_pos = (self.text_cursor[1] - 1) * f_h
+
+        # Draw prompt + buffer
+        display_text = self.input_prompt + self.input_buffer + "_"
+        try:
+            text_surface = self.font.render(display_text, True,
+                                           self.basic_color(self.current_fg_color),
+                                           self.basic_color(self.current_bg_color))
+            self.surface.blit(text_surface, (x_pos, y_pos))
+            self.mark_dirty()
+        except pygame.error:
+            pass
+
+    def _process_input_key(self, key: str) -> bool:
+        """Process a key press during input mode. Returns True when input is complete."""
+        if key == chr(13):  # Enter
+            return self._complete_input()
+        elif key == chr(8):  # Backspace
+            if self.input_buffer:
+                self.input_buffer = self.input_buffer[:-1]
+                self._redraw_input_line()
+        elif key == chr(27):  # Escape - cancel input
+            self.input_buffer = ""
+            return self._complete_input()
+        elif len(key) == 1 and ord(key) >= 32:  # Printable character
+            self.input_buffer += key
+            self._redraw_input_line()
+        return False
+
+    def _redraw_input_line(self) -> None:
+        """Redraw the input line (clear and redraw)."""
+        if not self.surface or not self.font:
+            return
+
+        f_w = self.font.size(" ")[0] if self.font.size(" ")[0] > 0 else 8
+        f_h = self.font.get_height()
+
+        x_pos = (self.text_cursor[0] - 1) * f_w
+        y_pos = (self.text_cursor[1] - 1) * f_h
+
+        # Clear the line
+        clear_width = self.screen_width - x_pos
+        pygame.draw.rect(self.surface, self.basic_color(self.current_bg_color),
+                        (x_pos, y_pos, clear_width, f_h))
+
+        # Redraw
+        self._draw_input_prompt()
+
+    def _complete_input(self) -> bool:
+        """Complete input processing and assign values to variables."""
+        self.input_mode = False
+
+        # Parse input values
+        input_values = []
+        if self.input_buffer:
+            # Split by comma, respecting quoted strings
+            current = ""
+            in_string = False
+            for char in self.input_buffer:
+                if char == '"':
+                    in_string = not in_string
+                elif char == ',' and not in_string:
+                    input_values.append(current.strip())
+                    current = ""
+                    continue
+                current += char
+            if current:
+                input_values.append(current.strip())
+
+        # Assign values to variables
+        for i, var_name in enumerate(self.input_variables):
+            if i < len(input_values):
+                value = input_values[i]
+                # Determine type based on variable name
+                var_upper = var_name.upper()
+                if var_upper.endswith('$'):
+                    # String variable - remove quotes if present
+                    if value.startswith('"') and value.endswith('"'):
+                        value = value[1:-1]
+                else:
+                    # Numeric variable - try to convert
+                    try:
+                        if '.' in value or 'E' in value.upper():
+                            value = float(value)
+                        else:
+                            value = int(value)
+                    except ValueError:
+                        value = 0  # Default to 0 for invalid numeric input
+                self._assign_variable(var_name, value, self.pc - 1)
+            else:
+                # No more input values - use defaults
+                var_upper = var_name.upper()
+                if var_upper.endswith('$'):
+                    self._assign_variable(var_name, "", self.pc - 1)
+                else:
+                    self._assign_variable(var_name, 0, self.pc - 1)
+
+        # Move cursor to next line
+        self.text_cursor = (1, self.text_cursor[1] + 1)
+        return True
+
+    def _handle_on_goto_gosub(self, expr: str, labels_str: str, branch_type: str, pc: int) -> bool:
+        """Handle ON...GOTO and ON...GOSUB statements."""
+        # Evaluate the selector expression
+        selector = self.eval_expr(expr.strip())
+        if not self.running:
+            return False
+
+        try:
+            index = int(selector)
+        except (ValueError, TypeError):
+            print(f"Error: ON {branch_type} selector must be numeric at PC {pc}")
+            self.running = False
+            return False
+
+        # Parse label list
+        labels = [l.strip().upper() for l in labels_str.split(',')]
+
+        # QBasic: if index < 1 or index > number of labels, continue to next statement
+        if index < 1 or index > len(labels):
+            return False  # Continue to next statement
+
+        target_label = labels[index - 1]  # 1-based indexing
+
+        if branch_type == "GOTO":
+            return self._do_goto(target_label)
+        else:  # GOSUB
+            return self._do_gosub(target_label)
 
     def _assign_variable(self, var_str: str, value: Any, pc: int) -> None:
         """Assign a value to a variable (scalar or array element)."""
@@ -1877,6 +2131,10 @@ class BasicInterpreter:
         self._skip_block("DO", "LOOP", start_pc_num)
 
     def step(self) -> None:
+        # Don't execute BASIC code while waiting for INPUT
+        if self.input_mode:
+            return
+
         current_ticks = pygame.time.get_ticks()
         if self.delay_until > 0 and current_ticks < self.delay_until:
             return # Still delaying

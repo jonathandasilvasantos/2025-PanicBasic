@@ -62,10 +62,11 @@ This document lists QBasic 4.5 features and instructions that are **not currentl
 
 | Command | Description |
 |---------|-------------|
-| `INPUT` | Prompt user for keyboard input |
 | `LINE INPUT` | Input entire line from keyboard |
 | `INPUT$` | Read specific number of characters |
 | `INPUT$(n, #filenum)` | Read characters from file |
+
+Note: `INPUT` IS now supported.
 
 ---
 
@@ -87,11 +88,11 @@ This document lists QBasic 4.5 features and instructions that are **not currentl
 
 | Command | Description |
 |---------|-------------|
-| `ON...GOTO` | Computed GOTO |
-| `ON...GOSUB` | Computed GOSUB |
 | `ON ERROR GOTO` | Error handler |
 | `RESUME` | Resume after error |
 | `ERROR` | Trigger error |
+
+Note: `ON...GOTO` and `ON...GOSUB` ARE now supported.
 
 ---
 
@@ -158,12 +159,10 @@ Note: `TIMER`, `DATE$` (read), and `TIME$` (read) ARE supported.
 |---------|-------------|
 | `LPRINT` | Print to printer |
 | `WIDTH` | Set screen/printer width |
-| `CSRLIN` | Get cursor row |
-| `POS(0)` | Get cursor column |
-| `TAB(n)` | Tab to column in PRINT |
-| `SPC(n)` | Print n spaces |
 | `PRINT USING` | Formatted output |
 | `LPRINT USING` | Formatted printer output |
+
+Note: `CSRLIN`, `POS(0)`, `TAB(n)`, and `SPC(n)` ARE now supported.
 
 ---
 
@@ -235,8 +234,8 @@ Some unsupported features have workarounds:
 
 | Unsupported | Alternative |
 |-------------|-------------|
-| `INPUT` | Use `INKEY$` in a loop |
 | `SUB/FUNCTION` | Use `GOSUB...RETURN` |
+| `LINE INPUT` | Use `INPUT` for simple text input |
 
 ---
 
@@ -246,5 +245,5 @@ These features would have high impact if added:
 
 1. **SOUND/PLAY** - Audio support
 2. **GET/PUT** - Sprite graphics
-3. **INPUT** - User text input
-4. **SUB/FUNCTION** - User-defined procedures
+3. **SUB/FUNCTION** - User-defined procedures
+4. **LINE INPUT** - Input entire line from keyboard
