@@ -130,6 +130,30 @@ LOOP
 EXIT DO                    ' Break out of loop early
 ```
 
+### WHILE-WEND
+
+```basic
+x = 0
+WHILE x < 10
+    x = x + 1
+WEND
+```
+
+### SELECT CASE
+
+```basic
+SELECT CASE score
+    CASE 100
+        PRINT "Perfect!"
+    CASE 90 TO 99
+        PRINT "Excellent"
+    CASE IS >= 70
+        PRINT "Passing"
+    CASE ELSE
+        PRINT "Try again"
+END SELECT
+```
+
 ### GOTO
 
 ```basic
@@ -154,6 +178,36 @@ drawPlayer:
 
 ```basic
 END                        ' Terminates program execution
+```
+
+### DATA-READ-RESTORE
+
+```basic
+DATA 10, 20, 30, "Hello"
+DATA 40, 50, 60
+
+' Read values into variables
+READ A, B, C
+READ msg$
+
+' Reset data pointer to re-read
+RESTORE
+
+' Read from specific label
+RESTORE myData
+myData:
+DATA 100, 200
+```
+
+### SWAP
+
+```basic
+A = 10
+B = 20
+SWAP A, B          ' Now A=20, B=10
+
+' Works with arrays too
+SWAP arr(0), arr(1)
 ```
 
 ---
@@ -243,8 +297,11 @@ PRINT                      ' Print blank line
 | `ABS(x)` | Absolute value | `ABS(-5)` returns `5` |
 | `INT(x)` | Floor (round down) | `INT(3.7)` returns `3` |
 | `FIX(x)` | Truncate towards zero | `FIX(-3.7)` returns `-3` |
+| `CINT(x)` | Round to nearest integer | `CINT(3.6)` returns `4` |
 | `SGN(x)` | Sign (-1, 0, or 1) | `SGN(-5)` returns `-1` |
 | `SQR(x)` | Square root | `SQR(16)` returns `4` |
+| `LOG(x)` | Natural logarithm | `LOG(2.718)` returns `1` |
+| `EXP(x)` | Exponential (e^x) | `EXP(1)` returns `2.718...` |
 | `SIN(x)` | Sine (radians) | `SIN(3.14159/2)` returns `1` |
 | `COS(x)` | Cosine (radians) | `COS(0)` returns `1` |
 | `TAN(x)` | Tangent (radians) | `TAN(0)` returns `0` |
@@ -261,15 +318,27 @@ PRINT                      ' Print blank line
 | `RIGHT$(s$, n)` | Right substring | `RIGHT$("Hello", 2)` returns `"lo"` |
 | `MID$(s$, start, len)` | Middle substring | `MID$("Hello", 2, 3)` returns `"ell"` |
 | `CHR$(n)` | ASCII to character | `CHR$(65)` returns `"A"` |
+| `ASC(s$)` | Get ASCII code of first char | `ASC("A")` returns `65` |
 | `STR$(n)` | Number to string | `STR$(42)` returns `"42"` |
 | `VAL(s$)` | String to number | `VAL("42")` returns `42` |
+| `INSTR([start,] s$, find$)` | Find substring position | `INSTR("Hello", "l")` returns `3` |
+| `LCASE$(s$)` | Convert to lowercase | `LCASE$("HELLO")` returns `"hello"` |
+| `UCASE$(s$)` | Convert to uppercase | `UCASE$("hello")` returns `"HELLO"` |
+| `LTRIM$(s$)` | Remove leading spaces | `LTRIM$("  Hi")` returns `"Hi"` |
+| `RTRIM$(s$)` | Remove trailing spaces | `RTRIM$("Hi  ")` returns `"Hi"` |
+| `SPACE$(n)` | Create n spaces | `SPACE$(5)` returns `"     "` |
+| `STRING$(n, char)` | Repeat character n times | `STRING$(3, "*")` returns `"***"` |
+| `HEX$(n)` | Convert to hexadecimal | `HEX$(255)` returns `"FF"` |
+| `OCT$(n)` | Convert to octal | `OCT$(64)` returns `"100"` |
 
-### Input/Timing Functions
+### Input/Timing/Date Functions
 
 | Function | Description | Example |
 |----------|-------------|---------|
 | `INKEY$` | Get pressed key (non-blocking) | `k$ = INKEY$` |
 | `TIMER` | Seconds since midnight | `t = TIMER` |
+| `DATE$` | Current date (MM-DD-YYYY) | `d$ = DATE$` |
+| `TIME$` | Current time (HH:MM:SS) | `t$ = TIME$` |
 | `POINT(x, y)` | Get pixel color at position | `c = POINT(100, 50)` |
 
 ---

@@ -69,16 +69,6 @@ This document lists QBasic 4.5 features and instructions that are **not currentl
 
 ---
 
-## Data Statements
-
-| Command | Description |
-|---------|-------------|
-| `DATA` | Define inline data values |
-| `READ` | Read values from DATA statements |
-| `RESTORE` | Reset DATA pointer |
-
----
-
 ## Procedures and Functions
 
 | Command | Description |
@@ -97,10 +87,6 @@ This document lists QBasic 4.5 features and instructions that are **not currentl
 
 | Command | Description |
 |---------|-------------|
-| `SELECT CASE...END SELECT` | Multi-way branching |
-| `CASE` | Case clause in SELECT |
-| `CASE ELSE` | Default case |
-| `WHILE...WEND` | While loop (use DO WHILE instead) |
 | `ON...GOTO` | Computed GOTO |
 | `ON...GOSUB` | Computed GOSUB |
 | `ON ERROR GOTO` | Error handler |
@@ -109,30 +95,10 @@ This document lists QBasic 4.5 features and instructions that are **not currentl
 
 ---
 
-## String Functions
-
-| Function | Description |
-|----------|-------------|
-| `ASC(s$)` | Get ASCII code of first character |
-| `INSTR(s$, find$)` | Find substring position |
-| `LCASE$(s$)` | Convert to lowercase |
-| `UCASE$(s$)` | Convert to uppercase |
-| `LTRIM$(s$)` | Remove leading spaces |
-| `RTRIM$(s$)` | Remove trailing spaces |
-| `SPACE$(n)` | Create string of n spaces |
-| `STRING$(n, char)` | Create string of n characters |
-| `HEX$(n)` | Convert to hexadecimal string |
-| `OCT$(n)` | Convert to octal string |
-
----
-
 ## Math Functions
 
 | Function | Description |
 |----------|-------------|
-| `LOG(x)` | Natural logarithm |
-| `EXP(x)` | Exponential (e^x) |
-| `CINT(x)` | Convert to integer (round) |
 | `CLNG(x)` | Convert to long integer |
 | `CSNG(x)` | Convert to single precision |
 | `CDBL(x)` | Convert to double precision |
@@ -149,7 +115,6 @@ This document lists QBasic 4.5 features and instructions that are **not currentl
 | `POKE` | Write memory byte |
 | `DEF SEG` | Set memory segment |
 | `CLEAR` | Clear variables and set stack |
-| `SWAP` | Exchange two variables |
 | `ERASE` | Erase arrays |
 | `REDIM` | Redimension dynamic array |
 | `LBOUND` | Get array lower bound |
@@ -180,10 +145,10 @@ This document lists QBasic 4.5 features and instructions that are **not currentl
 
 | Function | Description |
 |----------|-------------|
-| `DATE$` | Get/set system date |
-| `TIME$` | Get/set system time |
+| `DATE$ = value` | Set system date (reading IS supported) |
+| `TIME$ = value` | Set system time (reading IS supported) |
 
-Note: `TIMER` IS supported (returns seconds since midnight).
+Note: `TIMER`, `DATE$` (read), and `TIME$` (read) ARE supported.
 
 ---
 
@@ -270,12 +235,8 @@ Some unsupported features have workarounds:
 
 | Unsupported | Alternative |
 |-------------|-------------|
-| `WHILE...WEND` | Use `DO WHILE...LOOP` |
 | `INPUT` | Use `INKEY$` in a loop |
-| `SELECT CASE` | Use multiple `IF...THEN` |
 | `SUB/FUNCTION` | Use `GOSUB...RETURN` |
-| `ASC(s$)` | Not available - consider adding to interpreter |
-| `INSTR` | Not available - implement with MID$ loop |
 
 ---
 
@@ -283,11 +244,7 @@ Some unsupported features have workarounds:
 
 These features would have high impact if added:
 
-1. **ASC(s$)** - Get ASCII code (common need)
-2. **INSTR** - Find substring (very useful)
-3. **SELECT CASE** - Cleaner multi-way branching
-4. **SOUND/PLAY** - Audio support
-5. **GET/PUT** - Sprite graphics
-6. **INPUT** - User text input
-7. **DATA/READ** - Inline data storage
-8. **LCASE$/UCASE$** - String case conversion
+1. **SOUND/PLAY** - Audio support
+2. **GET/PUT** - Sprite graphics
+3. **INPUT** - User text input
+4. **SUB/FUNCTION** - User-defined procedures

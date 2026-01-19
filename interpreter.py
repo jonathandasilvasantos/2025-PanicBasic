@@ -40,6 +40,8 @@ _exp_re = re.compile(r'\^')  # BASIC exponentiation operator
 # Specific function keywords that are parameterless or have unique syntax
 _inkey_re = re.compile(r'\bINKEY\$', re.IGNORECASE)  # INKEY$ -> INKEY() (no trailing \b as $ is not a word char)
 _timer_re = re.compile(r'\bTIMER\b(?!\s*\()', re.IGNORECASE)  # TIMER -> TIMER()
+_date_re = re.compile(r'\bDATE\$', re.IGNORECASE)  # DATE$ -> DATE()
+_time_re = re.compile(r'\bTIME\$', re.IGNORECASE)  # TIME$ -> TIME()
 _rnd_bare_re = re.compile(r'\bRND\b(?!\s*\()', re.IGNORECASE)  # RND -> RND()
 
 # General pattern for NAME(...) or NAME$(...) which could be a function call or array access
@@ -92,12 +94,31 @@ _rem_re = re.compile(r"REM\b.*", re.IGNORECASE)
 _exit_do_re = re.compile(r"EXIT\s+DO", re.IGNORECASE)
 _exit_for_re = re.compile(r"EXIT\s+FOR", re.IGNORECASE)
 
+# New statement patterns
+_swap_re = re.compile(r"SWAP\s+([a-zA-Z_][a-zA-Z0-9_]*\$?(?:\s*\([^)]+\))?)\s*,\s*([a-zA-Z_][a-zA-Z0-9_]*\$?(?:\s*\([^)]+\))?)", re.IGNORECASE)
+_while_re = re.compile(r"WHILE\s+(.+)", re.IGNORECASE)
+_wend_re = re.compile(r"WEND", re.IGNORECASE)
+_select_case_re = re.compile(r"SELECT\s+CASE\s+(.+)", re.IGNORECASE)
+_case_re = re.compile(r"CASE\s+(.*)", re.IGNORECASE)
+_end_select_re = re.compile(r"END\s+SELECT", re.IGNORECASE)
+_data_re = re.compile(r"DATA\s+(.*)", re.IGNORECASE)
+_read_re = re.compile(r"READ\s+(.*)", re.IGNORECASE)
+_restore_re = re.compile(r"RESTORE(?:\s+([a-zA-Z0-9_]+))?", re.IGNORECASE)
 
 _expr_cache: Dict[str, str] = {}
 _python_keywords = {'and', 'or', 'not', 'in', 'is', 'lambda', 'if', 'else', 'elif', 'while', 'for', 'try', 'except', 'finally', 'with', 'as', 'def', 'class', 'import', 'from', 'pass', 'break', 'continue', 'return', 'yield', 'global', 'nonlocal', 'assert', 'del', 'True', 'False', 'None'}
 # Python builtins used in generated code (for array indexing) - keep lowercase
 _python_builtins_used = {'int'}
-_basic_function_names = {'CHR', 'INKEY', 'RND', 'INT', 'POINT', 'TIMER', 'STR', 'VAL', 'LEFT', 'RIGHT', 'MID', 'LEN', 'ABS', 'SQR', 'SIN', 'COS', 'TAN', 'ATN', 'SGN', 'FIX'}
+_basic_function_names = {
+    'CHR', 'INKEY', 'RND', 'INT', 'POINT', 'TIMER', 'STR', 'VAL',
+    'LEFT', 'RIGHT', 'MID', 'LEN', 'ABS', 'SQR', 'SIN', 'COS', 'TAN', 'ATN', 'SGN', 'FIX',
+    # New string functions
+    'ASC', 'INSTR', 'LCASE', 'UCASE', 'LTRIM', 'RTRIM', 'SPACE', 'STRING', 'HEX', 'OCT',
+    # New math functions
+    'LOG', 'EXP', 'CINT',
+    # Date/time functions
+    'DATE', 'TIME'
+}
 
 # --- Expression Conversion Logic ---
 
@@ -241,6 +262,8 @@ def convert_basic_expr(expr: str, known_identifiers: Optional[set] = None) -> st
     # 1. Specific function keyword substitutions (parameterless or unique syntax)
     expr = _inkey_re.sub("INKEY()", expr)
     expr = _timer_re.sub("TIMER()", expr)
+    expr = _date_re.sub("DATE()", expr)
+    expr = _time_re.sub("TIME()", expr)
     expr = _rnd_bare_re.sub("RND()", expr)
 
     # 2. General function calls OR array access: NAME(...) / NAME$(...)
@@ -283,6 +306,12 @@ class BasicInterpreter:
         self.if_skip_level: int = -1
         self.if_executed: List[bool] = []  # Track if a branch was executed at each IF level
         self.running: bool = True
+        # DATA/READ/RESTORE state
+        self.data_values: List[Any] = []  # All DATA values in program order
+        self.data_pointer: int = 0  # Current position in data_values
+        self.data_labels: Dict[str, int] = {}  # Label -> index in data_values
+        # SELECT CASE state
+        self.select_stack: List[Dict[str, Any]] = []  # Stack of SELECT CASE blocks
         self.text_cursor: Tuple[int, int] = (1, 1)
         self.surface: Optional[pygame.Surface] = None
         self.screen_width: int = DEFAULT_SCREEN_WIDTH
@@ -308,19 +337,38 @@ class BasicInterpreter:
         
         # Environment for eval() - functions available to BASIC expressions
         self.eval_env_funcs = {
+            # Original functions
             "CHR": lambda x: chr(int(x)), "INKEY": self.inkey, "RND": self._basic_rnd,
             "INT": lambda x: math.floor(float(x)), "POINT": self.point,
             "TIMER": lambda: time.time() % 86400, "ABS": lambda x: abs(float(x)),
             "SQR": lambda x: math.sqrt(float(x)), "STR": lambda x: str(x),
             "VAL": lambda x_str: self._basic_val(str(x_str)),
             "LEN": lambda s: len(str(s)),
-            "LEFT": lambda s, n: str(s)[:int(n)], 
+            "LEFT": lambda s, n: str(s)[:int(n)],
             "RIGHT": lambda s, n: str(s)[-int(n):] if int(n) > 0 else "",
             "MID": lambda s, st, ln=None: str(s)[int(st)-1 : (int(st)-1 + int(ln)) if ln is not None else len(str(s))],
             "SIN": lambda x: math.sin(float(x)), "COS": lambda x: math.cos(float(x)),
             "TAN": lambda x: math.tan(float(x)), "ATN": lambda x: math.atan(float(x)),
             "SGN": lambda x: 0 if float(x) == 0 else (1 if float(x) > 0 else -1),
             "FIX": lambda x: int(float(x)),  # Truncate towards zero
+            # New string functions
+            "ASC": lambda s: ord(str(s)[0]) if s else 0,  # ASCII code of first char
+            "INSTR": self._basic_instr,  # Find substring
+            "LCASE": lambda s: str(s).lower(),  # Convert to lowercase
+            "UCASE": lambda s: str(s).upper(),  # Convert to uppercase
+            "LTRIM": lambda s: str(s).lstrip(),  # Remove leading spaces
+            "RTRIM": lambda s: str(s).rstrip(),  # Remove trailing spaces
+            "SPACE": lambda n: " " * int(n),  # Generate n spaces
+            "STRING": self._basic_string,  # Generate repeated chars
+            "HEX": lambda n: hex(int(n))[2:].upper(),  # Convert to hex string
+            "OCT": lambda n: oct(int(n))[2:],  # Convert to octal string
+            # New math functions
+            "LOG": lambda x: math.log(float(x)),  # Natural logarithm
+            "EXP": lambda x: math.exp(float(x)),  # e^x
+            "CINT": lambda x: round(float(x)),  # Round to nearest integer
+            # Date/time functions
+            "DATE": self._basic_date,  # Current date string
+            "TIME": self._basic_time,  # Current time string
         }
 
     def _basic_val(self, s_val: str) -> Any:
@@ -371,6 +419,85 @@ class BasicInterpreter:
             self.last_rnd_value = random.random() # Next in sequence
             return self.last_rnd_value
 
+    def _basic_instr(self, *args) -> int:
+        """INSTR([start,] string1$, string2$) - Find substring position."""
+        if len(args) == 2:
+            start = 1
+            string1, string2 = str(args[0]), str(args[1])
+        elif len(args) == 3:
+            start = int(args[0])
+            string1, string2 = str(args[1]), str(args[2])
+        else:
+            return 0
+
+        if start < 1:
+            return 0
+        if not string1 or start > len(string1):
+            return 0
+        if not string2:
+            return start  # Empty search string returns start position
+
+        # Convert to 0-based index for Python, then back to 1-based for BASIC
+        pos = string1.find(string2, start - 1)
+        return pos + 1 if pos >= 0 else 0
+
+    def _basic_string(self, n, char_or_code) -> str:
+        """STRING$(n, char$) or STRING$(n, code%) - Generate repeated character."""
+        count = int(n)
+        if count < 0:
+            count = 0
+        if isinstance(char_or_code, str):
+            # Use first character of string
+            char = char_or_code[0] if char_or_code else ""
+        else:
+            # Use ASCII code
+            char = chr(int(char_or_code) % 256)
+        return char * count
+
+    def _basic_date(self) -> str:
+        """DATE$ - Returns current date as MM-DD-YYYY."""
+        from datetime import datetime
+        return datetime.now().strftime("%m-%d-%Y")
+
+    def _basic_time(self) -> str:
+        """TIME$ - Returns current time as HH:MM:SS."""
+        from datetime import datetime
+        return datetime.now().strftime("%H:%M:%S")
+
+    def _parse_data_values(self, data_str: str) -> None:
+        """Parse DATA statement values and add to data_values list."""
+        # Split by commas, respecting quoted strings
+        values = []
+        current = ""
+        in_string = False
+        for char in data_str:
+            if char == '"':
+                in_string = not in_string
+                current += char
+            elif char == ',' and not in_string:
+                values.append(current.strip())
+                current = ""
+            else:
+                current += char
+        if current.strip():
+            values.append(current.strip())
+
+        # Convert values to appropriate types
+        for val in values:
+            val = val.strip()
+            if val.startswith('"') and val.endswith('"'):
+                # String literal
+                self.data_values.append(val[1:-1])
+            else:
+                # Try to convert to number
+                try:
+                    if '.' in val or 'E' in val.upper():
+                        self.data_values.append(float(val))
+                    else:
+                        self.data_values.append(int(val))
+                except ValueError:
+                    # Keep as string if not a valid number
+                    self.data_values.append(val)
 
     def mark_dirty(self) -> None: self._dirty = True
 
@@ -396,10 +523,37 @@ class BasicInterpreter:
         self.lpr = (self.screen_width // 2, self.screen_height // 2)
         self.last_key = ""
         self.last_rnd_value = None # Reset last RND value
-        # random.seed(time.time()) # Optionally re-seed RND on reset
+        # Reset DATA/READ/RESTORE state
+        self.data_values.clear()
+        self.data_pointer = 0
+        self.data_labels.clear()
+        # Reset SELECT CASE state
+        self.select_stack.clear()
 
         self._dirty = True
         self._cached_scaled_surface = None
+
+        # First pass: collect DATA statements and labels
+        pending_label = None
+        for i, line_content in enumerate(program_lines):
+            stripped = line_content.strip()
+            # Check for label
+            label_match = _label_re.match(stripped)
+            if label_match:
+                pending_label = label_match.group(1).strip().rstrip(':').upper()
+                stripped = _label_strip_re.sub("", stripped, count=1).strip()
+
+            # Check for DATA statement
+            if stripped.upper().startswith("DATA "):
+                # Record the label if there is one pending
+                if pending_label and pending_label not in self.data_labels:
+                    self.data_labels[pending_label] = len(self.data_values)
+                    pending_label = None
+                # Parse DATA values
+                data_content = stripped[5:].strip()  # Remove "DATA "
+                self._parse_data_values(data_content)
+            elif stripped:  # Only reset pending_label if there's actual content (not just a label line)
+                pending_label = None  # Label wasn't for a DATA statement
 
         current_pc_index = 0
         for i, line_content in enumerate(program_lines):
@@ -583,7 +737,12 @@ class BasicInterpreter:
              self.mark_dirty() # Mark main surface as needing redraw (though content hasn't changed)
 
     def _should_execute(self) -> bool:
-        return self.if_skip_level == -1
+        if self.if_skip_level != -1:
+            return False
+        # Also check SELECT CASE skip state
+        if self.select_stack and self.select_stack[-1].get("skip_remaining"):
+            return False
+        return True
 
     def _execute_single_statement(self, statement: str, current_pc_num: int) -> bool: # Renamed current_pc to current_pc_num
         statement = statement.strip()
@@ -687,16 +846,54 @@ class BasicInterpreter:
                 print(f"Error: END IF without IF at PC {current_pc_num}"); self.running = False
             return False
 
-        # If we are in a skipping state for IF blocks, only process FOR/NEXT/DO/LOOP for nesting
-        if not self._should_execute():
+        # If we are in a skipping state for IF blocks, only process control flow for nesting
+        # But always process CASE and END SELECT for SELECT CASE blocks
+        if self.if_skip_level != -1:
             # Minimal parsing to keep track of block nesting while skipping
             if up_stmt.startswith("FOR "): self.for_stack.append({"placeholder": True, "pc": current_pc_num})
             elif up_stmt.startswith("NEXT"):
                 if self.for_stack and self.for_stack[-1].get("placeholder"): self.for_stack.pop()
             elif up_stmt.startswith("DO"): self.loop_stack.append({"placeholder": True, "pc": current_pc_num})
             elif up_stmt.startswith("LOOP"):
-                 if self.loop_stack and self.loop_stack[-1].get("placeholder"): self.loop_stack.pop()
+                if self.loop_stack and self.loop_stack[-1].get("placeholder"): self.loop_stack.pop()
+            elif up_stmt.startswith("WHILE "): self.loop_stack.append({"placeholder": True, "type": "WHILE", "pc": current_pc_num})
+            elif up_stmt == "WEND":
+                if self.loop_stack and self.loop_stack[-1].get("placeholder") and self.loop_stack[-1].get("type") == "WHILE":
+                    self.loop_stack.pop()
+            elif up_stmt.startswith("SELECT CASE "): self.select_stack.append({"placeholder": True})
+            elif up_stmt == "END SELECT":
+                if self.select_stack and self.select_stack[-1].get("placeholder"):
+                    self.select_stack.pop()
             # No other statements are processed
+            return False
+
+        # If we are in SELECT CASE skip mode, still need to process CASE and END SELECT
+        if self.select_stack and self.select_stack[-1].get("skip_remaining"):
+            # Process CASE statements
+            m_case = _case_re.fullmatch(statement)
+            if m_case:
+                select_info = self.select_stack[-1]
+                case_expr = m_case.group(1).strip()
+
+                if select_info.get("case_matched"):
+                    select_info["skip_remaining"] = True
+                    return False
+
+                select_info["skip_remaining"] = False
+                if case_expr.upper() == "ELSE":
+                    select_info["case_matched"] = True
+                elif self._case_matches(select_info["test_value"], case_expr, current_pc_num):
+                    select_info["case_matched"] = True
+                else:
+                    select_info["skip_remaining"] = True
+                return False
+
+            # Process END SELECT
+            if _end_select_re.fullmatch(up_stmt):
+                self.select_stack.pop()
+                return False
+
+            # Skip other statements
             return False
 
 
@@ -1301,6 +1498,149 @@ class BasicInterpreter:
             self.last_rnd_value = None # RND sequence is reset
             return False
 
+        # --- SWAP statement ---
+        m_swap = _swap_re.fullmatch(statement)
+        if m_swap:
+            var1_str, var2_str = m_swap.group(1).strip(), m_swap.group(2).strip()
+            try:
+                # Get current values
+                val1 = self.eval_expr(var1_str)
+                val2 = self.eval_expr(var2_str)
+                if not self.running: return False
+
+                # Assign swapped values
+                self._assign_variable(var1_str, val2, current_pc_num)
+                self._assign_variable(var2_str, val1, current_pc_num)
+            except Exception as e:
+                print(f"Error in SWAP statement '{statement}': {e} at PC {current_pc_num}")
+                self.running = False
+            return False
+
+        # --- WHILE statement ---
+        m_while = _while_re.fullmatch(statement)
+        if m_while:
+            cond_expr = m_while.group(1).strip()
+            cond_met = bool(self.eval_expr(cond_expr))
+            if not self.running: return False
+
+            self.loop_stack.append({
+                "type": "WHILE",
+                "start_pc": self.pc,  # PC of the line AFTER WHILE
+                "cond_expr": cond_expr
+            })
+
+            if not cond_met:
+                self._skip_while_block(current_pc_num)
+                return True  # PC changed by skipping
+            return False
+
+        # --- WEND statement ---
+        if _wend_re.fullmatch(up_stmt):
+            if not self.loop_stack or self.loop_stack[-1].get("type") != "WHILE":
+                print(f"Error: WEND without WHILE at PC {current_pc_num}")
+                self.running = False
+                return False
+
+            loop_info = self.loop_stack[-1]
+            cond_met = bool(self.eval_expr(loop_info["cond_expr"]))
+            if not self.running: return False
+
+            if cond_met:
+                self.pc = loop_info["start_pc"]  # Jump back to start of WHILE body
+                return True
+            else:
+                self.loop_stack.pop()
+            return False
+
+        # --- SELECT CASE statement ---
+        m_select = _select_case_re.fullmatch(statement)
+        if m_select:
+            test_expr = m_select.group(1).strip()
+            test_value = self.eval_expr(test_expr)
+            if not self.running: return False
+
+            self.select_stack.append({
+                "test_value": test_value,
+                "case_matched": False,
+                "skip_remaining": False
+            })
+            return False
+
+        # --- CASE statement ---
+        m_case = _case_re.fullmatch(statement)
+        if m_case:
+            if not self.select_stack:
+                print(f"Error: CASE without SELECT CASE at PC {current_pc_num}")
+                self.running = False
+                return False
+
+            select_info = self.select_stack[-1]
+            case_expr = m_case.group(1).strip()
+
+            # If we already matched and executed a case, skip all remaining cases
+            if select_info["case_matched"]:
+                select_info["skip_remaining"] = True
+                return False
+
+            # Reset skip_remaining - we're at a new CASE
+            select_info["skip_remaining"] = False
+
+            # Handle CASE ELSE
+            if case_expr.upper() == "ELSE":
+                select_info["case_matched"] = True
+                return False
+
+            # Check if this case matches
+            if self._case_matches(select_info["test_value"], case_expr, current_pc_num):
+                select_info["case_matched"] = True
+            else:
+                select_info["skip_remaining"] = True
+            return False
+
+        # --- END SELECT statement ---
+        if _end_select_re.fullmatch(up_stmt):
+            if not self.select_stack:
+                print(f"Error: END SELECT without SELECT CASE at PC {current_pc_num}")
+                self.running = False
+                return False
+            self.select_stack.pop()
+            return False
+
+        # --- DATA statement (skip, already processed in reset) ---
+        if up_stmt.startswith("DATA "):
+            return False
+
+        # --- READ statement ---
+        m_read = _read_re.fullmatch(statement)
+        if m_read:
+            var_list = m_read.group(1).strip()
+            var_names = [v.strip() for v in var_list.split(',')]
+            for var_name in var_names:
+                if self.data_pointer >= len(self.data_values):
+                    print(f"Error: Out of DATA at PC {current_pc_num}")
+                    self.running = False
+                    return False
+                value = self.data_values[self.data_pointer]
+                self.data_pointer += 1
+                self._assign_variable(var_name, value, current_pc_num)
+                if not self.running: return False
+            return False
+
+        # --- RESTORE statement ---
+        m_restore = _restore_re.fullmatch(statement)
+        if m_restore:
+            label = m_restore.group(1)
+            if label:
+                label = label.upper()
+                if label in self.data_labels:
+                    self.data_pointer = self.data_labels[label]
+                else:
+                    print(f"Error: DATA label '{label}' not found at PC {current_pc_num}")
+                    self.running = False
+            else:
+                self.data_pointer = 0  # Reset to beginning
+            return False
+
         if _end_re.fullmatch(up_stmt):
             self.running = False
             return False # END statement, stop execution
@@ -1325,6 +1665,94 @@ class BasicInterpreter:
             self.pc = target_pc_idx # Set PC for GOSUB target
             return True # Indicate PC has changed
         print(f"Error: Label '{label}' not found for GOSUB at PC {self.pc-1}."); self.running = False; return False
+
+    def _assign_variable(self, var_str: str, value: Any, pc: int) -> None:
+        """Assign a value to a variable (scalar or array element)."""
+        var_str = var_str.strip()
+        # Check if it's an array assignment
+        array_match = _assign_lhs_array_re.fullmatch(var_str)
+        if array_match:
+            var_name_orig, idx_str = array_match.group(1), array_match.group(2)
+            var_name = var_name_orig.upper()
+            if var_name in self.constants:
+                print(f"Error: Cannot assign to constant array '{var_name_orig}' at PC {pc}")
+                self.running = False
+                return
+            if var_name not in self.variables or not isinstance(self.variables[var_name], list):
+                print(f"Error: Array '{var_name_orig}' not DIMensioned at PC {pc}")
+                self.running = False
+                return
+            try:
+                indices = [int(round(float(self.eval_expr(idx.strip())))) for idx in _split_args(idx_str)]
+                if not self.running: return
+                target = self.variables[var_name]
+                for i in range(len(indices) - 1):
+                    target = target[indices[i]]
+                target[indices[-1]] = value
+            except (IndexError, TypeError) as e:
+                print(f"Error: Array index error for '{var_str}': {e} at PC {pc}")
+                self.running = False
+        else:
+            # Scalar variable
+            var_name = var_str.upper()
+            if var_name in self.constants:
+                print(f"Error: Cannot assign to constant '{var_str}' at PC {pc}")
+                self.running = False
+                return
+            self.variables[var_name] = value
+
+    def _case_matches(self, test_value: Any, case_expr: str, pc: int) -> bool:
+        """Check if a CASE expression matches the test value."""
+        case_expr = case_expr.strip()
+
+        # Handle IS comparisons: CASE IS >= 10, CASE IS < 5, etc.
+        is_match = re.match(r"IS\s*([<>=!]+)\s*(.+)", case_expr, re.IGNORECASE)
+        if is_match:
+            operator = is_match.group(1)
+            compare_value = self.eval_expr(is_match.group(2).strip())
+            if not self.running: return False
+            if operator == ">":
+                return test_value > compare_value
+            elif operator == "<":
+                return test_value < compare_value
+            elif operator == ">=":
+                return test_value >= compare_value
+            elif operator == "<=":
+                return test_value <= compare_value
+            elif operator == "=" or operator == "==":
+                return test_value == compare_value
+            elif operator == "<>" or operator == "!=":
+                return test_value != compare_value
+            return False
+
+        # Handle ranges: CASE 1 TO 5
+        to_match = re.match(r"(.+)\s+TO\s+(.+)", case_expr, re.IGNORECASE)
+        if to_match:
+            low_value = self.eval_expr(to_match.group(1).strip())
+            high_value = self.eval_expr(to_match.group(2).strip())
+            if not self.running: return False
+            return low_value <= test_value <= high_value
+
+        # Handle comma-separated values: CASE 1, 3, 5
+        if ',' in case_expr:
+            values = [v.strip() for v in case_expr.split(',')]
+            for val_expr in values:
+                val = self.eval_expr(val_expr)
+                if not self.running: return False
+                if test_value == val:
+                    return True
+            return False
+
+        # Simple value comparison
+        case_value = self.eval_expr(case_expr)
+        if not self.running: return False
+        return test_value == case_value
+
+    def _skip_while_block(self, start_pc_num: int) -> None:
+        """Skip to the matching WEND statement."""
+        if self.loop_stack and self.loop_stack[-1].get("type") == "WHILE":
+            self.loop_stack.pop()
+        self._skip_block("WHILE", "WEND", start_pc_num)
 
     def step_line(self) -> bool:
         """ Executes the current program line (self.pc) and advances self.pc.

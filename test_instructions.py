@@ -832,6 +832,426 @@ def test_randomize():
     print("  RANDOMIZE: PASSED")
 
 # ============================================================
+# NEW STRING FUNCTIONS TESTS
+# ============================================================
+
+def test_asc():
+    """Test ASC function."""
+    print("Testing ASC...")
+    interp, _ = run_program(['X = ASC("A")'])
+    assert interp.variables.get('X') == 65, f"Expected 65, got {interp.variables.get('X')}"
+    print("  ASC: PASSED")
+
+def test_asc_string_var():
+    """Test ASC with string variable."""
+    print("Testing ASC with string var...")
+    interp, _ = run_program(['s$ = "Hello"', 'X = ASC(s$)'])
+    assert interp.variables.get('X') == 72, f"Expected 72 (H), got {interp.variables.get('X')}"
+    print("  ASC with string var: PASSED")
+
+def test_instr():
+    """Test INSTR function."""
+    print("Testing INSTR...")
+    interp, _ = run_program(['X = INSTR("Hello World", "World")'])
+    assert interp.variables.get('X') == 7, f"Expected 7, got {interp.variables.get('X')}"
+    print("  INSTR: PASSED")
+
+def test_instr_with_start():
+    """Test INSTR with start position."""
+    print("Testing INSTR with start...")
+    # INSTR(5, ...) starts searching at position 5, which is 'o' in "Hello World"
+    # So it finds 'o' immediately at position 5
+    interp, _ = run_program(['X = INSTR(5, "Hello World", "o")'])
+    assert interp.variables.get('X') == 5, f"Expected 5, got {interp.variables.get('X')}"
+    # To find the SECOND 'o', start at position 6
+    interp2, _ = run_program(['X = INSTR(6, "Hello World", "o")'])
+    assert interp2.variables.get('X') == 8, f"Expected 8, got {interp2.variables.get('X')}"
+    print("  INSTR with start: PASSED")
+
+def test_instr_not_found():
+    """Test INSTR when substring not found."""
+    print("Testing INSTR not found...")
+    interp, _ = run_program(['X = INSTR("Hello", "xyz")'])
+    assert interp.variables.get('X') == 0, f"Expected 0, got {interp.variables.get('X')}"
+    print("  INSTR not found: PASSED")
+
+def test_lcase():
+    """Test LCASE$ function."""
+    print("Testing LCASE$...")
+    interp, _ = run_program(['X$ = LCASE$("HELLO World")'])
+    assert interp.variables.get('X$') == "hello world", f"Expected 'hello world', got {interp.variables.get('X$')}"
+    print("  LCASE$: PASSED")
+
+def test_ucase():
+    """Test UCASE$ function."""
+    print("Testing UCASE$...")
+    interp, _ = run_program(['X$ = UCASE$("Hello World")'])
+    assert interp.variables.get('X$') == "HELLO WORLD", f"Expected 'HELLO WORLD', got {interp.variables.get('X$')}"
+    print("  UCASE$: PASSED")
+
+def test_ltrim():
+    """Test LTRIM$ function."""
+    print("Testing LTRIM$...")
+    interp, _ = run_program(['X$ = LTRIM$("   Hello")'])
+    assert interp.variables.get('X$') == "Hello", f"Expected 'Hello', got '{interp.variables.get('X$')}'"
+    print("  LTRIM$: PASSED")
+
+def test_rtrim():
+    """Test RTRIM$ function."""
+    print("Testing RTRIM$...")
+    interp, _ = run_program(['X$ = RTRIM$("Hello   ")'])
+    assert interp.variables.get('X$') == "Hello", f"Expected 'Hello', got '{interp.variables.get('X$')}'"
+    print("  RTRIM$: PASSED")
+
+def test_space():
+    """Test SPACE$ function."""
+    print("Testing SPACE$...")
+    interp, _ = run_program(['X$ = SPACE$(5)'])
+    assert interp.variables.get('X$') == "     ", f"Expected 5 spaces, got '{interp.variables.get('X$')}'"
+    print("  SPACE$: PASSED")
+
+def test_string_char():
+    """Test STRING$ function with character."""
+    print("Testing STRING$ with char...")
+    interp, _ = run_program(['X$ = STRING$(5, "*")'])
+    assert interp.variables.get('X$') == "*****", f"Expected '*****', got '{interp.variables.get('X$')}'"
+    print("  STRING$ with char: PASSED")
+
+def test_string_code():
+    """Test STRING$ function with ASCII code."""
+    print("Testing STRING$ with code...")
+    interp, _ = run_program(['X$ = STRING$(3, 65)'])
+    assert interp.variables.get('X$') == "AAA", f"Expected 'AAA', got '{interp.variables.get('X$')}'"
+    print("  STRING$ with code: PASSED")
+
+def test_hex():
+    """Test HEX$ function."""
+    print("Testing HEX$...")
+    interp, _ = run_program(['X$ = HEX$(255)'])
+    assert interp.variables.get('X$') == "FF", f"Expected 'FF', got '{interp.variables.get('X$')}'"
+    print("  HEX$: PASSED")
+
+def test_oct():
+    """Test OCT$ function."""
+    print("Testing OCT$...")
+    interp, _ = run_program(['X$ = OCT$(64)'])
+    assert interp.variables.get('X$') == "100", f"Expected '100', got '{interp.variables.get('X$')}'"
+    print("  OCT$: PASSED")
+
+# ============================================================
+# NEW MATH FUNCTIONS TESTS
+# ============================================================
+
+def test_log():
+    """Test LOG function."""
+    print("Testing LOG...")
+    interp, _ = run_program(['X = LOG(2.718281828)'])
+    assert abs(interp.variables.get('X') - 1.0) < 0.001, f"Expected ~1.0, got {interp.variables.get('X')}"
+    print("  LOG: PASSED")
+
+def test_exp():
+    """Test EXP function."""
+    print("Testing EXP...")
+    interp, _ = run_program(['X = EXP(1)'])
+    assert abs(interp.variables.get('X') - 2.718281828) < 0.001, f"Expected ~2.718, got {interp.variables.get('X')}"
+    print("  EXP: PASSED")
+
+def test_cint():
+    """Test CINT function (round to nearest)."""
+    print("Testing CINT...")
+    interp, _ = run_program([
+        'A = CINT(3.4)',
+        'B = CINT(3.6)',
+        'C = CINT(-3.6)'
+    ])
+    assert interp.variables.get('A') == 3, f"Expected 3, got {interp.variables.get('A')}"
+    assert interp.variables.get('B') == 4, f"Expected 4, got {interp.variables.get('B')}"
+    assert interp.variables.get('C') == -4, f"Expected -4, got {interp.variables.get('C')}"
+    print("  CINT: PASSED")
+
+# ============================================================
+# DATE$ AND TIME$ TESTS
+# ============================================================
+
+def test_date_function():
+    """Test DATE$ function."""
+    print("Testing DATE$...")
+    interp, _ = run_program(['X$ = DATE$'])
+    date_val = interp.variables.get('X$')
+    assert date_val is not None
+    assert len(date_val) == 10  # MM-DD-YYYY format
+    assert date_val[2] == '-' and date_val[5] == '-'
+    print("  DATE$: PASSED")
+
+def test_time_function():
+    """Test TIME$ function."""
+    print("Testing TIME$...")
+    interp, _ = run_program(['X$ = TIME$'])
+    time_val = interp.variables.get('X$')
+    assert time_val is not None
+    assert len(time_val) == 8  # HH:MM:SS format
+    assert time_val[2] == ':' and time_val[5] == ':'
+    print("  TIME$: PASSED")
+
+# ============================================================
+# SWAP STATEMENT TESTS
+# ============================================================
+
+def test_swap():
+    """Test SWAP statement."""
+    print("Testing SWAP...")
+    interp, _ = run_program([
+        'A = 10',
+        'B = 20',
+        'SWAP A, B'
+    ])
+    assert interp.variables.get('A') == 20, f"Expected A=20, got {interp.variables.get('A')}"
+    assert interp.variables.get('B') == 10, f"Expected B=10, got {interp.variables.get('B')}"
+    print("  SWAP: PASSED")
+
+def test_swap_strings():
+    """Test SWAP with string variables."""
+    print("Testing SWAP strings...")
+    interp, _ = run_program([
+        'A$ = "Hello"',
+        'B$ = "World"',
+        'SWAP A$, B$'
+    ])
+    assert interp.variables.get('A$') == "World"
+    assert interp.variables.get('B$') == "Hello"
+    print("  SWAP strings: PASSED")
+
+def test_swap_array_elements():
+    """Test SWAP with array elements."""
+    print("Testing SWAP array elements...")
+    interp, _ = run_program([
+        'DIM arr(5)',
+        'arr(0) = 100',
+        'arr(1) = 200',
+        'SWAP arr(0), arr(1)',
+        'X = arr(0)',
+        'Y = arr(1)'
+    ])
+    assert interp.variables.get('X') == 200
+    assert interp.variables.get('Y') == 100
+    print("  SWAP array elements: PASSED")
+
+# ============================================================
+# WHILE...WEND TESTS
+# ============================================================
+
+def test_while_wend():
+    """Test WHILE...WEND loop."""
+    print("Testing WHILE...WEND...")
+    interp, _ = run_program([
+        'X = 0',
+        'WHILE X < 5',
+        '  X = X + 1',
+        'WEND'
+    ])
+    assert interp.variables.get('X') == 5, f"Expected 5, got {interp.variables.get('X')}"
+    print("  WHILE...WEND: PASSED")
+
+def test_while_false_initially():
+    """Test WHILE when condition is false initially."""
+    print("Testing WHILE false initially...")
+    interp, _ = run_program([
+        'X = 10',
+        'Y = 0',
+        'WHILE X < 5',
+        '  Y = Y + 1',
+        'WEND'
+    ])
+    assert interp.variables.get('Y') == 0, f"Expected 0, got {interp.variables.get('Y')}"
+    print("  WHILE false initially: PASSED")
+
+def test_while_nested():
+    """Test nested WHILE loops."""
+    print("Testing nested WHILE...")
+    interp, _ = run_program([
+        'total = 0',
+        'I = 0',
+        'WHILE I < 3',
+        '  J = 0',
+        '  WHILE J < 2',
+        '    total = total + 1',
+        '    J = J + 1',
+        '  WEND',
+        '  I = I + 1',
+        'WEND'
+    ])
+    assert interp.variables.get('TOTAL') == 6, f"Expected 6, got {interp.variables.get('TOTAL')}"
+    print("  Nested WHILE: PASSED")
+
+# ============================================================
+# SELECT CASE TESTS
+# ============================================================
+
+def test_select_case_simple():
+    """Test simple SELECT CASE."""
+    print("Testing SELECT CASE simple...")
+    interp, _ = run_program([
+        'X = 2',
+        'SELECT CASE X',
+        '  CASE 1',
+        '    Y = 10',
+        '  CASE 2',
+        '    Y = 20',
+        '  CASE 3',
+        '    Y = 30',
+        'END SELECT'
+    ])
+    assert interp.variables.get('Y') == 20, f"Expected 20, got {interp.variables.get('Y')}"
+    print("  SELECT CASE simple: PASSED")
+
+def test_select_case_else():
+    """Test SELECT CASE with CASE ELSE."""
+    print("Testing SELECT CASE ELSE...")
+    interp, _ = run_program([
+        'X = 99',
+        'SELECT CASE X',
+        '  CASE 1',
+        '    Y = 10',
+        '  CASE 2',
+        '    Y = 20',
+        '  CASE ELSE',
+        '    Y = 999',
+        'END SELECT'
+    ])
+    assert interp.variables.get('Y') == 999, f"Expected 999, got {interp.variables.get('Y')}"
+    print("  SELECT CASE ELSE: PASSED")
+
+def test_select_case_range():
+    """Test SELECT CASE with range (TO)."""
+    print("Testing SELECT CASE range...")
+    interp, _ = run_program([
+        'X = 7',
+        'SELECT CASE X',
+        '  CASE 1 TO 5',
+        '    Y = 1',
+        '  CASE 6 TO 10',
+        '    Y = 2',
+        '  CASE ELSE',
+        '    Y = 0',
+        'END SELECT'
+    ])
+    assert interp.variables.get('Y') == 2, f"Expected 2, got {interp.variables.get('Y')}"
+    print("  SELECT CASE range: PASSED")
+
+def test_select_case_is():
+    """Test SELECT CASE with IS comparison."""
+    print("Testing SELECT CASE IS...")
+    interp, _ = run_program([
+        'X = 15',
+        'SELECT CASE X',
+        '  CASE IS < 5',
+        '    Y = 1',
+        '  CASE IS >= 10',
+        '    Y = 2',
+        '  CASE ELSE',
+        '    Y = 0',
+        'END SELECT'
+    ])
+    assert interp.variables.get('Y') == 2, f"Expected 2, got {interp.variables.get('Y')}"
+    print("  SELECT CASE IS: PASSED")
+
+def test_select_case_string():
+    """Test SELECT CASE with strings."""
+    print("Testing SELECT CASE strings...")
+    interp, _ = run_program([
+        's$ = "B"',
+        'SELECT CASE s$',
+        '  CASE "A"',
+        '    Y = 1',
+        '  CASE "B"',
+        '    Y = 2',
+        '  CASE "C"',
+        '    Y = 3',
+        'END SELECT'
+    ])
+    assert interp.variables.get('Y') == 2, f"Expected 2, got {interp.variables.get('Y')}"
+    print("  SELECT CASE strings: PASSED")
+
+# ============================================================
+# DATA/READ/RESTORE TESTS
+# ============================================================
+
+def test_data_read():
+    """Test DATA and READ statements."""
+    print("Testing DATA/READ...")
+    interp, _ = run_program([
+        'DATA 10, 20, 30',
+        'READ A',
+        'READ B',
+        'READ C'
+    ])
+    assert interp.variables.get('A') == 10
+    assert interp.variables.get('B') == 20
+    assert interp.variables.get('C') == 30
+    print("  DATA/READ: PASSED")
+
+def test_data_read_strings():
+    """Test DATA and READ with strings."""
+    print("Testing DATA/READ strings...")
+    interp, _ = run_program([
+        'DATA "Hello", "World"',
+        'READ A$, B$'
+    ])
+    assert interp.variables.get('A$') == "Hello"
+    assert interp.variables.get('B$') == "World"
+    print("  DATA/READ strings: PASSED")
+
+def test_data_multiple_lines():
+    """Test DATA across multiple lines."""
+    print("Testing DATA multiple lines...")
+    interp, _ = run_program([
+        'DATA 1, 2, 3',
+        'DATA 4, 5, 6',
+        'total = 0',
+        'FOR i = 1 TO 6',
+        '  READ X',
+        '  total = total + X',
+        'NEXT i'
+    ])
+    assert interp.variables.get('TOTAL') == 21, f"Expected 21, got {interp.variables.get('TOTAL')}"
+    print("  DATA multiple lines: PASSED")
+
+def test_restore():
+    """Test RESTORE statement."""
+    print("Testing RESTORE...")
+    interp, _ = run_program([
+        'DATA 10, 20',
+        'READ A',
+        'READ B',
+        'RESTORE',
+        'READ C',
+        'READ D'
+    ])
+    assert interp.variables.get('A') == 10
+    assert interp.variables.get('B') == 20
+    assert interp.variables.get('C') == 10  # Re-read after RESTORE
+    assert interp.variables.get('D') == 20
+    print("  RESTORE: PASSED")
+
+def test_restore_label():
+    """Test RESTORE with label."""
+    print("Testing RESTORE with label...")
+    interp, _ = run_program([
+        'GOTO start',
+        'data1:',
+        'DATA 1, 2, 3',
+        'data2:',
+        'DATA 10, 20, 30',
+        'start:',
+        'RESTORE data2',
+        'READ A, B, C'
+    ])
+    assert interp.variables.get('A') == 10
+    assert interp.variables.get('B') == 20
+    assert interp.variables.get('C') == 30
+    print("  RESTORE with label: PASSED")
+
+# ============================================================
 # RUN ALL TESTS
 # ============================================================
 
@@ -952,6 +1372,55 @@ def run_all_tests():
         test_end,
         test_delay,
         test_randomize,
+
+        # New string functions
+        test_asc,
+        test_asc_string_var,
+        test_instr,
+        test_instr_with_start,
+        test_instr_not_found,
+        test_lcase,
+        test_ucase,
+        test_ltrim,
+        test_rtrim,
+        test_space,
+        test_string_char,
+        test_string_code,
+        test_hex,
+        test_oct,
+
+        # New math functions
+        test_log,
+        test_exp,
+        test_cint,
+
+        # Date/time functions
+        test_date_function,
+        test_time_function,
+
+        # SWAP
+        test_swap,
+        test_swap_strings,
+        test_swap_array_elements,
+
+        # WHILE...WEND
+        test_while_wend,
+        test_while_false_initially,
+        test_while_nested,
+
+        # SELECT CASE
+        test_select_case_simple,
+        test_select_case_else,
+        test_select_case_range,
+        test_select_case_is,
+        test_select_case_string,
+
+        # DATA/READ/RESTORE
+        test_data_read,
+        test_data_read_strings,
+        test_data_multiple_lines,
+        test_restore,
+        test_restore_label,
     ]
 
     passed = 0
