@@ -1265,15 +1265,17 @@ class BasicInterpreter:
                 box_mode = None # None, "B", or "BF"
 
                 if options_str:
-                    opts_parts = [opt.strip().upper() for opt in options_str.split(',')]
+                    # Use _split_args to correctly handle commas inside parentheses (e.g., BOARD(R, C))
+                    opts_parts_raw = _split_args(options_str)
+                    opts_parts = [opt.strip().upper() for opt in opts_parts_raw]
                     # First part could be color
                     if opts_parts[0] and not opts_parts[0] in ("B", "BF"):
                         # Need to eval original case for expression
-                        original_color_expr = options_str.split(',')[0].strip()
+                        original_color_expr = opts_parts_raw[0].strip()
                         color_index = int(self.eval_expr(original_color_expr))
                         if not self.running: return False
                         opts_parts.pop(0) # Color handled
-                    
+
                     for opt_part in opts_parts:
                         if opt_part == "B": box_mode = "B"
                         elif opt_part == "BF": box_mode = "BF" # BF takes precedence over B
