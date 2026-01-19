@@ -769,7 +769,8 @@ class Console:
 def run_editor(file_path: Optional[str] = None) -> None:
     pygame.init()
     pygame.key.set_repeat(300, 50)
-    screen = pygame.display.set_mode((INITIAL_WIDTH, INITIAL_HEIGHT), pygame.RESIZABLE)
+    screen = pygame.display.set_mode((INITIAL_WIDTH, INITIAL_HEIGHT), pygame.RESIZABLE | pygame.DOUBLEBUF | pygame.HWSURFACE)
+
     pygame.display.set_caption("Merged App: Code Wizard, Run & Console")
     font = pygame.font.SysFont("monospace", FONT_SIZE)
 
@@ -884,3 +885,8 @@ def run_editor(file_path: Optional[str] = None) -> None:
 
     pygame.quit()
 
+
+if __name__ == "__main__":
+    import sys
+    file_path = sys.argv[1] if len(sys.argv) > 1 else None
+    run_editor(file_path)
