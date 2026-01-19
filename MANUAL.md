@@ -236,6 +236,71 @@ ERASE arr                      ' Remove array from memory
 ERASE a, b, c                  ' Remove multiple arrays
 ```
 
+### DEF FN
+
+```basic
+' Define inline function with one parameter
+DEF FN double(x) = x * 2
+result = FN double(5)          ' result = 10
+
+' Multiple parameters
+DEF FN add(a, b) = a + b
+result = FN add(3, 7)          ' result = 10
+
+' No parameters (uses global variables)
+multiplier = 10
+DEF FN scale(x) = x * multiplier
+result = FN scale(5)           ' result = 50
+
+' String function
+DEF FN greet$(name$) = "Hello " + name$
+msg$ = FN greet$("World")      ' msg$ = "Hello World"
+```
+
+### OPTION BASE
+
+```basic
+' Set default array lower bound
+OPTION BASE 0                  ' Arrays start at 0 (default)
+DIM arr(5)                     ' Indices 0-5 (6 elements)
+
+OPTION BASE 1                  ' Arrays start at 1
+DIM arr(5)                     ' Indices 1-5 (5 elements)
+```
+
+### REDIM
+
+```basic
+' Redimension dynamic array (clears existing data)
+DIM arr(5)
+arr(3) = 100
+REDIM arr(10)                  ' Now arr has 11 elements, all reset to 0
+
+' Works with multi-dimensional arrays
+REDIM grid(10, 20)
+
+' Works with string arrays
+REDIM names$(5)
+```
+
+### PRINT USING
+
+```basic
+' Formatted numeric output
+PRINT USING "###"; 42          ' Prints "  42"
+PRINT USING "##.##"; 3.14      ' Prints " 3.14"
+PRINT USING "#,###"; 1234      ' Prints "1,234"
+PRINT USING "+##.##"; -5.5     ' Prints "- 5.50"
+
+' String formatting
+PRINT USING "!"; "Hello"       ' Prints "H" (first char only)
+PRINT USING "&"; "Hi"          ' Prints "Hi" (entire string)
+PRINT USING "\  \"; "Hello"    ' Prints "Hell" (fixed width)
+
+' Multiple values
+PRINT USING "## + ## = ##"; 2, 3, 5
+```
+
 ### ON...GOTO / ON...GOSUB
 
 ```basic
@@ -401,10 +466,12 @@ PRINT                      ' Print blank line
 | Function | Description | Example |
 |----------|-------------|---------|
 | `INKEY$` | Get pressed key (non-blocking) | `k$ = INKEY$` |
+| `INPUT$(n)` | Get n characters from keyboard | `c$ = INPUT$(1)` |
 | `TIMER` | Seconds since midnight | `t = TIMER` |
 | `DATE$` | Current date (MM-DD-YYYY) | `d$ = DATE$` |
 | `TIME$` | Current time (HH:MM:SS) | `t$ = TIME$` |
 | `POINT(x, y)` | Get pixel color at position | `c = POINT(100, 50)` |
+| `ENVIRON$(name$)` | Get environment variable | `p$ = ENVIRON$("PATH")` |
 
 ### Cursor/Screen Functions
 

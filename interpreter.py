@@ -125,6 +125,21 @@ _preset_re = re.compile(r"PRESET\s*\(\s*([^,]+)\s*,\s*([^)]+)\s*\)\s*(?:,\s*(.+)
 # ERASE - erase arrays
 _erase_re = re.compile(r"ERASE\s+(.+)", re.IGNORECASE)
 
+# FN function call pattern: FN name(args) or FNname(args)
+_fn_call_re = re.compile(r'\bFN\s*([a-zA-Z_][a-zA-Z0-9_]*\$?)\s*\(([^)]*)\)', re.IGNORECASE)
+
+# DEF FN - define inline function
+_def_fn_re = re.compile(r"DEF\s+FN\s*([a-zA-Z_][a-zA-Z0-9_]*\$?)\s*(?:\(([^)]*)\))?\s*=\s*(.+)", re.IGNORECASE)
+
+# OPTION BASE - set default array lower bound
+_option_base_re = re.compile(r"OPTION\s+BASE\s+([01])", re.IGNORECASE)
+
+# REDIM - redimension dynamic array
+_redim_re = re.compile(r"REDIM\s+([a-zA-Z_][a-zA-Z0-9_]*\$?)\s*\(([^)]+)\)", re.IGNORECASE)
+
+# PRINT USING - formatted output
+_print_using_re = re.compile(r"PRINT\s+USING\s+(.+?)\s*;\s*(.+)", re.IGNORECASE)
+
 _expr_cache: Dict[str, str] = {}
 _python_keywords = {'and', 'or', 'not', 'in', 'is', 'lambda', 'if', 'else', 'elif', 'while', 'for', 'try', 'except', 'finally', 'with', 'as', 'def', 'class', 'import', 'from', 'pass', 'break', 'continue', 'return', 'yield', 'global', 'nonlocal', 'assert', 'del', 'True', 'False', 'None'}
 # Python builtins used in generated code (for array indexing) - keep lowercase
@@ -141,7 +156,9 @@ _basic_function_names = {
     # Cursor/screen functions
     'CSRLIN', 'POS', 'TAB', 'SPC',
     # Array functions
-    'LBOUND', 'UBOUND'
+    'LBOUND', 'UBOUND',
+    # Environment/Input functions
+    'ENVIRON', 'INPUT'
 }
 
 # --- Expression Conversion Logic ---
@@ -212,6 +229,20 @@ def _split_args(args_str: str) -> List[str]:
     return args
 
 
+def _replace_fn_call(match: re.Match) -> str:
+    """
+    Callback for _fn_call_re.sub.
+    Converts FN funcname(args) to FN_FUNCNAME(args) for user-defined functions.
+    """
+    func_name = match.group(1).upper()
+    # Convert to Python-compatible name (e.g., GREET$ -> GREET_STR)
+    py_func_name = _basic_to_python_identifier(func_name)
+    args_str = match.group(2)
+    arg_parts = _split_args(args_str)
+    processed_args = [convert_basic_expr(arg, set()) for arg in arg_parts]
+    return f"FN_{py_func_name}({', '.join(processed_args)})"
+
+
 def _replace_func_or_array_access(match: re.Match) -> str:
     """
     Callback for _func_or_array_re.sub.
@@ -221,6 +252,11 @@ def _replace_func_or_array_access(match: re.Match) -> str:
     args_str = match.group(2)    # Content between parentheses
 
     name_base_upper = name_basic.rstrip('$%').upper()
+
+    # Skip FN_ prefixed names (user-defined function calls already converted)
+    if name_base_upper.startswith('FN_'):
+        # Preserve as-is (already converted by _replace_fn_call)
+        return match.group(0)
 
     if name_base_upper in _basic_function_names:  # It's a function call
         arg_parts = _split_args(args_str)
@@ -290,6 +326,9 @@ def convert_basic_expr(expr: str, known_identifiers: Optional[set] = None) -> st
     expr = _time_re.sub("TIME()", expr)
     expr = _rnd_bare_re.sub("RND()", expr)
     expr = _csrlin_re.sub("CSRLIN()", expr)
+
+    # 1b. User-defined FN function calls: FN name(args) or FNname(args)
+    expr = _fn_call_re.sub(_replace_fn_call, expr)
 
     # 2. General function calls OR array access: NAME(...) / NAME$(...)
     expr = _func_or_array_re.sub(_replace_func_or_array_access, expr)
@@ -368,6 +407,15 @@ class BasicInterpreter:
         self.input_cursor_pos: int = 0
         self._line_input_mode: bool = False  # True for LINE INPUT (no comma parsing)
 
+        # DEF FN user-defined functions: name -> (params, expression)
+        self.user_functions: Dict[str, Tuple[List[str], str]] = {}
+
+        # OPTION BASE setting (0 or 1)
+        self.option_base: int = 0
+
+        # INPUT$ key buffer for multi-character reads
+        self._input_dollar_buffer: str = ""
+
         # Environment for eval() - functions available to BASIC expressions
         self.eval_env_funcs = {
             # Original functions
@@ -410,6 +458,9 @@ class BasicInterpreter:
             # Array functions
             "LBOUND": self._basic_lbound,  # Get array lower bound
             "UBOUND": self._basic_ubound,  # Get array upper bound
+            # Environment/Input functions
+            "ENVIRON": self._basic_environ,  # Get environment variable
+            "INPUT": self._basic_input_dollar,  # INPUT$(n) - read n characters
         }
 
     def _basic_val(self, s_val: str) -> Any:
@@ -557,6 +608,63 @@ class BasicInterpreter:
                     return len(arr[0]) - 1
         return -1  # Return -1 for non-existent arrays or invalid dimension
 
+    def _basic_environ(self, var_name: str) -> str:
+        """ENVIRON$(varname) - Returns the value of an environment variable."""
+        import os
+        return os.environ.get(str(var_name), "")
+
+    def _basic_input_dollar(self, n: int) -> str:
+        """INPUT$(n) - Returns n characters from keyboard buffer.
+        In QBasic this is blocking, but here we return what's available."""
+        n = int(n)
+        if n <= 0:
+            return ""
+
+        # Collect characters from last_key buffer
+        result = ""
+        if self.last_key:
+            result = self.last_key[:n]
+            self.last_key = ""
+
+        # Pad with empty if not enough characters (non-blocking behavior)
+        # In real QBasic this would block until n characters are typed
+        return result
+
+    def _call_user_function(self, func_name: str, args: List[Any]) -> Any:
+        """Call a user-defined function (DEF FN)."""
+        func_name_upper = func_name.upper()
+        if func_name_upper not in self.user_functions:
+            print(f"Error: Undefined function FN{func_name}")
+            self.running = False
+            return 0
+
+        params, expr = self.user_functions[func_name_upper]
+
+        # Save current variable values for parameters
+        saved_vars = {}
+        for i, param in enumerate(params):
+            param_upper = param.upper()
+            if param_upper in self.variables:
+                saved_vars[param_upper] = self.variables[param_upper]
+            # Set parameter to argument value
+            if i < len(args):
+                self.variables[param_upper] = args[i]
+            else:
+                self.variables[param_upper] = 0  # Default value
+
+        # Evaluate the function expression
+        result = self.eval_expr(expr)
+
+        # Restore saved variables
+        for param in params:
+            param_upper = param.upper()
+            if param_upper in saved_vars:
+                self.variables[param_upper] = saved_vars[param_upper]
+            elif param_upper in self.variables:
+                del self.variables[param_upper]
+
+        return result
+
     def _parse_data_values(self, data_str: str) -> None:
         """Parse DATA statement values and add to data_values list."""
         # Split by commas, respecting quoted strings
@@ -622,6 +730,9 @@ class BasicInterpreter:
         self.data_labels.clear()
         # Reset SELECT CASE state
         self.select_stack.clear()
+        # Reset user-defined functions and option base
+        self.user_functions.clear()
+        self.option_base = 0
 
         self._dirty = True
         self._cached_scaled_surface = None
@@ -799,6 +910,16 @@ class BasicInterpreter:
             eval_locals[_basic_to_python_identifier(name)] = value
         for name, value in self.variables.items():
             eval_locals[_basic_to_python_identifier(name)] = value
+
+        # Add user-defined FN functions to eval locals
+        for fn_name in self.user_functions:
+            # Convert function name to Python-compatible format (e.g., GREET$ -> GREET_STR)
+            py_fn_name = _basic_to_python_identifier(fn_name)
+            fn_key = f"FN_{py_fn_name}"
+            # Create a closure to capture the current fn_name
+            def make_fn_caller(name):
+                return lambda *args: self._call_user_function(name, list(args))
+            eval_locals[fn_key] = make_fn_caller(fn_name)
 
         try:
             result = eval(_compiled_expr_cache[conv_expr], self.eval_env_funcs, eval_locals)
@@ -1066,8 +1187,9 @@ class BasicInterpreter:
                 print(f"Error: Cannot DIM constant '{var_name}' at PC {current_pc_num}"); self.running = False; return False
             
             try:
-                # DIM A(10) means indices 0-10. So size is N+1.
-                dims = [int(self.eval_expr(idx.strip())) + 1 for idx in idx_str.split(',')]
+                # DIM A(10) means indices 0-10 (OPTION BASE 0) or 1-10 (OPTION BASE 1).
+                # Size is N+1-option_base.
+                dims = [int(self.eval_expr(idx.strip())) + 1 - self.option_base for idx in idx_str.split(',')]
                 if not self.running: return False
 
                 default_val = "" if var_name.endswith("$") else 0
@@ -1246,6 +1368,11 @@ class BasicInterpreter:
              except Exception as e:
                  print(f"Error in LOCATE parameters '{statement}': {e} at PC {current_pc_num}")
              return False
+
+        # --- PRINT USING statement (must come before regular PRINT) ---
+        m_print_using = _print_using_re.fullmatch(statement)
+        if m_print_using:
+            return self._do_print_using(m_print_using.group(1).strip(), m_print_using.group(2).strip(), current_pc_num)
 
         m_print = _print_re.fullmatch(statement)
         if m_print:
@@ -1813,6 +1940,30 @@ class BasicInterpreter:
             self._do_erase(m_erase.group(1).strip(), current_pc_num)
             return False
 
+        # --- DEF FN statement ---
+        m_def_fn = _def_fn_re.fullmatch(statement)
+        if m_def_fn:
+            func_name = m_def_fn.group(1).upper()
+            params_str = m_def_fn.group(2)
+            expr = m_def_fn.group(3).strip()
+            params = []
+            if params_str:
+                params = [p.strip().upper() for p in params_str.split(',') if p.strip()]
+            self.user_functions[func_name] = (params, expr)
+            return False
+
+        # --- OPTION BASE statement ---
+        m_option_base = _option_base_re.fullmatch(statement)
+        if m_option_base:
+            self.option_base = int(m_option_base.group(1))
+            return False
+
+        # --- REDIM statement ---
+        m_redim = _redim_re.fullmatch(statement)
+        if m_redim:
+            self._do_redim(m_redim.group(1).strip(), m_redim.group(2).strip(), current_pc_num)
+            return False
+
         if _end_re.fullmatch(up_stmt):
             self.running = False
             return False # END statement, stop execution
@@ -2144,6 +2295,280 @@ class BasicInterpreter:
                 base_name = name.rstrip('$%')
                 if base_name in self.variables and isinstance(self.variables[base_name], list):
                     del self.variables[base_name]
+
+    def _do_print_using(self, format_expr: str, values_expr: str, pc: int) -> bool:
+        """Execute PRINT USING statement - formatted output.
+        Format specifiers:
+        # - digit position
+        . - decimal point position
+        , - thousands separator
+        + - print sign
+        - - trailing minus for negative
+        $$ - floating dollar sign
+        ** - fill leading with asterisks
+        ! - first character of string
+        & - entire string
+        \\ \\ - string field width (spaces between backslashes)
+        """
+        try:
+            # Evaluate the format string
+            format_str = str(self.eval_expr(format_expr))
+            if not self.running:
+                return False
+
+            # Parse and evaluate the values (comma-separated)
+            value_parts = []
+            current = ""
+            paren_level = 0
+            in_string = False
+            for char in values_expr:
+                if char == '"':
+                    in_string = not in_string
+                    current += char
+                elif char == '(' and not in_string:
+                    paren_level += 1
+                    current += char
+                elif char == ')' and not in_string:
+                    paren_level -= 1
+                    current += char
+                elif char == ',' and paren_level == 0 and not in_string:
+                    if current.strip():
+                        value_parts.append(current.strip())
+                    current = ""
+                else:
+                    current += char
+            if current.strip():
+                value_parts.append(current.strip())
+
+            values = []
+            for part in value_parts:
+                val = self.eval_expr(part)
+                if not self.running:
+                    return False
+                values.append(val)
+
+            # Format the output
+            output = self._format_using(format_str, values)
+
+            # Print the formatted output
+            x_render_pos = (self.text_cursor[0] - 1) * (self.font.size(" ")[0] if self.font else FONT_SIZE // 2)
+            y_render_pos = (self.text_cursor[1] - 1) * (self.font.get_height() if self.font else FONT_SIZE)
+
+            if self.surface and self.font:
+                fg_color = self.basic_color(self.current_fg_color)
+                text_surface = self.font.render(output, True, fg_color)
+                self.surface.blit(text_surface, (x_render_pos, y_render_pos))
+                self.mark_dirty()
+
+            # Move cursor
+            char_width = self.font.size(" ")[0] if self.font else FONT_SIZE // 2
+            self.text_cursor = (self.text_cursor[0] + len(output), self.text_cursor[1])
+
+            # Newline at end
+            self.text_cursor = (1, self.text_cursor[1] + 1)
+
+            return False
+        except Exception as e:
+            print(f"Error in PRINT USING at PC {pc}: {e}")
+            self.running = False
+            return False
+
+    def _format_using(self, format_str: str, values: List[Any]) -> str:
+        """Format values according to QBasic PRINT USING format string."""
+        result = ""
+        val_idx = 0
+        i = 0
+
+        while i < len(format_str):
+            ch = format_str[i]
+
+            # Check for numeric format
+            if ch in '#+-*$':
+                # Find the extent of the numeric format
+                num_format = ""
+                while i < len(format_str) and format_str[i] in '#.,+-*$':
+                    num_format += format_str[i]
+                    i += 1
+                # Handle exponential notation
+                if i < len(format_str) and format_str[i:i+4] in ['^^^^', '^^^^']:
+                    num_format += format_str[i:i+4]
+                    i += 4
+
+                if val_idx < len(values):
+                    result += self._format_numeric(num_format, values[val_idx])
+                    val_idx += 1
+                continue
+
+            # String format: ! (first char)
+            if ch == '!':
+                if val_idx < len(values):
+                    s = str(values[val_idx])
+                    result += s[0] if s else " "
+                    val_idx += 1
+                i += 1
+                continue
+
+            # String format: & (entire string)
+            if ch == '&':
+                if val_idx < len(values):
+                    result += str(values[val_idx])
+                    val_idx += 1
+                i += 1
+                continue
+
+            # String format: \  \ (fixed width, spaces between backslashes)
+            if ch == '\\':
+                # Count characters between backslashes (inclusive)
+                field_width = 2  # Minimum width including backslashes
+                j = i + 1
+                while j < len(format_str) and format_str[j] != '\\':
+                    field_width += 1
+                    j += 1
+                if j < len(format_str):
+                    field_width += 1  # Include closing backslash
+                    j += 1
+
+                if val_idx < len(values):
+                    s = str(values[val_idx])
+                    # Left-justify in field, truncate or pad
+                    if len(s) >= field_width:
+                        result += s[:field_width]
+                    else:
+                        result += s.ljust(field_width)
+                    val_idx += 1
+
+                i = j
+                continue
+
+            # Underscore escapes the next character (literal)
+            if ch == '_' and i + 1 < len(format_str):
+                result += format_str[i + 1]
+                i += 2
+                continue
+
+            # Regular character
+            result += ch
+            i += 1
+
+        return result
+
+    def _format_numeric(self, fmt: str, value: Any) -> str:
+        """Format a numeric value according to QBasic numeric format string."""
+        try:
+            num = float(value)
+        except (ValueError, TypeError):
+            num = 0.0
+
+        # Count format components
+        has_sign = '+' in fmt or '-' in fmt
+        has_dollar = '$$' in fmt or '$' in fmt
+        has_asterisk = '**' in fmt
+        has_comma = ',' in fmt
+        has_decimal = '.' in fmt
+
+        # Determine field width and decimal places
+        # Count # signs and decimal point position
+        hash_count = fmt.count('#')
+        if has_dollar:
+            hash_count += 1
+        if has_asterisk:
+            hash_count += 2
+
+        decimal_places = 0
+        if has_decimal:
+            # Count # after decimal point
+            dot_pos = fmt.find('.')
+            decimal_places = fmt[dot_pos:].count('#')
+
+        # Format the number
+        if decimal_places > 0:
+            formatted = f"{abs(num):.{decimal_places}f}"
+        else:
+            formatted = f"{int(abs(num))}"
+
+        # Add commas if requested
+        if has_comma:
+            parts = formatted.split('.')
+            int_part = parts[0]
+            # Insert commas every 3 digits from the right
+            new_int_part = ""
+            for i, c in enumerate(reversed(int_part)):
+                if i > 0 and i % 3 == 0:
+                    new_int_part = ',' + new_int_part
+                new_int_part = c + new_int_part
+            formatted = new_int_part + ('.' + parts[1] if len(parts) > 1 else '')
+
+        # Handle sign
+        sign = ""
+        if num < 0:
+            sign = "-"
+        elif has_sign and '+' in fmt:
+            sign = "+"
+
+        # Handle trailing minus
+        trailing_minus = ""
+        if '-' in fmt and fmt.endswith('-'):
+            if num < 0:
+                trailing_minus = "-"
+                sign = ""  # Don't add leading sign
+            else:
+                trailing_minus = " "
+
+        # Build result with fill characters
+        result = sign + formatted + trailing_minus
+
+        # Handle dollar sign
+        if has_dollar:
+            result = "$" + result
+
+        # Pad or fill to width
+        total_width = hash_count + (1 if has_decimal else 0) + (1 if has_sign or num < 0 else 0)
+        if has_dollar:
+            total_width += 1
+
+        if has_asterisk:
+            # Fill with asterisks
+            while len(result) < total_width:
+                result = "*" + result
+        else:
+            # Fill with spaces
+            while len(result) < total_width:
+                result = " " + result
+
+        return result
+
+    def _do_redim(self, var_name: str, dims_str: str, pc: int) -> None:
+        """Execute REDIM command - redimension a dynamic array."""
+        var_name_upper = var_name.upper()
+
+        try:
+            # Parse dimensions (same as DIM)
+            dims = []
+            for dim_expr in _split_args(dims_str):
+                dim_val = self.eval_expr(dim_expr.strip())
+                if not self.running:
+                    return
+                dims.append(int(dim_val) + 1 - self.option_base)  # QBasic uses inclusive upper bound
+
+            # Determine default value based on variable type
+            default_val = "" if var_name.endswith("$") else 0
+
+            # Create new array (overwrite any existing)
+            if len(dims) == 1:
+                self.variables[var_name_upper] = [default_val] * dims[0]
+            elif len(dims) == 2:
+                self.variables[var_name_upper] = [[default_val] * dims[1] for _ in range(dims[0])]
+            else:
+                # For higher dimensions, create nested lists
+                def create_nd_list(dims, default):
+                    if len(dims) == 1:
+                        return [default] * dims[0]
+                    return [create_nd_list(dims[1:], default) for _ in range(dims[0])]
+                self.variables[var_name_upper] = create_nd_list(dims, default_val)
+
+        except Exception as e:
+            print(f"Error in REDIM at PC {pc}: {e}")
+            self.running = False
 
     def _assign_variable(self, var_str: str, value: Any, pc: int) -> None:
         """Assign a value to a variable (scalar or array element)."""

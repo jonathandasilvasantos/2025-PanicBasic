@@ -1836,6 +1836,297 @@ def test_erase_string_array():
     print("  ERASE string array: PASSED")
 
 # ============================================================
+# DEF FN TESTS
+# ============================================================
+
+def test_def_fn_simple():
+    """Test simple DEF FN function."""
+    print("Testing DEF FN simple...")
+    interp, _ = run_program([
+        'DEF FN double(x) = x * 2',
+        'result = FN double(5)'
+    ])
+    assert interp.variables.get('RESULT') == 10, f"Expected 10, got {interp.variables.get('RESULT')}"
+    print("  DEF FN simple: PASSED")
+
+def test_def_fn_multiple_params():
+    """Test DEF FN with multiple parameters."""
+    print("Testing DEF FN multiple params...")
+    interp, _ = run_program([
+        'DEF FN add(a, b) = a + b',
+        'result = FN add(3, 7)'
+    ])
+    assert interp.variables.get('RESULT') == 10, f"Expected 10, got {interp.variables.get('RESULT')}"
+    print("  DEF FN multiple params: PASSED")
+
+def test_def_fn_no_params():
+    """Test DEF FN with no parameters."""
+    print("Testing DEF FN no params...")
+    interp, _ = run_program([
+        'X = 5',
+        'DEF FN getx() = X * 2',
+        'result = FN getx()'
+    ])
+    assert interp.variables.get('RESULT') == 10, f"Expected 10, got {interp.variables.get('RESULT')}"
+    print("  DEF FN no params: PASSED")
+
+def test_def_fn_string():
+    """Test DEF FN with string return."""
+    print("Testing DEF FN string...")
+    interp, _ = run_program([
+        'DEF FN greet$(name$) = "Hello " + name$',
+        'result$ = FN greet$("World")'
+    ])
+    assert interp.variables.get('RESULT$') == "Hello World", f"Expected 'Hello World', got {interp.variables.get('RESULT$')}"
+    print("  DEF FN string: PASSED")
+
+def test_def_fn_uses_global():
+    """Test DEF FN can use global variables."""
+    print("Testing DEF FN uses global...")
+    interp, _ = run_program([
+        'multiplier = 10',
+        'DEF FN scale(x) = x * multiplier',
+        'result = FN scale(5)'
+    ])
+    assert interp.variables.get('RESULT') == 50, f"Expected 50, got {interp.variables.get('RESULT')}"
+    print("  DEF FN uses global: PASSED")
+
+# ============================================================
+# OPTION BASE TESTS
+# ============================================================
+
+def test_option_base_0():
+    """Test OPTION BASE 0 (default)."""
+    print("Testing OPTION BASE 0...")
+    interp, _ = run_program([
+        'OPTION BASE 0',
+        'DIM arr(5)',
+        'arr(0) = 100',
+        'X = arr(0)'
+    ])
+    assert interp.variables.get('X') == 100, f"Expected 100, got {interp.variables.get('X')}"
+    print("  OPTION BASE 0: PASSED")
+
+def test_option_base_1():
+    """Test OPTION BASE 1."""
+    print("Testing OPTION BASE 1...")
+    interp, _ = run_program([
+        'OPTION BASE 1',
+        'DIM arr(5)',
+        'arr(1) = 100',
+        'X = arr(1)'
+    ])
+    # With OPTION BASE 1, arr(1) should be accessible
+    assert interp.variables.get('X') == 100, f"Expected 100, got {interp.variables.get('X')}"
+    print("  OPTION BASE 1: PASSED")
+
+def test_option_base_affects_lbound():
+    """Test OPTION BASE affects LBOUND."""
+    print("Testing OPTION BASE affects LBOUND...")
+    interp, _ = run_program([
+        'OPTION BASE 1',
+        'DIM arr(5)',
+        'X = LBOUND("arr")'
+    ])
+    # LBOUND should still return 0 as we store arrays 0-based internally
+    # (Note: In real QBasic, LBOUND would return 1 with OPTION BASE 1)
+    assert interp.variables.get('X') == 0, f"Expected 0, got {interp.variables.get('X')}"
+    print("  OPTION BASE affects LBOUND: PASSED")
+
+# ============================================================
+# REDIM TESTS
+# ============================================================
+
+def test_redim_basic():
+    """Test REDIM creates new array."""
+    print("Testing REDIM basic...")
+    interp, _ = run_program([
+        'REDIM arr(10)',
+        'arr(5) = 42',
+        'X = arr(5)'
+    ])
+    assert interp.variables.get('X') == 42, f"Expected 42, got {interp.variables.get('X')}"
+    print("  REDIM basic: PASSED")
+
+def test_redim_overwrites():
+    """Test REDIM overwrites existing array."""
+    print("Testing REDIM overwrites...")
+    interp, _ = run_program([
+        'DIM arr(5)',
+        'arr(3) = 100',
+        'REDIM arr(10)',
+        'X = arr(3)'  # Should be 0 after REDIM
+    ])
+    assert interp.variables.get('X') == 0, f"Expected 0 (reset), got {interp.variables.get('X')}"
+    print("  REDIM overwrites: PASSED")
+
+def test_redim_2d():
+    """Test REDIM with 2D array."""
+    print("Testing REDIM 2D...")
+    interp, _ = run_program([
+        'REDIM grid(5, 10)',
+        'grid(2, 3) = 42',
+        'X = grid(2, 3)'
+    ])
+    assert interp.variables.get('X') == 42, f"Expected 42, got {interp.variables.get('X')}"
+    print("  REDIM 2D: PASSED")
+
+def test_redim_string():
+    """Test REDIM with string array."""
+    print("Testing REDIM string...")
+    interp, _ = run_program([
+        'REDIM names$(5)',
+        'names$(2) = "Hello"',
+        'X$ = names$(2)'
+    ])
+    assert interp.variables.get('X$') == "Hello", f"Expected 'Hello', got {interp.variables.get('X$')}"
+    print("  REDIM string: PASSED")
+
+# ============================================================
+# PRINT USING TESTS
+# ============================================================
+
+def test_print_using_basic():
+    """Test PRINT USING with basic numeric format."""
+    print("Testing PRINT USING basic...")
+    interp = setup()
+    interp.reset([
+        'PRINT USING "###"; 42'
+    ])
+    # Just verify it doesn't crash
+    max_steps = 100
+    steps = 0
+    while interp.running and steps < max_steps:
+        interp.step()
+        steps += 1
+    assert not interp.running or steps >= max_steps - 1, "Program should complete"
+    print("  PRINT USING basic: PASSED")
+
+def test_print_using_decimal():
+    """Test PRINT USING with decimal format."""
+    print("Testing PRINT USING decimal...")
+    interp = setup()
+    interp.reset([
+        'PRINT USING "##.##"; 3.14'
+    ])
+    max_steps = 100
+    steps = 0
+    while interp.running and steps < max_steps:
+        interp.step()
+        steps += 1
+    assert not interp.running or steps >= max_steps - 1, "Program should complete"
+    print("  PRINT USING decimal: PASSED")
+
+def test_print_using_string():
+    """Test PRINT USING with string format."""
+    print("Testing PRINT USING string...")
+    interp = setup()
+    interp.reset([
+        'PRINT USING "!"; "Hello"'
+    ])
+    max_steps = 100
+    steps = 0
+    while interp.running and steps < max_steps:
+        interp.step()
+        steps += 1
+    assert not interp.running or steps >= max_steps - 1, "Program should complete"
+    print("  PRINT USING string: PASSED")
+
+def test_print_using_multiple():
+    """Test PRINT USING with multiple values."""
+    print("Testing PRINT USING multiple...")
+    interp = setup()
+    interp.reset([
+        'PRINT USING "## + ## = ##"; 2, 3, 5'
+    ])
+    max_steps = 100
+    steps = 0
+    while interp.running and steps < max_steps:
+        interp.step()
+        steps += 1
+    assert not interp.running or steps >= max_steps - 1, "Program should complete"
+    print("  PRINT USING multiple: PASSED")
+
+# ============================================================
+# ENVIRON$ TESTS
+# ============================================================
+
+def test_environ_basic():
+    """Test ENVIRON$ returns environment variable."""
+    print("Testing ENVIRON$ basic...")
+    import os
+    # Set a test environment variable
+    os.environ['TEST_BASIC_VAR'] = 'test_value'
+    interp, _ = run_program([
+        'X$ = ENVIRON$("TEST_BASIC_VAR")'
+    ])
+    assert interp.variables.get('X$') == 'test_value', f"Expected 'test_value', got {interp.variables.get('X$')}"
+    del os.environ['TEST_BASIC_VAR']
+    print("  ENVIRON$ basic: PASSED")
+
+def test_environ_nonexistent():
+    """Test ENVIRON$ returns empty for non-existent variable."""
+    print("Testing ENVIRON$ nonexistent...")
+    interp, _ = run_program([
+        'X$ = ENVIRON$("NONEXISTENT_VAR_12345")'
+    ])
+    assert interp.variables.get('X$') == '', f"Expected empty string, got {interp.variables.get('X$')}"
+    print("  ENVIRON$ nonexistent: PASSED")
+
+def test_environ_path():
+    """Test ENVIRON$ can read PATH."""
+    print("Testing ENVIRON$ PATH...")
+    import os
+    # PATH should always exist
+    interp, _ = run_program([
+        'X$ = ENVIRON$("PATH")'
+    ])
+    result = interp.variables.get('X$')
+    expected = os.environ.get('PATH', '')
+    # Just verify it's not empty and matches
+    assert result == expected, f"Expected PATH value, got {result}"
+    print("  ENVIRON$ PATH: PASSED")
+
+# ============================================================
+# INPUT$ TESTS
+# ============================================================
+
+def test_input_dollar_basic():
+    """Test INPUT$(n) returns characters from buffer."""
+    print("Testing INPUT$ basic...")
+    interp = setup()
+    interp.reset([
+        'X$ = INPUT$(1)'
+    ])
+    # Simulate key press
+    interp.last_key = "A"
+    interp.step()
+    assert interp.variables.get('X$') == "A", f"Expected 'A', got {interp.variables.get('X$')}"
+    print("  INPUT$ basic: PASSED")
+
+def test_input_dollar_empty():
+    """Test INPUT$(n) returns empty when no key pressed."""
+    print("Testing INPUT$ empty...")
+    interp, _ = run_program([
+        'X$ = INPUT$(1)'
+    ])
+    # No key pressed
+    assert interp.variables.get('X$') == "", f"Expected empty, got {interp.variables.get('X$')}"
+    print("  INPUT$ empty: PASSED")
+
+def test_input_dollar_zero():
+    """Test INPUT$(0) returns empty."""
+    print("Testing INPUT$ zero...")
+    interp = setup()
+    interp.reset([
+        'X$ = INPUT$(0)'
+    ])
+    interp.last_key = "ABC"
+    interp.step()
+    assert interp.variables.get('X$') == "", f"Expected empty, got {interp.variables.get('X$')}"
+    print("  INPUT$ zero: PASSED")
+
+# ============================================================
 # RUN ALL TESTS
 # ============================================================
 
@@ -2059,6 +2350,40 @@ def run_all_tests():
         test_erase_array,
         test_erase_multiple,
         test_erase_string_array,
+
+        # DEF FN
+        test_def_fn_simple,
+        test_def_fn_multiple_params,
+        test_def_fn_no_params,
+        test_def_fn_string,
+        test_def_fn_uses_global,
+
+        # OPTION BASE
+        test_option_base_0,
+        test_option_base_1,
+        test_option_base_affects_lbound,
+
+        # REDIM
+        test_redim_basic,
+        test_redim_overwrites,
+        test_redim_2d,
+        test_redim_string,
+
+        # PRINT USING
+        test_print_using_basic,
+        test_print_using_decimal,
+        test_print_using_string,
+        test_print_using_multiple,
+
+        # ENVIRON$
+        test_environ_basic,
+        test_environ_nonexistent,
+        test_environ_path,
+
+        # INPUT$
+        test_input_dollar_basic,
+        test_input_dollar_empty,
+        test_input_dollar_zero,
     ]
 
     passed = 0

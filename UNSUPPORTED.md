@@ -63,10 +63,9 @@ Note: `SOUND` and `BEEP` ARE now supported.
 
 | Command | Description |
 |---------|-------------|
-| `INPUT$` | Read specific number of characters |
-| `INPUT$(n, #filenum)` | Read characters from file |
+| `INPUT$(n, #filenum)` | Read characters from file (only file form) |
 
-Note: `INPUT` and `LINE INPUT` ARE now supported.
+Note: `INPUT`, `LINE INPUT`, and `INPUT$(n)` (keyboard) ARE now supported.
 
 ---
 
@@ -78,9 +77,10 @@ Note: `INPUT` and `LINE INPUT` ARE now supported.
 | `FUNCTION...END FUNCTION` | Define function |
 | `DECLARE` | Declare SUB or FUNCTION |
 | `CALL` | Call subroutine |
-| `DEF FN` | Define inline function |
 | `SHARED` | Share variables with main program |
 | `STATIC` | Declare static local variables |
+
+Note: `DEF FN` (inline functions) IS now supported.
 
 ---
 
@@ -116,13 +116,12 @@ Note: `ON...GOTO` and `ON...GOSUB` ARE now supported.
 | `POKE` | Write memory byte |
 | `DEF SEG` | Set memory segment |
 | `CLEAR` | Clear variables and set stack |
-| `REDIM` | Redimension dynamic array |
 | `VARPTR` | Get variable address |
 | `VARSEG` | Get variable segment |
 | `SADD` | Get string address |
 | `FRE` | Get free memory |
 
-Note: `ERASE`, `LBOUND`, and `UBOUND` ARE now supported.
+Note: `ERASE`, `LBOUND`, `UBOUND`, `REDIM`, and `OPTION BASE` ARE now supported.
 
 ---
 
@@ -158,10 +157,9 @@ Note: `TIMER`, `DATE$` (read), and `TIME$` (read) ARE supported.
 |---------|-------------|
 | `LPRINT` | Print to printer |
 | `WIDTH` | Set screen/printer width |
-| `PRINT USING` | Formatted output |
 | `LPRINT USING` | Formatted printer output |
 
-Note: `CSRLIN`, `POS(0)`, `TAB(n)`, and `SPC(n)` ARE now supported.
+Note: `CSRLIN`, `POS(0)`, `TAB(n)`, `SPC(n)`, and `PRINT USING` ARE now supported.
 
 ---
 
@@ -196,9 +194,10 @@ Note: `CSRLIN`, `POS(0)`, `TAB(n)`, and `SPC(n)` ARE now supported.
 
 | Function | Description |
 |----------|-------------|
-| `ENVIRON$` | Get environment variable |
 | `ENVIRON` | Set environment variable |
 | `COMMAND$` | Get command line arguments |
+
+Note: `ENVIRON$` (read environment variable) IS now supported.
 
 ---
 
@@ -207,7 +206,6 @@ Note: `CSRLIN`, `POS(0)`, `TAB(n)`, and `SPC(n)` ARE now supported.
 | Command | Description |
 |---------|-------------|
 | `DEF type` | Set default variable type (DEFINT, DEFSNG, etc.) |
-| `OPTION BASE` | Set default array lower bound |
 | `COMMON` | Share variables between modules |
 | `$INCLUDE` | Include external file |
 | `$DYNAMIC` | Declare dynamic arrays |
@@ -244,4 +242,3 @@ These features would have high impact if added:
 1. **PLAY** - Music Macro Language (MML) support
 2. **GET/PUT** - Sprite graphics
 3. **SUB/FUNCTION** - User-defined procedures
-4. **INPUT$** - Read specific number of characters
