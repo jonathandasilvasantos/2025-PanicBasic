@@ -71,8 +71,9 @@ _command_re = re.compile(r'\bCOMMAND\$', re.IGNORECASE)  # COMMAND$ -> COMMAND()
 _freefile_re = re.compile(r'\bFREEFILE\b(?!\s*\()', re.IGNORECASE)  # FREEFILE -> FREEFILE()
 
 # General pattern for NAME(...) or NAME$(...) which could be a function call or array access
+# Uses nested paren pattern to handle cases like func(a(), b) or arr(func(x))
 _func_or_array_re = re.compile(
-    r'\b([a-zA-Z_][a-zA-Z0-9_]*[\$%!#&]?)\s*\(([^)]*)\)', # name(args) - args can be empty
+    r'\b([a-zA-Z_][a-zA-Z0-9_]*[\$%!#&]?)\s*\(((?:[^()]|\((?:[^()]|\([^()]*\))*\))*)\)',
     re.IGNORECASE
 )
 
@@ -83,10 +84,11 @@ _identifier_re = re.compile(r'\b([a-zA-Z_][a-zA-Z0-9_]*[\$%#!&]?)')  # Match ide
 
 
 # --- Command Parsing Patterns (mostly unchanged but reviewed) ---
-_label_re = re.compile(r"^\s*(\d+|[a-zA-Z_][a-zA-Z0-9_]*:)")
-_label_strip_re = re.compile(r"^\s*(\d+\s+|[a-zA-Z_][a-zA-Z0-9_]*:)\s*")
+# Labels: numeric (100 PRINT), numeric with colon (1:), or identifier with colon (Start:)
+_label_re = re.compile(r"^\s*(\d+:?|[a-zA-Z_][a-zA-Z0-9_]*:)")
+_label_strip_re = re.compile(r"^\s*(\d+:?\s*|[a-zA-Z_][a-zA-Z0-9_]*:)\s*")
 _for_re = re.compile(
-    r'FOR\s+([a-zA-Z_][a-zA-Z0-9_]*\$?)\s*=\s*(.+?)\s+TO\s+(.+?)(?:\s+STEP\s+(.+))?$', re.IGNORECASE)
+    r'FOR\s+([a-zA-Z_][a-zA-Z0-9_]*[\$%!#&]?)\s*=\s*(.+?)\s+TO\s+(.+?)(?:\s+STEP\s+(.+))?$', re.IGNORECASE)
 _dim_re = re.compile(r'DIM\s+([a-zA-Z_][a-zA-Z0-9_]*[\$%!#&]?)\s*\(([^)]+)\)(?:\s+AS\s+(\w+))?', re.IGNORECASE)
 # DIM var AS type (simple variable with type, no array)
 _dim_as_re = re.compile(r'DIM\s+([a-zA-Z_][a-zA-Z0-9_]*)\s+AS\s+(\w+)', re.IGNORECASE)
@@ -99,7 +101,7 @@ _assign_lhs_array_re = re.compile(r'([a-zA-Z_][a-zA-Z0-9_]*[\$%!#&]?)\s*\(([^)]+
 
 
 _line_re = re.compile(
-    r"LINE\s*(?:\(\s*([^,]+)\s*,\s*([^)]+)\s*\))?\s*-\s*\(\s*([^,]+)\s*,\s*([^)]+)\s*\)\s*(?:,(.*))?$", re.IGNORECASE)
+    r"LINE\s*(?:\((.+?)\))?\s*-\s*\((.+?)\)\s*(?:,(.*))?$", re.IGNORECASE)
 _circle_re = re.compile(
     r"CIRCLE\s*\(([^,]+),([^)]+)\)\s*,\s*([^,]+)\s*(?:,\s*([^,]*))?\s*(?:,\s*([^,]*))?\s*(?:,\s*([^,]*))?\s*(?:,\s*([^,]*))?\s*(?:,\s*(F|BF))?", re.IGNORECASE)
 _paint_re = re.compile(r"PAINT\s*\(([^,]+),([^)]+)\)\s*(?:,\s*([^,]+))?(?:,\s*([^,]+))?", re.IGNORECASE)
@@ -115,7 +117,7 @@ _screen_re = re.compile(r"SCREEN\s+(.+)", re.IGNORECASE)
 _cls_re = re.compile(r"CLS", re.IGNORECASE)
 _end_re = re.compile(r"END", re.IGNORECASE)
 _randomize_re = re.compile(r"RANDOMIZE(?:\s+(.*))?", re.IGNORECASE)
-_next_re = re.compile(r"NEXT(?:\s+([a-zA-Z_][a-zA-Z0-9_]*\$?))?", re.IGNORECASE)
+_next_re = re.compile(r"NEXT(?:\s+([a-zA-Z_][a-zA-Z0-9_]*[\$%!#&]?))?", re.IGNORECASE)
 _delay_re = re.compile(r"(?:_DELAY|SLEEP)\s+(.*)", re.IGNORECASE)
 _do_re = re.compile(r"DO(?:\s+(WHILE|UNTIL)\s+(.+))?", re.IGNORECASE)
 _loop_re = re.compile(r"LOOP(?:\s+(WHILE|UNTIL)\s+(.+))?", re.IGNORECASE)
@@ -126,7 +128,7 @@ _exit_do_re = re.compile(r"EXIT\s+DO", re.IGNORECASE)
 _exit_for_re = re.compile(r"EXIT\s+FOR", re.IGNORECASE)
 
 # New statement patterns
-_swap_re = re.compile(r"SWAP\s+([a-zA-Z_][a-zA-Z0-9_]*\$?(?:\s*\([^)]+\))?)\s*,\s*([a-zA-Z_][a-zA-Z0-9_]*\$?(?:\s*\([^)]+\))?)", re.IGNORECASE)
+_swap_re = re.compile(r"SWAP\s+([a-zA-Z_][a-zA-Z0-9_]*[\$%!#&]?(?:\s*\([^)]+\))?)\s*,\s*([a-zA-Z_][a-zA-Z0-9_]*[\$%!#&]?(?:\s*\([^)]+\))?)", re.IGNORECASE)
 _while_re = re.compile(r"WHILE\s+(.+)", re.IGNORECASE)
 _wend_re = re.compile(r"WEND", re.IGNORECASE)
 _select_case_re = re.compile(r"SELECT\s+CASE\s+(.+)", re.IGNORECASE)
@@ -164,8 +166,8 @@ _def_fn_re = re.compile(r"DEF\s+FN\s*([a-zA-Z_][a-zA-Z0-9_]*\$?)\s*(?:\(([^)]*)\
 # OPTION BASE - set default array lower bound
 _option_base_re = re.compile(r"OPTION\s+BASE\s+([01])", re.IGNORECASE)
 
-# REDIM - redimension dynamic array
-_redim_re = re.compile(r"REDIM\s+([a-zA-Z_][a-zA-Z0-9_]*\$?)\s*\(([^)]+)\)", re.IGNORECASE)
+# REDIM - redimension dynamic array (supports type suffixes)
+_redim_re = re.compile(r"REDIM\s+([a-zA-Z_][a-zA-Z0-9_]*[\$%!#&]?)\s*\(([^)]+)\)", re.IGNORECASE)
 
 # PRINT USING - formatted output
 _print_using_re = re.compile(r"PRINT\s+USING\s+(.+?)\s*;\s*(.+)", re.IGNORECASE)
@@ -257,12 +259,13 @@ _type_re = re.compile(r"TYPE\s+([a-zA-Z_][a-zA-Z0-9_]*)", re.IGNORECASE)
 _end_type_re = re.compile(r"END\s+TYPE", re.IGNORECASE)
 
 # File I/O patterns
-_open_re = re.compile(r'OPEN\s+"?([^"]+)"?\s+FOR\s+(INPUT|OUTPUT|APPEND|BINARY|RANDOM)\s+AS\s+#?(\d+)(?:\s+LEN\s*=\s*(\d+))?', re.IGNORECASE)
-_close_re = re.compile(r"CLOSE(?:\s+#?(\d+))?", re.IGNORECASE)
-_input_file_re = re.compile(r"INPUT\s+#(\d+)\s*,\s*(.+)", re.IGNORECASE)
-_line_input_file_re = re.compile(r"LINE\s+INPUT\s+#(\d+)\s*,\s*(.+)", re.IGNORECASE)
-_print_file_re = re.compile(r"PRINT\s+#(\d+)\s*,?\s*(.*)", re.IGNORECASE)
-_write_file_re = re.compile(r"WRITE\s+#(\d+)\s*,?\s*(.*)", re.IGNORECASE)
+# File I/O patterns - file number can be a literal or variable expression
+_open_re = re.compile(r'OPEN\s+("[^"]+"|[^\s]+)\s+FOR\s+(INPUT|OUTPUT|APPEND|BINARY|RANDOM)\s+AS\s+#?([^\s,]+)(?:\s+LEN\s*=\s*(\d+))?', re.IGNORECASE)
+_close_re = re.compile(r"CLOSE(?:\s+#?([^\s,]+))?", re.IGNORECASE)
+_input_file_re = re.compile(r"INPUT\s+#([^\s,]+)\s*,\s*(.+)", re.IGNORECASE)
+_line_input_file_re = re.compile(r"LINE\s+INPUT\s+#([^\s,]+)\s*,\s*(.+)", re.IGNORECASE)
+_print_file_re = re.compile(r"PRINT\s+#([^\s,]+)\s*,?\s*(.*)", re.IGNORECASE)
+_write_file_re = re.compile(r"WRITE\s+#([^\s,]+)\s*,?\s*(.*)", re.IGNORECASE)
 
 _expr_cache: Dict[str, str] = {}
 _python_keywords = {'and', 'or', 'not', 'in', 'is', 'lambda', 'if', 'else', 'elif', 'while', 'for', 'try', 'except', 'finally', 'with', 'as', 'def', 'class', 'import', 'from', 'pass', 'break', 'continue', 'return', 'yield', 'global', 'nonlocal', 'assert', 'del', 'True', 'False', 'None'}
@@ -335,7 +338,7 @@ _memoized_arg_splits: Dict[str, List[str]] = {}
 
 def _split_args(args_str: str) -> List[str]:
     """
-    Splits an argument string by commas, respecting parentheses for nested calls.
+    Splits an argument string by commas, respecting parentheses and string quotes.
     This is a simplified parser; a full tokenizer/parser would be more robust.
     """
     if not args_str.strip():
@@ -346,16 +349,24 @@ def _split_args(args_str: str) -> List[str]:
     args = []
     current_arg = ""
     paren_level = 0
+    in_string = False
     for char in args_str:
-        if char == ',' and paren_level == 0:
+        if char == '"' and not in_string:
+            in_string = True
+            current_arg += char
+        elif char == '"' and in_string:
+            in_string = False
+            current_arg += char
+        elif char == ',' and paren_level == 0 and not in_string:
             args.append(current_arg.strip())
             current_arg = ""
         else:
             current_arg += char
-            if char == '(':
-                paren_level += 1
-            elif char == ')':
-                paren_level -= 1
+            if not in_string:
+                if char == '(':
+                    paren_level += 1
+                elif char == ')':
+                    paren_level -= 1
     args.append(current_arg.strip())
     _memoized_arg_splits[args_str] = args
     return args
@@ -399,8 +410,10 @@ def _replace_func_or_array_access(match: re.Match) -> str:
     else:  # It's an array access
         py_array_name = _basic_to_python_identifier(name_basic)
         arg_parts = _split_args(args_str)
-        if not arg_parts: # Should not happen if args_str was not empty
-             raise ValueError(f"Array access for '{name_basic}' with no indices.")
+        if not arg_parts:
+            # Empty parentheses (e.g., "a()") means the whole array - return just the name
+            # This is used when passing arrays as arguments to SUB/FUNCTION
+            return py_array_name
 
         # Array indices must be integers after evaluation
         # Use __int__, __round__, __float__ to avoid uppercase conversion issues
@@ -1025,6 +1038,11 @@ class BasicInterpreter:
         pending_label = None
         for i, line_content in enumerate(program_lines):
             stripped = line_content.strip()
+
+            # Strip comments for DATA label detection
+            if "'" in stripped:
+                stripped = stripped.split("'", 1)[0].strip()
+
             # Check for label
             label_match = _label_re.match(stripped)
             if label_match:
@@ -1036,11 +1054,12 @@ class BasicInterpreter:
                 # Record the label if there is one pending
                 if pending_label and pending_label not in self.data_labels:
                     self.data_labels[pending_label] = len(self.data_values)
-                    pending_label = None
                 # Parse DATA values
                 data_content = stripped[5:].strip()  # Remove "DATA "
                 self._parse_data_values(data_content)
-            elif stripped:  # Only reset pending_label if there's actual content (not just a label line)
+                # Don't clear pending_label here - there might be more DATA following
+            elif stripped and not stripped.upper().startswith("REM"):
+                # Only reset pending_label if there's actual non-DATA, non-comment content
                 pending_label = None  # Label wasn't for a DATA statement
 
         current_pc_index = 0
@@ -1171,11 +1190,18 @@ class BasicInterpreter:
 
         # Temporarily add FUNCTION procedure names to known functions
         # so they get converted as function calls, not array accesses
+        # Add both the full name (with suffix like CANDOWN%) and base name (CANDOWN)
         func_names_added = set()
         for name, proc in self.procedures.items():
-            if proc['type'] == 'FUNCTION' and name not in _basic_function_names:
-                _basic_function_names.add(name)
-                func_names_added.add(name)
+            if proc['type'] == 'FUNCTION':
+                if name not in _basic_function_names:
+                    _basic_function_names.add(name)
+                    func_names_added.add(name)
+                # Also add base name without type suffix for calls like CanDown vs CanDown%
+                base_name = name.rstrip('$%!#&')
+                if base_name != name and base_name not in _basic_function_names:
+                    _basic_function_names.add(base_name)
+                    func_names_added.add(base_name)
 
         try:
             conv_expr = convert_basic_expr(expr_str, None)
@@ -1230,6 +1256,10 @@ class BasicInterpreter:
                 def make_proc_caller(name):
                     return lambda *args: self._call_function_procedure(name, args)
                 eval_locals[py_name] = make_proc_caller(proc_name)
+                # Also add under base name (without suffix) for calls like CanDown vs CanDown%
+                base_name = proc_name.rstrip('$%!#&')
+                if base_name != proc_name:
+                    eval_locals[base_name] = make_proc_caller(proc_name)
 
         # QBasic treats undefined numeric variables as 0 and undefined string variables as ""
         # Retry evaluation up to 10 times, adding undefined variables as we encounter them
@@ -1341,16 +1371,34 @@ class BasicInterpreter:
                     condition_met = bool(eval_result)
 
                 if then_part: # Single-line IF THEN statement_block
-                    if currently_executing and condition_met:
-                        # Execute the 'then_part' as a new mini-line
-                        # Need to handle GOTO/GOSUB specially if they are the THEN part
-                        if _goto_re.match(then_part):
-                            return self._do_goto(_goto_re.match(then_part).group(1).upper())
-                        if _gosub_re.match(then_part):
-                            return self._do_gosub(_gosub_re.match(then_part).group(1).upper())
-                        # Otherwise, execute it as potentially multiple statements
-                        return self.execute_logical_line(then_part, current_pc_num) # Returns True if GOTO/GOSUB/DELAY happened
-                    return False # Condition not met or not executing this block
+                    # Check for ELSE in single-line IF (outside of strings)
+                    else_part = None
+                    in_string = False
+                    else_pos = -1
+                    i = 0
+                    while i < len(then_part):
+                        if then_part[i] == '"':
+                            in_string = not in_string
+                        elif not in_string and then_part[i:i+5].upper() == ' ELSE':
+                            else_pos = i
+                            break
+                        i += 1
+                    if else_pos >= 0:
+                        else_part = then_part[else_pos + 5:].strip()
+                        then_part = then_part[:else_pos].strip()
+
+                    if currently_executing:
+                        part_to_execute = then_part if condition_met else else_part
+                        if part_to_execute:
+                            # Execute the appropriate part as a new mini-line
+                            # Need to handle GOTO/GOSUB specially
+                            if _goto_re.match(part_to_execute):
+                                return self._do_goto(_goto_re.match(part_to_execute).group(1).upper())
+                            if _gosub_re.match(part_to_execute):
+                                return self._do_gosub(_gosub_re.match(part_to_execute).group(1).upper())
+                            # Otherwise, execute it as potentially multiple statements
+                            return self.execute_logical_line(part_to_execute, current_pc_num)
+                    return False # Not executing this block
                 else: # Block IF
                     self.if_level += 1
                     self.if_executed.append(condition_met)  # Track if this IF's condition was true
@@ -1435,12 +1483,22 @@ class BasicInterpreter:
             # No other statements are processed
             return False
 
-        # If we are in SELECT CASE skip mode, still need to process CASE and END SELECT
+        # If we are in SELECT CASE skip mode, still need to process CASE, END SELECT, and nested SELECT CASE
         if self.select_stack and self.select_stack[-1].get("skip_remaining"):
-            # Process CASE statements
+            # Handle nested SELECT CASE - push placeholder onto stack
+            m_select = _select_case_re.fullmatch(statement)
+            if m_select:
+                self.select_stack.append({"placeholder": True, "skip_remaining": True})
+                return False
+
+            # Process CASE statements - only for the current (top) SELECT CASE block
             m_case = _case_re.fullmatch(statement)
             if m_case:
                 select_info = self.select_stack[-1]
+                # If this is a placeholder from nested SELECT CASE being skipped, ignore
+                if select_info.get("placeholder"):
+                    return False
+
                 case_expr = m_case.group(1).strip()
 
                 if select_info.get("case_matched"):
@@ -1538,23 +1596,11 @@ class BasicInterpreter:
              self.constants[var_name] = val
              return False
 
-        # --- Multi-variable DIM (e.g., DIM a AS INTEGER, b AS STRING) ---
-        # Check for commas outside parentheses to detect multi-variable declarations
+        # --- DIM statement handler (handles all DIM forms including complex expressions) ---
+        # Use smart parser that can handle nested parentheses
         if up_stmt.startswith("DIM "):
             dim_content = statement[4:].strip()  # Remove "DIM "
-            # Check if there are commas outside parentheses
-            paren_depth = 0
-            has_outer_comma = False
-            for char in dim_content:
-                if char == '(':
-                    paren_depth += 1
-                elif char == ')':
-                    paren_depth -= 1
-                elif char == ',' and paren_depth == 0:
-                    has_outer_comma = True
-                    break
-            if has_outer_comma:
-                return self._handle_multi_dim(dim_content, current_pc_num)
+            return self._handle_multi_dim(dim_content, current_pc_num)
 
         # --- DIM var AS type (simple typed variable or user-defined type) ---
         m_dim_as = _dim_as_re.fullmatch(statement)
@@ -1863,16 +1909,23 @@ class BasicInterpreter:
         m_print = _print_re.fullmatch(statement)
         if m_print:
             content = m_print.group(1).strip() if m_print.group(1) else ""
-            
-            # Split content by print separators (',' and ';') while respecting quotes
+
+            # Split content by print separators (',' and ';') while respecting quotes and parentheses
             parts = []
             current_part = ""
             in_string_literal = False
+            paren_depth = 0
             for char in content:
-                if char == '"':
+                if char == '"' and paren_depth == 0:
                     in_string_literal = not in_string_literal
-                
-                if not in_string_literal and (char == ';' or char == ','):
+
+                if not in_string_literal:
+                    if char == '(':
+                        paren_depth += 1
+                    elif char == ')':
+                        paren_depth -= 1
+
+                if not in_string_literal and paren_depth == 0 and (char == ';' or char == ','):
                     if current_part: parts.append(current_part.strip())
                     parts.append(char) # Keep separator as a part
                     current_part = ""
@@ -1969,17 +2022,25 @@ class BasicInterpreter:
         m_line = _line_re.match(statement)
         if m_line and self.surface:
             try:
-                sx_e, sy_e, ex_e, ey_e = m_line.group(1), m_line.group(2), m_line.group(3), m_line.group(4)
-                options_str = m_line.group(5)
+                start_coords_str = m_line.group(1)  # "x, y" or None
+                end_coords_str = m_line.group(2)    # "x, y"
+                options_str = m_line.group(3)
 
                 start_x, start_y = self.lpr # Default to last point referenced (LPR)
-                if sx_e is not None and sy_e is not None: # sx_e can be None if (x,y)- form
-                    start_x = int(self.eval_expr(sx_e.strip()))
-                    start_y = int(self.eval_expr(sy_e.strip()))
-                    if not self.running: return False
-                
-                end_x = int(self.eval_expr(ex_e.strip()))
-                end_y = int(self.eval_expr(ey_e.strip()))
+                if start_coords_str is not None:
+                    start_parts = _split_args(start_coords_str)
+                    if len(start_parts) >= 2:
+                        start_x = int(self.eval_expr(start_parts[0].strip()))
+                        start_y = int(self.eval_expr(start_parts[1].strip()))
+                        if not self.running: return False
+
+                end_parts = _split_args(end_coords_str)
+                if len(end_parts) < 2:
+                    print(f"Error in LINE: invalid end coordinates '{end_coords_str}' at PC {current_pc_num}")
+                    self.running = False
+                    return False
+                end_x = int(self.eval_expr(end_parts[0].strip()))
+                end_y = int(self.eval_expr(end_parts[1].strip()))
                 if not self.running: return False
 
                 color_index = self.current_fg_color
@@ -2464,7 +2525,50 @@ class BasicInterpreter:
             self.option_base = int(m_option_base.group(1))
             return False
 
-        # --- REDIM statement ---
+        # --- REDIM statement (supports multiple arrays: REDIM a(10), b(20)) ---
+        if up_stmt.startswith("REDIM "):
+            redim_content = statement[6:].strip()  # Remove "REDIM "
+            # Check if there are commas outside parentheses (multiple arrays)
+            paren_depth = 0
+            has_outer_comma = False
+            for char in redim_content:
+                if char == '(':
+                    paren_depth += 1
+                elif char == ')':
+                    paren_depth -= 1
+                elif char == ',' and paren_depth == 0:
+                    has_outer_comma = True
+                    break
+            if has_outer_comma:
+                # Split by commas outside parentheses
+                declarations = []
+                current = ""
+                paren_depth = 0
+                for char in redim_content:
+                    if char == '(':
+                        paren_depth += 1
+                        current += char
+                    elif char == ')':
+                        paren_depth -= 1
+                        current += char
+                    elif char == ',' and paren_depth == 0:
+                        if current.strip():
+                            declarations.append(current.strip())
+                        current = ""
+                    else:
+                        current += char
+                if current.strip():
+                    declarations.append(current.strip())
+                # Process each declaration
+                for decl in declarations:
+                    # Match array pattern
+                    match = re.match(r'([a-zA-Z_][a-zA-Z0-9_]*[\$%!#&]?)\s*\(([^)]+)\)', decl)
+                    if match:
+                        self._do_redim(match.group(1).strip(), match.group(2).strip(), current_pc_num)
+                        if not self.running:
+                            return False
+                return False
+
         m_redim = _redim_re.fullmatch(statement)
         if m_redim:
             self._do_redim(m_redim.group(1).strip(), m_redim.group(2).strip(), current_pc_num)
@@ -3312,6 +3416,7 @@ class BasicInterpreter:
         - DIM a AS INTEGER, b AS STRING (multiple with types)
         - DIM a(10), b(20) (multiple arrays)
         - DIM a(10) AS INTEGER, b(20) AS STRING (multiple arrays with types)
+        - DIM a((expr * 2) + 1) AS INTEGER (complex expressions in bounds)
         """
         # Split by commas, but respect parentheses for array dimensions
         declarations = []
@@ -3333,13 +3438,122 @@ class BasicInterpreter:
         if current.strip():
             declarations.append(current.strip())
 
-        # Process each declaration
+        # Process each declaration directly
         for decl in declarations:
-            # Execute as individual DIM statement
-            result = self.execute_logical_line(f"DIM {decl}", pc)
-            if not self.running:
-                return False
+            if not self._handle_single_dim(decl, pc):
+                if not self.running:
+                    return False
         return False
+
+    def _handle_single_dim(self, decl: str, pc: int) -> bool:
+        """Handle a single DIM declaration (scalar or array).
+
+        Formats:
+        - varname (scalar)
+        - varname AS type (scalar with type)
+        - varname(bounds) (array)
+        - varname(bounds) AS type (array with type)
+        """
+        decl = decl.strip()
+
+        # Check for AS clause at the end
+        type_name = None
+        as_match = re.search(r'\s+AS\s+(\w+)\s*$', decl, re.IGNORECASE)
+        if as_match:
+            type_name = as_match.group(1).upper()
+            decl = decl[:as_match.start()].strip()
+
+        # Check if this is an array declaration (has parentheses)
+        # Need to find the opening paren that belongs to the array bounds
+        paren_start = -1
+        for i, char in enumerate(decl):
+            if char == '(':
+                paren_start = i
+                break
+
+        if paren_start > 0:
+            # Array declaration
+            var_name = decl[:paren_start].strip().upper()
+            # Extract bounds - find matching closing paren
+            paren_depth = 0
+            bounds_str = ""
+            for i in range(paren_start, len(decl)):
+                char = decl[i]
+                if char == '(':
+                    paren_depth += 1
+                    if paren_depth > 1:  # Don't include outermost parens
+                        bounds_str += char
+                elif char == ')':
+                    paren_depth -= 1
+                    if paren_depth > 0:  # Don't include outermost parens
+                        bounds_str += char
+                elif paren_depth > 0:
+                    bounds_str += char
+
+            if var_name in self.constants:
+                print(f"Error: Cannot DIM constant '{var_name}' at PC {pc}")
+                self.running = False
+                return False
+
+            try:
+                # Parse array dimensions
+                dims = []
+                for idx_spec in _split_args(bounds_str):
+                    idx_spec = idx_spec.strip()
+                    # Check for "lower TO upper" syntax
+                    to_match = re.match(r'(.+?)\s+TO\s+(.+)', idx_spec, re.IGNORECASE)
+                    if to_match:
+                        lower_bound = int(self.eval_expr(to_match.group(1).strip()))
+                        upper_bound = int(self.eval_expr(to_match.group(2).strip()))
+                        if not self.running: return False
+                        dims.append(upper_bound - lower_bound + 1)
+                    else:
+                        upper_bound = int(self.eval_expr(idx_spec))
+                        if not self.running: return False
+                        dims.append(upper_bound + 1 - self.option_base)
+
+                # Determine default value
+                def create_default():
+                    if type_name and type_name in self.type_definitions:
+                        instance = {'_type': type_name}
+                        for field_name, field_type in self.type_definitions[type_name].items():
+                            instance[field_name] = "" if field_type == 'STRING' else 0
+                        return instance
+                    elif var_name.endswith("$") or type_name == 'STRING':
+                        return ""
+                    else:
+                        return 0
+
+                # Create N-dimensional array
+                def create_nd_array(dimensions, default_factory):
+                    if len(dimensions) == 1:
+                        return [default_factory() for _ in range(dimensions[0])]
+                    return [create_nd_array(dimensions[1:], default_factory) for _ in range(dimensions[0])]
+
+                self.variables[var_name] = create_nd_array(dims, create_default)
+            except Exception as e:
+                print(f"Error in DIM statement for '{decl}': {e} at PC {pc}")
+                self.running = False
+                return False
+        else:
+            # Scalar declaration
+            var_name = decl.strip().upper()
+            if var_name in self.constants:
+                print(f"Error: Cannot DIM constant '{var_name}' at PC {pc}")
+                self.running = False
+                return False
+
+            if type_name and type_name in self.type_definitions:
+                instance = {'_type': type_name}
+                for field_name, field_type in self.type_definitions[type_name].items():
+                    instance[field_name] = "" if field_type == 'STRING' else 0
+                self.variables[var_name] = instance
+            elif var_name.endswith('$') or type_name == 'STRING':
+                self.variables[var_name] = ""
+            else:
+                self.variables[var_name] = 0
+
+        return True
 
     def _do_play(self, mml_expr: str, pc: int) -> None:
         """Execute PLAY command - Music Macro Language.
@@ -4259,9 +4473,18 @@ class BasicInterpreter:
     def _handle_open(self, match, pc: int) -> bool:
         """Handle OPEN filename FOR mode AS #n."""
         try:
-            filename = match.group(1).strip().strip('"')
+            filename_expr = match.group(1).strip()
+            # Evaluate filename if it's a variable, otherwise use as literal
+            if filename_expr.startswith('"') and filename_expr.endswith('"'):
+                filename = filename_expr[1:-1]
+            else:
+                filename = str(self.eval_expr(filename_expr))
+                if not self.running: return False
             mode = match.group(2).upper()
-            file_num = int(match.group(3))
+            # File number can be an expression (e.g., f% variable)
+            file_num_expr = match.group(3).strip()
+            file_num = int(self.eval_expr(file_num_expr))
+            if not self.running: return False
 
             # Map QBasic modes to Python modes
             mode_map = {
@@ -4303,7 +4526,8 @@ class BasicInterpreter:
         """Handle CLOSE [#n]."""
         try:
             if match.group(1):
-                file_num = int(match.group(1))
+                file_num = int(self.eval_expr(match.group(1).strip()))
+                if not self.running: return False
                 if file_num in self.file_handles:
                     self.file_handles[file_num].close()
                     del self.file_handles[file_num]
@@ -4321,7 +4545,8 @@ class BasicInterpreter:
     def _handle_input_file(self, match, pc: int) -> bool:
         """Handle INPUT #n, vars."""
         try:
-            file_num = int(match.group(1))
+            file_num = int(self.eval_expr(match.group(1).strip()))
+            if not self.running: return False
             vars_str = match.group(2)
 
             if file_num not in self.file_handles:
@@ -4368,7 +4593,8 @@ class BasicInterpreter:
     def _handle_line_input_file(self, match, pc: int) -> bool:
         """Handle LINE INPUT #n, var$."""
         try:
-            file_num = int(match.group(1))
+            file_num = int(self.eval_expr(match.group(1).strip()))
+            if not self.running: return False
             var_name = match.group(2).strip().upper()
 
             if file_num not in self.file_handles:
@@ -4390,7 +4616,8 @@ class BasicInterpreter:
     def _handle_print_file(self, match, pc: int) -> bool:
         """Handle PRINT #n, expressions."""
         try:
-            file_num = int(match.group(1))
+            file_num = int(self.eval_expr(match.group(1).strip()))
+            if not self.running: return False
             expr_str = match.group(2) or ""
 
             if file_num not in self.file_handles:
@@ -4427,7 +4654,8 @@ class BasicInterpreter:
     def _handle_write_file(self, match, pc: int) -> bool:
         """Handle WRITE #n, expressions (comma-separated with quotes around strings)."""
         try:
-            file_num = int(match.group(1))
+            file_num = int(self.eval_expr(match.group(1).strip()))
+            if not self.running: return False
             expr_str = match.group(2) or ""
 
             if file_num not in self.file_handles:
