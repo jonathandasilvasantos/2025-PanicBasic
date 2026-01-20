@@ -14,6 +14,13 @@ from datetime import datetime
 from typing import List, Optional, Tuple, Dict, Any
 from pygame.locals import KEYDOWN, QUIT, VIDEORESIZE
 from collections import deque, OrderedDict
+from constants import (
+    FONT_SIZE, INITIAL_WINDOW_WIDTH, INITIAL_WINDOW_HEIGHT,
+    DEFAULT_SCREEN_WIDTH, DEFAULT_SCREEN_HEIGHT, MAX_STEPS_PER_FRAME,
+    PRINT_TAB_WIDTH, EXPR_CACHE_MAX_SIZE, COMPILED_CACHE_MAX_SIZE,
+    IDENTIFIER_CACHE_MAX_SIZE, SCREEN_MODES, DEFAULT_COLORS,
+    DEFAULT_FG_COLOR, DEFAULT_BG_COLOR, DEFAULT_ARRAY_SIZE
+)
 
 # Try to import numpy for faster array operations
 try:
@@ -44,14 +51,10 @@ class BasicEvalLocals(dict):
         # All other undefined variables default to 0
         return 0
 
-# --- Constants ---
-FONT_SIZE = 16
-INITIAL_WIDTH = 800
-INITIAL_HEIGHT = 600
-DEFAULT_SCREEN_WIDTH = 320
-DEFAULT_SCREEN_HEIGHT = 200
-MAX_STEPS_PER_FRAME = 2000  # Increased from 500 for better performance
-PRINT_TAB_WIDTH = 14
+# Constants are now imported from constants.py module
+# Aliases for backward compatibility
+INITIAL_WIDTH = INITIAL_WINDOW_WIDTH
+INITIAL_HEIGHT = INITIAL_WINDOW_HEIGHT
 
 # --- LRU Cache Implementation ---
 class LRUCache:
@@ -100,7 +103,7 @@ class LRUCache:
 
 # --- Compiled Expression Cache ---
 # Using LRU cache to prevent unbounded memory growth
-_compiled_expr_cache: LRUCache = LRUCache(maxsize=10000)  # Cache for compiled code objects
+_compiled_expr_cache: LRUCache = LRUCache(maxsize=COMPILED_CACHE_MAX_SIZE)  # Cache for compiled code objects
 
 # --- Precompiled Regex Patterns ---
 
@@ -435,8 +438,8 @@ _date_assign_re = re.compile(r"DATE\$\s*=\s*(.+)", re.IGNORECASE)
 _time_assign_re = re.compile(r"TIME\$\s*=\s*(.+)", re.IGNORECASE)
 
 # Expression caches using LRU to prevent unbounded memory growth
-_expr_cache: LRUCache = LRUCache(maxsize=10000)  # Cache for BASIC to Python expression conversion
-_identifier_cache: LRUCache = LRUCache(maxsize=5000)  # Cache for identifier name conversions
+_expr_cache: LRUCache = LRUCache(maxsize=EXPR_CACHE_MAX_SIZE)  # Cache for BASIC to Python expression conversion
+_identifier_cache: LRUCache = LRUCache(maxsize=IDENTIFIER_CACHE_MAX_SIZE)  # Cache for identifier name conversions
 _python_keywords = {'and', 'or', 'not', 'in', 'is', 'lambda', 'if', 'else', 'elif', 'while', 'for', 'try', 'except', 'finally', 'with', 'as', 'def', 'class', 'import', 'from', 'pass', 'break', 'continue', 'return', 'yield', 'global', 'nonlocal', 'assert', 'del', 'True', 'False', 'None'}
 # Python builtins used in generated code (for array indexing) - keep lowercase
 _python_builtins_used = {'int'}
@@ -756,18 +759,13 @@ class BasicInterpreter:
         self.active_page: int = 0  # Current drawing page
         self.visual_page: int = 0  # Current display page
         self.last_key: str = ""
-        self.colors: Dict[int, Tuple[int, int, int]] = {
-            0: (0,0,0), 1: (0,0,170), 2: (0,170,0), 3: (0,170,170),
-            4: (170,0,0), 5: (170,0,170), 6: (170,85,0), 7: (170,170,170),
-            8: (85,85,85), 9: (85,85,255), 10: (85,255,85), 11: (85,255,255),
-            12: (255,85,85), 13: (255,85,255), 14: (255,255,85), 15: (255,255,255)
-        }
+        self.colors: Dict[int, Tuple[int, int, int]] = dict(DEFAULT_COLORS)
         # Reverse lookup for O(1) color number lookup in point() function
         self._reverse_colors: Dict[Tuple[int, int, int], int] = {
             rgb: num for num, rgb in self.colors.items()
         }
-        self.current_fg_color: int = 7
-        self.current_bg_color: int = 0
+        self.current_fg_color: int = DEFAULT_FG_COLOR
+        self.current_bg_color: int = DEFAULT_BG_COLOR
         self.lpr: Tuple[int, int] = (0, 0) # Last Point Referenced
         self.delay_until: int = 0
         self.labels: Dict[str, int] = {}
@@ -2293,23 +2291,11 @@ class BasicInterpreter:
         if m_screen:
             mode = int(self.eval_expr(m_screen.group(1).strip()))  # Evaluate expression for mode
             if not self.running: return False
-            # QBasic screen modes
-            screen_modes = {
-                0: (640, 400),   # Text mode 80x25 (simulated)
-                1: (320, 200),   # CGA 4-color
-                2: (640, 200),   # CGA 2-color
-                7: (320, 200),   # EGA 16-color
-                8: (640, 200),   # EGA 16-color
-                9: (640, 350),   # EGA 16-color
-                10: (640, 350),  # EGA mono
-                11: (640, 480),  # VGA 2-color
-                12: (640, 480),  # VGA 16-color
-                13: (320, 200),  # VGA 256-color
-            }
-            if mode in screen_modes:
-                self.screen_width, self.screen_height = screen_modes[mode]
+            # QBasic screen modes - use SCREEN_MODES from constants module
+            if mode in SCREEN_MODES:
+                self.screen_width, self.screen_height = SCREEN_MODES[mode]
             else:
-                self.screen_width, self.screen_height = 320, 200  # Default
+                self.screen_width, self.screen_height = DEFAULT_SCREEN_WIDTH, DEFAULT_SCREEN_HEIGHT
 
             # Update view print bottom for text modes
             if self.font:

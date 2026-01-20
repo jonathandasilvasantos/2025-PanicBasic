@@ -285,6 +285,61 @@ class TestLRUCache(unittest.TestCase):
             self.assertIn(f"expr{i}", small_cache)
 
 
+class TestConstants(unittest.TestCase):
+    """Test that constants module is properly structured and importable."""
+
+    def test_constants_importable(self):
+        """Test that all constants can be imported from constants module."""
+        from constants import (
+            FONT_SIZE, INITIAL_WINDOW_WIDTH, INITIAL_WINDOW_HEIGHT,
+            DEFAULT_SCREEN_WIDTH, DEFAULT_SCREEN_HEIGHT, MAX_STEPS_PER_FRAME,
+            PRINT_TAB_WIDTH, SCREEN_MODES, DEFAULT_COLORS, DEFAULT_FG_COLOR,
+            DEFAULT_BG_COLOR, DEFAULT_ARRAY_SIZE, SCAN_CODES, ERROR_CODES
+        )
+
+        # Verify types
+        self.assertIsInstance(FONT_SIZE, int)
+        self.assertIsInstance(SCREEN_MODES, dict)
+        self.assertIsInstance(DEFAULT_COLORS, dict)
+        self.assertIsInstance(SCAN_CODES, dict)
+        self.assertIsInstance(ERROR_CODES, dict)
+
+    def test_screen_modes_valid(self):
+        """Test that screen modes have valid dimensions."""
+        from constants import SCREEN_MODES
+
+        for mode, (width, height) in SCREEN_MODES.items():
+            self.assertIsInstance(mode, int)
+            self.assertIsInstance(width, int)
+            self.assertIsInstance(height, int)
+            self.assertGreater(width, 0)
+            self.assertGreater(height, 0)
+
+    def test_default_colors_has_16_colors(self):
+        """Test that default color palette has all 16 colors."""
+        from constants import DEFAULT_COLORS
+
+        self.assertEqual(len(DEFAULT_COLORS), 16)
+        for i in range(16):
+            self.assertIn(i, DEFAULT_COLORS)
+            rgb = DEFAULT_COLORS[i]
+            self.assertEqual(len(rgb), 3)
+            for component in rgb:
+                self.assertGreaterEqual(component, 0)
+                self.assertLessEqual(component, 255)
+
+    def test_cache_sizes_positive(self):
+        """Test that cache sizes are positive integers."""
+        from constants import (
+            EXPR_CACHE_MAX_SIZE, COMPILED_CACHE_MAX_SIZE,
+            IDENTIFIER_CACHE_MAX_SIZE
+        )
+
+        self.assertGreater(EXPR_CACHE_MAX_SIZE, 0)
+        self.assertGreater(COMPILED_CACHE_MAX_SIZE, 0)
+        self.assertGreater(IDENTIFIER_CACHE_MAX_SIZE, 0)
+
+
 class TestIdentifierConversion(unittest.TestCase):
     """Test BASIC identifier to Python identifier conversion."""
 
