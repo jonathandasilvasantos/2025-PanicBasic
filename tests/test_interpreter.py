@@ -19,8 +19,8 @@ pygame.font.init()
 pygame.display.set_mode((800, 600))
 
 from interpreter import (
-    BasicInterpreter, BasicRuntimeError, LRUCache, convert_basic_expr, _protect_strings,
-    _restore_strings, _basic_to_python_identifier,
+    BasicInterpreter, BasicRuntimeError, LRUCache, LazyPattern, convert_basic_expr,
+    _protect_strings, _restore_strings, _basic_to_python_identifier,
     _expr_cache, _compiled_expr_cache, _identifier_cache
 )
 
@@ -283,6 +283,106 @@ class TestLRUCache(unittest.TestCase):
         # Last 5 should remain
         for i in range(5, 10):
             self.assertIn(f"expr{i}", small_cache)
+
+
+class TestLazyPattern(unittest.TestCase):
+    """Test lazy regex pattern compilation."""
+
+    def test_lazy_pattern_not_compiled_initially(self):
+        """Test that pattern is not compiled on creation."""
+        lazy = LazyPattern(r"TEST\s+(\d+)", 0)
+        self.assertFalse(lazy.is_compiled)
+
+    def test_lazy_pattern_compiles_on_match(self):
+        """Test that pattern compiles on first match call."""
+        lazy = LazyPattern(r"TEST\s+(\d+)", 0)
+        self.assertFalse(lazy.is_compiled)
+
+        # First match triggers compilation
+        result = lazy.match("TEST 123")
+        self.assertTrue(lazy.is_compiled)
+        self.assertIsNotNone(result)
+        self.assertEqual(result.group(1), "123")
+
+    def test_lazy_pattern_compiles_on_search(self):
+        """Test that pattern compiles on first search call."""
+        lazy = LazyPattern(r"\d+", 0)
+        self.assertFalse(lazy.is_compiled)
+
+        result = lazy.search("abc 42 def")
+        self.assertTrue(lazy.is_compiled)
+        self.assertIsNotNone(result)
+        self.assertEqual(result.group(0), "42")
+
+    def test_lazy_pattern_compiles_on_findall(self):
+        """Test that pattern compiles on first findall call."""
+        lazy = LazyPattern(r"\d+", 0)
+        self.assertFalse(lazy.is_compiled)
+
+        result = lazy.findall("a1 b2 c3")
+        self.assertTrue(lazy.is_compiled)
+        self.assertEqual(result, ["1", "2", "3"])
+
+    def test_lazy_pattern_compiles_on_sub(self):
+        """Test that pattern compiles on first sub call."""
+        lazy = LazyPattern(r"\d+", 0)
+        self.assertFalse(lazy.is_compiled)
+
+        result = lazy.sub("X", "a1 b2 c3")
+        self.assertTrue(lazy.is_compiled)
+        self.assertEqual(result, "aX bX cX")
+
+    def test_lazy_pattern_with_flags(self):
+        """Test that pattern flags are applied correctly."""
+        import re
+        # Without IGNORECASE
+        lazy_case = LazyPattern(r"test", 0)
+        self.assertIsNone(lazy_case.match("TEST"))
+
+        # With IGNORECASE
+        lazy_nocase = LazyPattern(r"test", re.IGNORECASE)
+        result = lazy_nocase.match("TEST")
+        self.assertIsNotNone(result)
+        self.assertEqual(result.group(0), "TEST")
+
+    def test_lazy_pattern_caches_compilation(self):
+        """Test that pattern only compiles once."""
+        lazy = LazyPattern(r"(\w+)", 0)
+
+        # First call compiles
+        result1 = lazy.match("hello")
+        self.assertTrue(lazy.is_compiled)
+        compiled_pattern = lazy._compiled
+
+        # Second call uses cached pattern
+        result2 = lazy.match("world")
+        self.assertIs(lazy._compiled, compiled_pattern)
+
+        # Both results valid
+        self.assertEqual(result1.group(1), "hello")
+        self.assertEqual(result2.group(1), "world")
+
+    def test_lazy_pattern_no_match(self):
+        """Test that pattern returns None for non-matching strings."""
+        lazy = LazyPattern(r"^\d+$", 0)
+
+        result = lazy.match("abc")
+        self.assertTrue(lazy.is_compiled)  # Still compiled even on no match
+        self.assertIsNone(result)
+
+    def test_lazy_pattern_compiles_on_fullmatch(self):
+        """Test that pattern compiles on first fullmatch call."""
+        lazy = LazyPattern(r"TEST\s+\d+", 0)
+        self.assertFalse(lazy.is_compiled)
+
+        # fullmatch requires entire string to match
+        result = lazy.fullmatch("TEST 123")
+        self.assertTrue(lazy.is_compiled)
+        self.assertIsNotNone(result)
+
+        # Partial match should fail with fullmatch
+        lazy2 = LazyPattern(r"\d+", 0)
+        self.assertIsNone(lazy2.fullmatch("abc123def"))
 
 
 class TestConstants(unittest.TestCase):

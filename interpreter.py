@@ -56,6 +56,56 @@ class BasicEvalLocals(dict):
 INITIAL_WIDTH = INITIAL_WINDOW_WIDTH
 INITIAL_HEIGHT = INITIAL_WINDOW_HEIGHT
 
+# --- Lazy Regex Pattern Implementation ---
+class LazyPattern:
+    """Lazily compiled regex pattern.
+
+    Compiles the regex pattern only on first use, reducing startup time for
+    infrequently-used command patterns. The compiled pattern is cached for
+    subsequent uses.
+
+    Args:
+        pattern: The regex pattern string to compile
+        flags: Optional regex flags (e.g., re.IGNORECASE)
+    """
+
+    def __init__(self, pattern: str, flags: int = 0):
+        self._pattern = pattern
+        self._flags = flags
+        self._compiled: Optional[re.Pattern] = None
+
+    def _compile(self) -> re.Pattern:
+        """Compile the pattern if not already compiled."""
+        if self._compiled is None:
+            self._compiled = re.compile(self._pattern, self._flags)
+        return self._compiled
+
+    def match(self, string: str, *args, **kwargs):
+        """Match the pattern against a string."""
+        return self._compile().match(string, *args, **kwargs)
+
+    def search(self, string: str, *args, **kwargs):
+        """Search for the pattern in a string."""
+        return self._compile().search(string, *args, **kwargs)
+
+    def findall(self, string: str, *args, **kwargs):
+        """Find all occurrences of the pattern in a string."""
+        return self._compile().findall(string, *args, **kwargs)
+
+    def sub(self, repl, string: str, *args, **kwargs):
+        """Substitute pattern matches in a string."""
+        return self._compile().sub(repl, string, *args, **kwargs)
+
+    def fullmatch(self, string: str, *args, **kwargs):
+        """Full match the pattern against a string."""
+        return self._compile().fullmatch(string, *args, **kwargs)
+
+    @property
+    def is_compiled(self) -> bool:
+        """Check if the pattern has been compiled."""
+        return self._compiled is not None
+
+
 # --- LRU Cache Implementation ---
 class LRUCache:
     """Simple LRU (Least Recently Used) cache using OrderedDict.
@@ -253,15 +303,15 @@ _run_re = re.compile(r"RUN(?:\s+(.+))?", re.IGNORECASE)
 # CONT - Continue after STOP
 _cont_re = re.compile(r"CONT", re.IGNORECASE)
 
-# CHAIN - Load and run another program
-_chain_re = re.compile(r"CHAIN\s+(.+)", re.IGNORECASE)
+# CHAIN - Load and run another program (lazy - rarely used)
+_chain_re = LazyPattern(r"CHAIN\s+(.+)", re.IGNORECASE)
 
-# $INCLUDE metacommand
-_include_re = re.compile(r"\$INCLUDE\s*:\s*['\"](.+?)['\"]", re.IGNORECASE)
+# $INCLUDE metacommand (lazy - rarely used)
+_include_re = LazyPattern(r"\$INCLUDE\s*:\s*['\"](.+?)['\"]", re.IGNORECASE)
 
-# $DYNAMIC/$STATIC metacommands
-_dynamic_re = re.compile(r"\$DYNAMIC", re.IGNORECASE)
-_static_re = re.compile(r"\$STATIC", re.IGNORECASE)
+# $DYNAMIC/$STATIC metacommands (lazy - rarely used)
+_dynamic_re = LazyPattern(r"\$DYNAMIC", re.IGNORECASE)
+_static_re = LazyPattern(r"\$STATIC", re.IGNORECASE)
 
 # KEY statement for function key handling
 _key_re = re.compile(r"KEY\s+(\d+)\s*,\s*(.+)", re.IGNORECASE)
@@ -271,23 +321,23 @@ _key_list_re = re.compile(r"KEY\s+(ON|OFF|LIST)", re.IGNORECASE)
 # ON KEY(n) GOSUB
 _on_key_re = re.compile(r"ON\s+KEY\s*\((\d+)\)\s+GOSUB\s+([a-zA-Z0-9_]+)", re.IGNORECASE)
 
-# ON STRIG(n) GOSUB - Joystick button event handler
-_on_strig_re = re.compile(r"ON\s+STRIG\s*\((\d+)\)\s+GOSUB\s+([a-zA-Z0-9_]+)", re.IGNORECASE)
+# ON STRIG(n) GOSUB - Joystick button event handler (lazy - rarely used)
+_on_strig_re = LazyPattern(r"ON\s+STRIG\s*\((\d+)\)\s+GOSUB\s+([a-zA-Z0-9_]+)", re.IGNORECASE)
 
-# STRIG(n) ON/OFF/STOP - Enable/disable joystick button events
-_strig_on_off_re = re.compile(r"STRIG\s*\((\d+)\)\s+(ON|OFF|STOP)", re.IGNORECASE)
+# STRIG(n) ON/OFF/STOP - Enable/disable joystick button events (lazy - rarely used)
+_strig_on_off_re = LazyPattern(r"STRIG\s*\((\d+)\)\s+(ON|OFF|STOP)", re.IGNORECASE)
 
-# ON PEN GOSUB - Light pen event handler
-_on_pen_re = re.compile(r"ON\s+PEN\s+GOSUB\s+([a-zA-Z0-9_]+)", re.IGNORECASE)
+# ON PEN GOSUB - Light pen event handler (lazy - rarely used)
+_on_pen_re = LazyPattern(r"ON\s+PEN\s+GOSUB\s+([a-zA-Z0-9_]+)", re.IGNORECASE)
 
-# PEN ON/OFF/STOP - Enable/disable light pen events
-_pen_on_off_re = re.compile(r"PEN\s+(ON|OFF|STOP)", re.IGNORECASE)
+# PEN ON/OFF/STOP - Enable/disable light pen events (lazy - rarely used)
+_pen_on_off_re = LazyPattern(r"PEN\s+(ON|OFF|STOP)", re.IGNORECASE)
 
-# ON PLAY GOSUB - Music event handler (stub for compatibility)
-_on_play_gosub_re = re.compile(r"ON\s+PLAY\s*\((\d+)\)\s+GOSUB\s+([a-zA-Z0-9_]+)", re.IGNORECASE)
+# ON PLAY GOSUB - Music event handler (lazy - rarely used, stub for compatibility)
+_on_play_gosub_re = LazyPattern(r"ON\s+PLAY\s*\((\d+)\)\s+GOSUB\s+([a-zA-Z0-9_]+)", re.IGNORECASE)
 
-# PLAY ON/OFF/STOP - Enable/disable music events (stub for compatibility)
-_play_on_off_re = re.compile(r"PLAY\s+(ON|OFF|STOP)", re.IGNORECASE)
+# PLAY ON/OFF/STOP - Enable/disable music events (lazy - rarely used, stub for compatibility)
+_play_on_off_re = LazyPattern(r"PLAY\s+(ON|OFF|STOP)", re.IGNORECASE)
 
 # DEFINT/DEFSNG/DEFDBL/DEFLNG/DEFSTR - Default type declarations (ignored)
 _deftype_re = re.compile(r"DEF(INT|SNG|DBL|LNG|STR)\s+[A-Za-z](?:\s*-\s*[A-Za-z])?", re.IGNORECASE)
@@ -295,35 +345,35 @@ _deftype_re = re.compile(r"DEF(INT|SNG|DBL|LNG|STR)\s+[A-Za-z](?:\s*-\s*[A-Za-z]
 # PALETTE - Color palette
 _palette_re = re.compile(r"PALETTE(?:\s+USING\s+(.+)|\s+(\d+)\s*,\s*(.+))?", re.IGNORECASE)
 
-# PCOPY - Copy video pages
-_pcopy_re = re.compile(r"PCOPY\s+(\d+)\s*,\s*(\d+)", re.IGNORECASE)
+# PCOPY - Copy video pages (lazy - rarely used)
+_pcopy_re = LazyPattern(r"PCOPY\s+(\d+)\s*,\s*(\d+)", re.IGNORECASE)
 
-# VIEW PRINT - Text viewport
-_view_print_re = re.compile(r"VIEW\s+PRINT(?:\s+(\d+)\s+TO\s+(\d+))?", re.IGNORECASE)
+# VIEW PRINT - Text viewport (lazy - rarely used)
+_view_print_re = LazyPattern(r"VIEW\s+PRINT(?:\s+(\d+)\s+TO\s+(\d+))?", re.IGNORECASE)
 
-# WIDTH - Screen/printer width
-_width_re = re.compile(r"WIDTH\s+(\d+)(?:\s*,\s*(\d+))?", re.IGNORECASE)
+# WIDTH - Screen/printer width (lazy - rarely used)
+_width_re = LazyPattern(r"WIDTH\s+(\d+)(?:\s*,\s*(\d+))?", re.IGNORECASE)
 
-# WAIT - Wait for port condition (emulated as no-op)
-_wait_re = re.compile(r"WAIT\s+([^,]+)\s*,\s*([^,]+)(?:\s*,\s*(.+))?", re.IGNORECASE)
+# WAIT - Wait for port condition (lazy - rarely used, emulated as no-op)
+_wait_re = LazyPattern(r"WAIT\s+([^,]+)\s*,\s*([^,]+)(?:\s*,\s*(.+))?", re.IGNORECASE)
 
-# TIMER ON/OFF - Enable/disable timer events (no-op, for compatibility)
-_timer_on_off_re = re.compile(r"TIMER\s+(ON|OFF|STOP)", re.IGNORECASE)
+# TIMER ON/OFF - Enable/disable timer events (lazy - rarely used, no-op for compatibility)
+_timer_on_off_re = LazyPattern(r"TIMER\s+(ON|OFF|STOP)", re.IGNORECASE)
 
-# OUT - Write to I/O port (emulated)
-_out_re = re.compile(r"OUT\s+([^,]+)\s*,\s*(.+)", re.IGNORECASE)
+# OUT - Write to I/O port (lazy - rarely used, emulated)
+_out_re = LazyPattern(r"OUT\s+([^,]+)\s*,\s*(.+)", re.IGNORECASE)
 
-# DEF SEG - Set memory segment (emulated)
-_def_seg_re = re.compile(r"DEF\s+SEG(?:\s*=\s*(.+))?", re.IGNORECASE)
+# DEF SEG - Set memory segment (lazy - rarely used, emulated)
+_def_seg_re = LazyPattern(r"DEF\s+SEG(?:\s*=\s*(.+))?", re.IGNORECASE)
 
-# POKE - Write to memory (emulated)
-_poke_re = re.compile(r"POKE\s+([^,]+)\s*,\s*(.+)", re.IGNORECASE)
+# POKE - Write to memory (lazy - rarely used, emulated)
+_poke_re = LazyPattern(r"POKE\s+([^,]+)\s*,\s*(.+)", re.IGNORECASE)
 
-# COMMON SHARED - Global variable declaration
-_common_shared_re = re.compile(r"COMMON\s+SHARED\s+(.+)", re.IGNORECASE)
+# COMMON SHARED - Global variable declaration (lazy - rarely used)
+_common_shared_re = LazyPattern(r"COMMON\s+SHARED\s+(.+)", re.IGNORECASE)
 
-# COMMON - Share variables between CHAINed programs (must not match COMMON SHARED)
-_common_re = re.compile(r"COMMON\s+(?!SHARED\s)(.+)", re.IGNORECASE)
+# COMMON - Share variables between CHAINed programs (lazy - rarely used, must not match COMMON SHARED)
+_common_re = LazyPattern(r"COMMON\s+(?!SHARED\s)(.+)", re.IGNORECASE)
 
 # DIM SHARED - Shared array declaration
 _dim_shared_re = re.compile(r"DIM\s+SHARED\s+(.+)", re.IGNORECASE)
@@ -410,28 +460,28 @@ _system_re = re.compile(r"SYSTEM(?:\s+(.+))?", re.IGNORECASE)
 # SHELL - execute shell command
 _shell_re = re.compile(r"SHELL(?:\s+(.+))?", re.IGNORECASE)
 
-# VIEW - define graphics viewport
-_view_re = re.compile(r"VIEW(?:\s*\(([^)]+)\)\s*-\s*\(([^)]+)\)(?:\s*,\s*(\d+))?(?:\s*,\s*(\d+))?)?", re.IGNORECASE)
+# VIEW - define graphics viewport (lazy - rarely used)
+_view_re = LazyPattern(r"VIEW(?:\s*\(([^)]+)\)\s*-\s*\(([^)]+)\)(?:\s*,\s*(\d+))?(?:\s*,\s*(\d+))?)?", re.IGNORECASE)
 
-# WINDOW - define logical coordinate system
-_window_re = re.compile(r"WINDOW(?:\s+SCREEN)?(?:\s*\(([^)]+)\)\s*-\s*\(([^)]+)\))?", re.IGNORECASE)
+# WINDOW - define logical coordinate system (lazy - rarely used)
+_window_re = LazyPattern(r"WINDOW(?:\s+SCREEN)?(?:\s*\(([^)]+)\)\s*-\s*\(([^)]+)\))?", re.IGNORECASE)
 
-# LPRINT - print to printer (console)
-_lprint_using_re = re.compile(r"LPRINT\s+USING\s+(.+?)\s*;\s*(.+)", re.IGNORECASE)
-_lprint_re = re.compile(r"LPRINT(?:\s+(.*))?", re.IGNORECASE)
+# LPRINT - print to printer (lazy - rarely used, console)
+_lprint_using_re = LazyPattern(r"LPRINT\s+USING\s+(.+?)\s*;\s*(.+)", re.IGNORECASE)
+_lprint_re = LazyPattern(r"LPRINT(?:\s+(.*))?", re.IGNORECASE)
 
-# FIELD - define random access record fields
-_field_re = re.compile(r"FIELD\s+#?(\d+)\s*,\s*(.+)", re.IGNORECASE)
+# FIELD - define random access record fields (lazy - rarely used)
+_field_re = LazyPattern(r"FIELD\s+#?(\d+)\s*,\s*(.+)", re.IGNORECASE)
 
-# LSET/RSET - justify string in field
-_lset_re = re.compile(r"LSET\s+([a-zA-Z_][a-zA-Z0-9_]*\$?)\s*=\s*(.+)", re.IGNORECASE)
-_rset_re = re.compile(r"RSET\s+([a-zA-Z_][a-zA-Z0-9_]*\$?)\s*=\s*(.+)", re.IGNORECASE)
+# LSET/RSET - justify string in field (lazy - rarely used)
+_lset_re = LazyPattern(r"LSET\s+([a-zA-Z_][a-zA-Z0-9_]*\$?)\s*=\s*(.+)", re.IGNORECASE)
+_rset_re = LazyPattern(r"RSET\s+([a-zA-Z_][a-zA-Z0-9_]*\$?)\s*=\s*(.+)", re.IGNORECASE)
 
-# ENVIRON - set environment variable
-_environ_set_re = re.compile(r"ENVIRON\s+(.+)", re.IGNORECASE)
+# ENVIRON - set environment variable (lazy - rarely used)
+_environ_set_re = LazyPattern(r"ENVIRON\s+(.+)", re.IGNORECASE)
 
-# ON TIMER GOSUB - timer event handler
-_on_timer_re = re.compile(r"ON\s+TIMER\s*\(([^)]+)\)\s+GOSUB\s+([a-zA-Z0-9_]+)", re.IGNORECASE)
+# ON TIMER GOSUB - timer event handler (lazy - rarely used)
+_on_timer_re = LazyPattern(r"ON\s+TIMER\s*\(([^)]+)\)\s+GOSUB\s+([a-zA-Z0-9_]+)", re.IGNORECASE)
 
 # DATE$/TIME$ assignment
 _date_assign_re = re.compile(r"DATE\$\s*=\s*(.+)", re.IGNORECASE)
