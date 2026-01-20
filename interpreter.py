@@ -191,13 +191,14 @@ _func_or_array_re = re.compile(
 # General identifier pattern (variables, constants)
 # It should run after specific function/array patterns have transformed their part of the string.
 # Note: No trailing \b because $ and % are not word characters
-_identifier_re = re.compile(r'\b([a-zA-Z_][a-zA-Z0-9_]*[\$%#!&]?)')  # Match identifiers with optional type suffix
+_identifier_re = re.compile(r'\b([a-zA-Z_][a-zA-Z0-9_.]*[\$%#!&]?)')  # Match identifiers with optional type suffix (QBasic allows dots in names)
 
 
 # --- Command Parsing Patterns (mostly unchanged but reviewed) ---
 # Labels: numeric (100 PRINT), numeric with colon (1:), or identifier with colon (Start:)
-_label_re = re.compile(r"^\s*(\d+:?|[a-zA-Z_][a-zA-Z0-9_]*:)")
-_label_strip_re = re.compile(r"^\s*(\d+:?\s*|[a-zA-Z_][a-zA-Z0-9_]*:)\s*")
+# QBasic allows dots in label names (e.g., instruct.y.n:)
+_label_re = re.compile(r"^\s*(\d+:?|[a-zA-Z_][a-zA-Z0-9_.]*:)")
+_label_strip_re = re.compile(r"^\s*(\d+:?\s*|[a-zA-Z_][a-zA-Z0-9_.]*:)\s*")
 _for_re = re.compile(
     r'FOR\s+([a-zA-Z_][a-zA-Z0-9_]*[\$%!#&]?)\s*=\s*(.+?)\s+TO\s+(.+?)(?:\s+STEP\s+(.+))?$', re.IGNORECASE)
 _dim_re = re.compile(r'DIM\s+([a-zA-Z_][a-zA-Z0-9_]*[\$%!#&]?)\s*\(([^)]+)\)(?:\s+AS\s+(\w+))?', re.IGNORECASE)
@@ -206,7 +207,8 @@ _dim_as_re = re.compile(r'DIM\s+([a-zA-Z_][a-zA-Z0-9_]*)\s+AS\s+(\w+)', re.IGNOR
 # DIM var (simple scalar variable declaration without AS type or array)
 _dim_scalar_re = re.compile(r'DIM\s+([a-zA-Z_][a-zA-Z0-9_]*[\$%!#&]?)(?:\s*,\s*([a-zA-Z_][a-zA-Z0-9_]*[\$%!#&]?))*$', re.IGNORECASE)
 # Match: var = expr, var$ = expr, arr(i) = expr, p.X = expr, arr(i).X = expr, var# = expr
-_assign_re = re.compile(r'^(?:LET\s+)?([a-zA-Z_][a-zA-Z0-9_]*[\$%!#&]?(?:\s*\([^)]+\))?(?:\.[a-zA-Z_][a-zA-Z0-9_]*)?)\s*=(.*)$', re.IGNORECASE)
+# QBasic allows dots in variable names (e.g., Flicker.Control, instruct.y.n)
+_assign_re = re.compile(r'^(?:LET\s+)?([a-zA-Z_][a-zA-Z0-9_.]*[\$%!#&]?(?:\s*\([^)]+\))?)\s*=(.*)$', re.IGNORECASE)
 # Pattern to extract array name and indices from LHS like "ARR(1, 2)"
 _assign_lhs_array_re = re.compile(r'([a-zA-Z_][a-zA-Z0-9_]*[\$%!#&]?)\s*\(([^)]+)\)')
 
@@ -237,7 +239,7 @@ _delay_re = re.compile(r"(?:_DELAY|SLEEP)\s+(.*)", re.IGNORECASE)
 _do_re = re.compile(r"DO(?:\s+(WHILE|UNTIL)\s+(.+))?", re.IGNORECASE)
 _loop_re = re.compile(r"LOOP(?:\s+(WHILE|UNTIL)\s+(.+))?", re.IGNORECASE)
 _const_re = re.compile(r"CONST\s+([a-zA-Z_][a-zA-Z0-9_]*\$?)\s*=(.*)", re.IGNORECASE)
-_color_re = re.compile(r"COLOR(?:\s*([^,]+))?(?:\s*,\s*(.+))?", re.IGNORECASE)
+_color_re = re.compile(r"COLOR\b(?:\s*([^,]+))?(?:\s*,\s*(.+))?", re.IGNORECASE)
 _rem_re = re.compile(r"REM\b.*", re.IGNORECASE)
 _exit_do_re = re.compile(r"EXIT\s+DO", re.IGNORECASE)
 _exit_for_re = re.compile(r"EXIT\s+FOR", re.IGNORECASE)
@@ -539,6 +541,10 @@ def _basic_to_python_identifier(basic_name_str: str) -> str:
     Results are cached for performance since this function is called frequently
     during expression evaluation. The cache is case-insensitive to avoid storing
     redundant entries for 'Var', 'VAR', and 'var' which all produce the same result.
+
+    Handles:
+    - Type suffixes ($, %, #, !, &)
+    - Dots in variable names (QBasic allows them, e.g., Flicker.Control)
     """
     # Normalize to uppercase for case-insensitive caching
     # This avoids storing separate cache entries for 'Var', 'VAR', 'var', etc.
@@ -561,6 +567,10 @@ def _basic_to_python_identifier(basic_name_str: str) -> str:
         result = normalized[:-1] + "_LNG"  # Long integer
     else:
         result = normalized
+
+    # Convert dots to underscores for valid Python identifier
+    # QBasic allows dots in variable names (e.g., Flicker.Control)
+    result = result.replace('.', '_DOT_')
 
     # Store in cache using normalized key
     _identifier_cache[normalized] = result
@@ -769,7 +779,7 @@ def convert_basic_expr(expr: str, known_identifiers: Optional[set] = None) -> st
     # Clean up any leading/trailing whitespace that might cause syntax errors
     expr = expr.strip()
 
-    # 3.5 Handle type member access
+    # 3.5 Handle type member access for arrays (arr(i).member)
     # First handle array element member access: arr[i].member -> arr[i]['MEMBER']
     # After array conversion, we have square brackets, not parentheses
     expr = re.sub(r'\]\.([a-zA-Z_][a-zA-Z0-9_]*)',
@@ -777,9 +787,10 @@ def convert_basic_expr(expr: str, known_identifiers: Optional[set] = None) -> st
     # Also handle unconverted form (with parentheses): arr(i).member -> arr(i)['MEMBER']
     expr = re.sub(r'\)\.([a-zA-Z_][a-zA-Z0-9_]*)',
                   lambda m: f")['{m.group(1).upper()}']", expr)
-    # Then handle simple type member access: p.X -> P['X']
-    expr = re.sub(r'([a-zA-Z_][a-zA-Z0-9_]*)\.([a-zA-Z_][a-zA-Z0-9_]*)',
-                  lambda m: f"{m.group(1).upper()}['{m.group(2).upper()}']", expr)
+    # NOTE: Simple type member access (p.X -> P['X']) is NOT converted here
+    # because QBasic also allows dots in regular variable names (e.g., Flicker.Control)
+    # The _identifier_re pattern now includes dots, so player1.score -> PLAYER1_DOT_SCORE
+    # User-defined type access with simple variables must be handled via explicit DIM AS TYPE
 
     # 4. Remaining identifiers (variables, constants not part of function calls)
     expr = _identifier_re.sub(_convert_identifier_in_expr, expr)
@@ -2360,8 +2371,18 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
             stripped = line_content.strip()
 
             # Strip comments for DATA label detection
+            # But only if the apostrophe is OUTSIDE of string literals
             if "'" in stripped:
-                stripped = stripped.split("'", 1)[0].strip()
+                in_string = False
+                comment_pos = -1
+                for j, ch in enumerate(stripped):
+                    if ch == '"':
+                        in_string = not in_string
+                    elif ch == "'" and not in_string:
+                        comment_pos = j
+                        break
+                if comment_pos >= 0:
+                    stripped = stripped[:comment_pos].strip()
 
             # Check for label
             label_match = _label_re.match(stripped)
@@ -2386,9 +2407,20 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
         for i, line_content in enumerate(program_lines):
             original_line = line_content
             # Handle apostrophe comments on the physical line first
+            # But only if the apostrophe is OUTSIDE of string literals
             if "'" in line_content:
-                line_content = line_content.split("'", 1)[0]
-            
+                # Find apostrophe that's outside quotes
+                in_string = False
+                comment_pos = -1
+                for j, ch in enumerate(line_content):
+                    if ch == '"':
+                        in_string = not in_string
+                    elif ch == "'" and not in_string:
+                        comment_pos = j
+                        break
+                if comment_pos >= 0:
+                    line_content = line_content[:comment_pos]
+
             line_content = line_content.strip()
             if not line_content: continue
 
@@ -3183,14 +3215,15 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
             # Re-parse manually to get all comma-separated variables
             dim_content = statement[3:].strip()  # Remove "DIM "
             for var_spec in dim_content.split(','):
-                var_name = var_spec.strip().upper()
-                if var_name:
+                var_name_raw = var_spec.strip()
+                if var_name_raw:
+                    var_name = _basic_to_python_identifier(var_name_raw)
                     if var_name in self.constants:
-                        print(f"Error: Cannot DIM constant '{var_name}' at PC {current_pc_num}")
+                        print(f"Error: Cannot DIM constant '{var_name_raw}' at PC {current_pc_num}")
                         self.running = False
                         return False
                     # Initialize with default value based on type suffix
-                    if var_name.endswith('$'):
+                    if var_name_raw.upper().endswith('$'):
                         self.variables[var_name] = ""
                     else:
                         self.variables[var_name] = 0
@@ -3200,9 +3233,9 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
         if m_dim:
             var_name_orig, idx_str = m_dim.group(1).strip(), m_dim.group(2).strip()
             type_name = (m_dim.group(3) or "").upper().strip()
-            var_name = var_name_orig.upper()
+            var_name = _basic_to_python_identifier(var_name_orig)
             if var_name in self.constants:
-                print(f"Error: Cannot DIM constant '{var_name}' at PC {current_pc_num}"); self.running = False; return False
+                print(f"Error: Cannot DIM constant '{var_name_orig}' at PC {current_pc_num}"); self.running = False; return False
 
             try:
                 # Parse array dimensions - supports both "DIM A(10)" and "DIM A(0 TO 10)" syntax
@@ -3237,7 +3270,7 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
                         for field_name, field_type in self.type_definitions[type_name].items():
                             instance[field_name] = "" if field_type == 'STRING' else 0
                         return instance
-                    elif var_name.endswith("$") or type_name == 'STRING':
+                    elif var_name_orig.upper().endswith("$") or type_name == 'STRING':
                         return ""
                     else:
                         return 0
@@ -3375,7 +3408,7 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
 
             if lhs_array_match:
                 var_name_orig, idx_str = lhs_array_match.group(1), lhs_array_match.group(2)
-                var_name = var_name_orig.upper()
+                var_name = _basic_to_python_identifier(var_name_orig)
 
                 if var_name in self.constants:
                     print(f"Error: Cannot assign to constant array '{var_name_orig}' at PC {current_pc_num}"); self.running = False; return False
@@ -3439,14 +3472,21 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
                     else:
                         print(f"Error: '{var_name}' is not an array at PC {current_pc_num}"); self.running = False; return False
                 else:
-                    # Simple type member assignment (p.X = value)
+                    # Simple type member assignment (p.X = value) or dotted variable name
                     parts = lhs.upper().split('.', 1)
                     var_name = parts[0]
                     member_name = parts[1]
                     if var_name in self.variables and isinstance(self.variables[var_name], dict):
+                        # User-defined type member access
                         self.variables[var_name][member_name] = val_to_assign
                     else:
-                        print(f"Error: '{var_name}' is not a user-defined type at PC {current_pc_num}"); self.running = False; return False
+                        # QBasic allows dots in variable names (e.g., Flicker.Control)
+                        # Treat the full dotted name as a simple variable
+                        # Use Python-compatible name for storage so eval can find it
+                        full_var_name = _basic_to_python_identifier(lhs)
+                        if full_var_name in self.constants:
+                            print(f"Error: Cannot assign to constant '{lhs}' at PC {current_pc_num}"); self.running = False; return False
+                        self.variables[full_var_name] = val_to_assign
             else: # Scalar assignment
                 var_name = lhs.upper()
                 if var_name in self.constants:
@@ -3862,7 +3902,7 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
             
             self.loop_stack.append({
                 "type": "DO",
-                "start_pc": self.pc,  # PC of the line AFTER DO (loop body start)
+                "start_pc": self.pc,  # PC of the line AFTER DO (loop body start) - pc already advanced by step_line
                 "pre_cond_expr": cond_expr,
                 "pre_cond_type": loop_type
             })
@@ -3904,7 +3944,7 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
                 if loop_info["pre_cond_type"] == "UNTIL" and pre_cond_met: continue_this_loop = False
             
             if continue_this_loop:
-                self.pc = loop_info["start_pc"] # Jump to DO statement's PC
+                self.pc = loop_info["start_pc"] # Jump to loop body start
                 return True # PC changed
             else:
                 self.loop_stack.pop() # Loop terminates
@@ -3965,7 +4005,7 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
 
             self.loop_stack.append({
                 "type": "WHILE",
-                "start_pc": self.pc,  # PC of the line AFTER WHILE
+                "start_pc": self.pc,  # PC of the line AFTER WHILE - pc already advanced by step_line
                 "cond_expr": cond_expr
             })
 
@@ -4054,7 +4094,25 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
         m_read = _read_re.fullmatch(statement)
         if m_read:
             var_list = m_read.group(1).strip()
-            var_names = [v.strip() for v in var_list.split(',')]
+            # Split by comma, but respect parentheses (for array indices)
+            var_names = []
+            current = ""
+            paren_depth = 0
+            for ch in var_list:
+                if ch == '(':
+                    paren_depth += 1
+                    current += ch
+                elif ch == ')':
+                    paren_depth -= 1
+                    current += ch
+                elif ch == ',' and paren_depth == 0:
+                    if current.strip():
+                        var_names.append(current.strip())
+                    current = ""
+                else:
+                    current += ch
+            if current.strip():
+                var_names.append(current.strip())
             for var_name in var_names:
                 if self.data_pointer >= len(self.data_values):
                     print(f"Error: Out of DATA at PC {current_pc_num}")
@@ -5263,7 +5321,7 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
 
     def _do_redim(self, var_name: str, dims_str: str, pc: int) -> None:
         """Execute REDIM command - redimension a dynamic array."""
-        var_name_upper = var_name.upper()
+        var_name_py = _basic_to_python_identifier(var_name)
 
         try:
             # Parse dimensions - supports both "REDIM A(10)" and "REDIM A(0 TO 10)" syntax
@@ -5288,23 +5346,23 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
                     lower_bounds.append(self.option_base)
 
             # Store lower bounds for this array (for runtime index adjustment)
-            self.array_bounds[var_name_upper] = tuple(lower_bounds)
+            self.array_bounds[var_name_py] = tuple(lower_bounds)
 
             # Determine default value based on variable type
-            default_val = "" if var_name.endswith("$") else 0
+            default_val = "" if var_name.upper().endswith("$") else 0
 
             # Create new array (overwrite any existing)
             if len(dims) == 1:
-                self.variables[var_name_upper] = [default_val] * dims[0]
+                self.variables[var_name_py] = [default_val] * dims[0]
             elif len(dims) == 2:
-                self.variables[var_name_upper] = [[default_val] * dims[1] for _ in range(dims[0])]
+                self.variables[var_name_py] = [[default_val] * dims[1] for _ in range(dims[0])]
             else:
                 # For higher dimensions, create nested lists
                 def create_nd_list(dims, default):
                     if len(dims) == 1:
                         return [default] * dims[0]
                     return [create_nd_list(dims[1:], default) for _ in range(dims[0])]
-                self.variables[var_name_upper] = create_nd_list(dims, default_val)
+                self.variables[var_name_py] = create_nd_list(dims, default_val)
 
         except Exception as e:
             print(f"Error in REDIM at PC {pc}: {e}")
@@ -5375,7 +5433,8 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
 
         if paren_start > 0:
             # Array declaration
-            var_name = decl[:paren_start].strip().upper()
+            var_name_raw = decl[:paren_start].strip()
+            var_name = _basic_to_python_identifier(var_name_raw)
             # Extract bounds - find matching closing paren
             paren_depth = 0
             bounds_str = ""
@@ -5393,7 +5452,7 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
                     bounds_str += char
 
             if var_name in self.constants:
-                print(f"Error: Cannot DIM constant '{var_name}' at PC {pc}")
+                print(f"Error: Cannot DIM constant '{var_name_raw}' at PC {pc}")
                 self.running = False
                 return False
 
@@ -5427,7 +5486,7 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
                         for field_name, field_type in self.type_definitions[type_name].items():
                             instance[field_name] = "" if field_type == 'STRING' else 0
                         return instance
-                    elif var_name.endswith("$") or type_name == 'STRING':
+                    elif var_name_raw.upper().endswith("$") or type_name == 'STRING':
                         return ""
                     else:
                         return 0
@@ -5445,9 +5504,10 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
                 return False
         else:
             # Scalar declaration
-            var_name = decl.strip().upper()
+            var_name_raw = decl.strip()
+            var_name = _basic_to_python_identifier(var_name_raw)
             if var_name in self.constants:
-                print(f"Error: Cannot DIM constant '{var_name}' at PC {pc}")
+                print(f"Error: Cannot DIM constant '{var_name_raw}' at PC {pc}")
                 self.running = False
                 return False
 
@@ -5456,7 +5516,7 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
                 for field_name, field_type in self.type_definitions[type_name].items():
                     instance[field_name] = "" if field_type == 'STRING' else 0
                 self.variables[var_name] = instance
-            elif var_name.endswith('$') or type_name == 'STRING':
+            elif var_name_raw.upper().endswith('$') or type_name == 'STRING':
                 self.variables[var_name] = ""
             else:
                 self.variables[var_name] = 0
@@ -6267,7 +6327,7 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
         array_match = _assign_lhs_array_re.fullmatch(var_str)
         if array_match:
             var_name_orig, idx_str = array_match.group(1), array_match.group(2)
-            var_name = var_name_orig.upper()
+            var_name = _basic_to_python_identifier(var_name_orig)
             if var_name in self.constants:
                 print(f"Error: Cannot assign to constant array '{var_name_orig}' at PC {pc}")
                 self.running = False
@@ -6288,7 +6348,7 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
                 self.running = False
         else:
             # Scalar variable
-            var_name = var_str.upper()
+            var_name = _basic_to_python_identifier(var_str)
             if var_name in self.constants:
                 print(f"Error: Cannot assign to constant '{var_str}' at PC {pc}")
                 self.running = False
