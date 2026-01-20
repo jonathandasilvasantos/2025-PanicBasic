@@ -28,11 +28,11 @@ CONST BULLETSPEED = 10
 CONST ENEMYSPEED = 1.2
 
 ' ---- Game Limits ----
-CONST MAXBULLETS = 15
-CONST MAXENEMIES = 12
+CONST MAXBULLETS = 30
+CONST MAXENEMIES = 20
 CONST MAXEXPLOSIONS = 8
 CONST MAXPARTICLES = 20
-CONST MAXPLATFORMS = 10
+CONST MAXPLATFORMS = 25
 CONST MAXCRATES = 8
 CONST LEVELWIDTH = 2400
 
@@ -726,22 +726,67 @@ InitLevel:
 RETURN
 
 SetupPlatforms:
-  ' Create platforms throughout level
+  ' Create multi-level platforms throughout level
   platIdx = 0
 
-  ' Zone-specific platform layout
-  FOR px = 300 TO LEVELWIDTH - 400 STEP 200
+  ' Level 1 platforms (low - easy jumps from ground)
+  FOR px = 200 TO LEVELWIDTH - 300 STEP 150
     IF platIdx < MAXPLATFORMS THEN
-      IF RND < 0.7 THEN
+      IF RND < 0.8 THEN
         PlatActive(platIdx) = 1
-        PlatX(platIdx) = px + RND * 80
-        PlatY(platIdx) = GROUNDY - 40 - RND * 50
-        PlatW(platIdx) = 50 + RND * 40
+        PlatX(platIdx) = px + RND * 60
+        PlatY(platIdx) = GROUNDY - 35 - RND * 15
+        PlatW(platIdx) = 45 + RND * 35
         PlatType(platIdx) = INT(RND * 3) + 1
         platIdx = platIdx + 1
       END IF
     END IF
   NEXT px
+
+  ' Level 2 platforms (medium height)
+  FOR px = 250 TO LEVELWIDTH - 350 STEP 180
+    IF platIdx < MAXPLATFORMS THEN
+      IF RND < 0.7 THEN
+        PlatActive(platIdx) = 1
+        PlatX(platIdx) = px + RND * 70
+        PlatY(platIdx) = GROUNDY - 70 - RND * 20
+        PlatW(platIdx) = 40 + RND * 40
+        PlatType(platIdx) = INT(RND * 3) + 1
+        platIdx = platIdx + 1
+      END IF
+    END IF
+  NEXT px
+
+  ' Level 3 platforms (high - for skilled players)
+  FOR px = 350 TO LEVELWIDTH - 400 STEP 250
+    IF platIdx < MAXPLATFORMS THEN
+      IF RND < 0.5 THEN
+        PlatActive(platIdx) = 1
+        PlatX(platIdx) = px + RND * 80
+        PlatY(platIdx) = GROUNDY - 100 - RND * 25
+        PlatW(platIdx) = 50 + RND * 50
+        PlatType(platIdx) = 1
+        platIdx = platIdx + 1
+      END IF
+    END IF
+  NEXT px
+
+  ' Staircase sections (clusters of platforms)
+  FOR section = 0 TO 3
+    baseX = 500 + section * 500
+    IF baseX < LEVELWIDTH - 200 THEN
+      FOR step = 0 TO 2
+        IF platIdx < MAXPLATFORMS THEN
+          PlatActive(platIdx) = 1
+          PlatX(platIdx) = baseX + step * 45
+          PlatY(platIdx) = GROUNDY - 30 - step * 30
+          PlatW(platIdx) = 40
+          PlatType(platIdx) = 2
+          platIdx = platIdx + 1
+        END IF
+      NEXT step
+    END IF
+  NEXT section
 RETURN
 
 SetupCrates:
@@ -1702,11 +1747,19 @@ UpdateEnemies:
         END IF
       END IF
 
-      ' Shooting timer for enemies
+      ' Shooting timer for enemies - MUCH more aggressive!
       EnemyShootTimer(i) = EnemyShootTimer(i) + 1
-      IF EnemyShootTimer(i) > 80 - Level * 10 THEN
+      ' Different shoot rates for different enemy types
+      shootDelay = 50 - Level * 8
+      IF EnemyType(i) = 3 THEN shootDelay = 35 - Level * 5
+      IF EnemyType(i) = 4 THEN shootDelay = 25 - Level * 4
+      IF shootDelay < 15 THEN shootDelay = 15
+      IF EnemyShootTimer(i) > shootDelay THEN
         EnemyShootTimer(i) = 0
-        GOSUB EnemyShoot
+        ' Only shoot if enemy can see player (in front)
+        IF EnemyType(i) = 4 OR ABS(EnemyX(i) - PlayerX) < SCREENW THEN
+          GOSUB EnemyShoot
+        END IF
       END IF
 
       ' Keep on screen (relative to camera)
@@ -1722,6 +1775,43 @@ UpdateEnemies:
     IF BossX > PlayerX + 100 THEN
       BossX = BossX - 0.5
     END IF
+
+    ' Boss shoots at player - dual cannons!
+    BossFrame = BossFrame + 1
+    IF BossFrame MOD (25 - Level * 3) = 0 THEN
+      ' Fire from left cannon
+      FOR eb = 0 TO MAXBULLETS - 1
+        IF BulletActive(eb) = 0 THEN
+          BulletActive(eb) = 1
+          BulletOwner(eb) = 1
+          BulletX(eb) = BossX - 60
+          BulletY(eb) = BossY - 17
+          dx = PlayerX - BulletX(eb)
+          dy = PlayerY - BulletY(eb)
+          dist = SQR(dx * dx + dy * dy)
+          IF dist < 1 THEN dist = 1
+          BulletVelX(eb) = (dx / dist) * 8
+          BulletVelY(eb) = (dy / dist) * 8
+          EXIT FOR
+        END IF
+      NEXT eb
+      ' Fire from right cannon
+      FOR eb = 0 TO MAXBULLETS - 1
+        IF BulletActive(eb) = 0 THEN
+          BulletActive(eb) = 1
+          BulletOwner(eb) = 1
+          BulletX(eb) = BossX + 60
+          BulletY(eb) = BossY - 17
+          dx = PlayerX - BulletX(eb)
+          dy = PlayerY - BulletY(eb)
+          dist = SQR(dx * dx + dy * dy)
+          IF dist < 1 THEN dist = 1
+          BulletVelX(eb) = (dx / dist) * 8
+          BulletVelY(eb) = (dy / dist) * 8
+          EXIT FOR
+        END IF
+      NEXT eb
+    END IF
   END IF
 RETURN
 
@@ -1731,27 +1821,74 @@ RETURN
 
 EnemyShoot:
   ' Enemy fires a bullet at player (uses loop variable i from UpdateEnemies)
-  IF EnemyType(i) = 4 THEN
-    ' Turrets don't shoot yet (stationary)
-    RETURN
-  END IF
 
   ' Find inactive bullet for enemy
   FOR eb = 0 TO MAXBULLETS - 1
     IF BulletActive(eb) = 0 THEN
       BulletActive(eb) = 1
       BulletOwner(eb) = 1
-      BulletX(eb) = EnemyX(i)
-      BulletY(eb) = EnemyY(i) - 5
 
-      ' Calculate direction to player
+      ' Calculate direction to player with prediction
       dx = PlayerX - EnemyX(i)
       dy = PlayerY - EnemyY(i)
       dist = SQR(dx * dx + dy * dy)
       IF dist < 1 THEN dist = 1
 
-      BulletVelX(eb) = (dx / dist) * 5
-      BulletVelY(eb) = (dy / dist) * 5
+      ' Different bullet behavior per enemy type
+      IF EnemyType(i) = 1 THEN
+        ' Soldier - medium speed aimed shot
+        BulletX(eb) = EnemyX(i) + EnemyDir(i) * 8
+        BulletY(eb) = EnemyY(i) - 6
+        bulletSpd = 6 + Level * 0.5
+        IF bulletSpd > 9 THEN bulletSpd = 9
+        BulletVelX(eb) = (dx / dist) * bulletSpd
+        BulletVelY(eb) = (dy / dist) * bulletSpd
+
+      ELSEIF EnemyType(i) = 2 THEN
+        ' Tank - slow but powerful cannon (horizontal)
+        BulletX(eb) = EnemyX(i) + EnemyDir(i) * 25
+        BulletY(eb) = EnemyY(i) - 12
+        BulletVelX(eb) = EnemyDir(i) * 7
+        BulletVelY(eb) = 0
+
+      ELSEIF EnemyType(i) = 3 THEN
+        ' Helicopter - fast downward aimed shots
+        BulletX(eb) = EnemyX(i)
+        BulletY(eb) = EnemyY(i) + 12
+        bulletSpd = 8 + Level * 0.5
+        IF bulletSpd > 11 THEN bulletSpd = 11
+        ' Lead the target slightly
+        leadX = dx + (dx / dist) * 10
+        leadY = dy + 20
+        leadDist = SQR(leadX * leadX + leadY * leadY)
+        IF leadDist < 1 THEN leadDist = 1
+        BulletVelX(eb) = (leadX / leadDist) * bulletSpd
+        BulletVelY(eb) = (leadY / leadDist) * bulletSpd
+
+      ELSEIF EnemyType(i) = 4 THEN
+        ' Turret - rapid accurate fire!
+        BulletX(eb) = EnemyX(i) + EnemyDir(i) * 18
+        BulletY(eb) = EnemyY(i) - 9
+        bulletSpd = 9 + Level * 0.5
+        IF bulletSpd > 12 THEN bulletSpd = 12
+        BulletVelX(eb) = (dx / dist) * bulletSpd
+        BulletVelY(eb) = (dy / dist) * bulletSpd
+
+      ELSEIF EnemyType(i) = 5 THEN
+        ' Jetpack soldier - erratic spread shots
+        BulletX(eb) = EnemyX(i) + EnemyDir(i) * 10
+        BulletY(eb) = EnemyY(i) - 5
+        bulletSpd = 7 + Level * 0.3
+        IF bulletSpd > 10 THEN bulletSpd = 10
+        ' Add some randomness to aim
+        spreadX = dx + (RND - 0.5) * 30
+        spreadY = dy + (RND - 0.5) * 20
+        spreadDist = SQR(spreadX * spreadX + spreadY * spreadY)
+        IF spreadDist < 1 THEN spreadDist = 1
+        BulletVelX(eb) = (spreadX / spreadDist) * bulletSpd
+        BulletVelY(eb) = (spreadY / spreadDist) * bulletSpd
+      END IF
+
       EXIT FOR
     END IF
   NEXT eb
@@ -1833,50 +1970,52 @@ SpawnEnemies:
     IF EnemyActive(i) = 1 THEN enemyCount = enemyCount + 1
   NEXT i
 
-  ' Spawn new enemies ahead of player - more aggressive spawning
-  maxEnemiesOnScreen = 4 + Level * 2
+  ' MUCH more aggressive spawning - harder game!
+  maxEnemiesOnScreen = 6 + Level * 3
   IF maxEnemiesOnScreen > MAXENEMIES THEN maxEnemiesOnScreen = MAXENEMIES
 
   IF enemyCount < maxEnemiesOnScreen THEN
-    spawnChance = 0.03 + Level * 0.01
+    ' Higher spawn chance - enemies come faster
+    spawnChance = 0.06 + Level * 0.02
     IF RND < spawnChance THEN
       FOR i = 0 TO MAXENEMIES - 1
         IF EnemyActive(i) = 0 THEN
           EnemyActive(i) = 1
-          EnemyX(i) = PlayerX + SCREENW + 50 + RND * 150
+          EnemyX(i) = PlayerX + SCREENW + 30 + RND * 100
           EnemyDir(i) = -1
           EnemyFrame(i) = 0
-          EnemyShootTimer(i) = INT(RND * 40)
+          ' Shorter initial shoot timer - enemies shoot sooner
+          EnemyShootTimer(i) = INT(RND * 20)
           EnemyVelY(i) = 0
 
-          ' Random enemy type based on level progression
+          ' Random enemy type - more variety
           typeRoll = RND
-          IF typeRoll < 0.45 THEN
-            ' Soldier - most common
+          IF typeRoll < 0.35 THEN
+            ' Soldier - common but not too many
             EnemyType(i) = 1
-            EnemyHealth(i) = 1
+            EnemyHealth(i) = 1 + INT(Level / 3)
             EnemyY(i) = GROUNDY - 8
-          ELSEIF typeRoll < 0.60 THEN
+          ELSEIF typeRoll < 0.50 THEN
             ' Tank - heavy ground unit
             EnemyType(i) = 2
-            EnemyHealth(i) = 4 + Level
+            EnemyHealth(i) = 5 + Level * 2
             EnemyY(i) = GROUNDY - 5
-          ELSEIF typeRoll < 0.75 THEN
-            ' Helicopter - air unit
+          ELSEIF typeRoll < 0.70 THEN
+            ' Helicopter - MORE air units!
             EnemyType(i) = 3
-            EnemyHealth(i) = 3
-            EnemyY(i) = 40 + RND * 30
+            EnemyHealth(i) = 4 + Level
+            EnemyY(i) = 35 + RND * 40
             GOSUB PlayHelicopterSound
-          ELSEIF typeRoll < 0.88 THEN
+          ELSEIF typeRoll < 0.85 THEN
             ' Jetpack soldier - flying infantry
             EnemyType(i) = 5
-            EnemyHealth(i) = 2
-            EnemyY(i) = 60 + RND * 40
+            EnemyHealth(i) = 2 + INT(Level / 2)
+            EnemyY(i) = 50 + RND * 50
             EnemyVelY(i) = -2 + RND * 4
           ELSE
             ' Turret - stationary defense
             EnemyType(i) = 4
-            EnemyHealth(i) = 3
+            EnemyHealth(i) = 4 + Level
             EnemyY(i) = GROUNDY - 12
           END IF
 
@@ -1886,8 +2025,28 @@ SpawnEnemies:
     END IF
   END IF
 
-  ' Also spawn from behind occasionally
-  IF RND < 0.005 AND enemyCount < maxEnemiesOnScreen THEN
+  ' Spawn multiple enemies at once sometimes (wave attack)
+  IF RND < 0.02 AND enemyCount < maxEnemiesOnScreen - 2 THEN
+    waveSize = 2 + INT(RND * 2)
+    FOR w = 1 TO waveSize
+      FOR i = 0 TO MAXENEMIES - 1
+        IF EnemyActive(i) = 0 THEN
+          EnemyActive(i) = 1
+          EnemyX(i) = PlayerX + SCREENW + 20 + w * 40
+          EnemyType(i) = 1
+          EnemyHealth(i) = 1
+          EnemyY(i) = GROUNDY - 8
+          EnemyDir(i) = -1
+          EnemyFrame(i) = 0
+          EnemyShootTimer(i) = w * 10
+          EXIT FOR
+        END IF
+      NEXT i
+    NEXT w
+  END IF
+
+  ' Also spawn from behind MORE often
+  IF RND < 0.015 AND enemyCount < maxEnemiesOnScreen THEN
     FOR i = 0 TO MAXENEMIES - 1
       IF EnemyActive(i) = 0 THEN
         EnemyActive(i) = 1
