@@ -1218,6 +1218,91 @@ class TestTimerEvents(unittest.TestCase):
         self.assertFalse(self.interp.timer_enabled)
 
 
+class TestDateTimeAssignment(unittest.TestCase):
+    """Test DATE$ and TIME$ assignment."""
+
+    def setUp(self):
+        """Create interpreter instance for testing."""
+        _expr_cache.clear()
+        _compiled_expr_cache.clear()
+        self.font = pygame.font.Font(None, 16)
+        self.interp = BasicInterpreter(self.font, 800, 600)
+
+    def test_date_assignment(self):
+        """Test DATE$ assignment sets custom date."""
+        self.interp.reset(['DATE$ = "12-25-2025"', 'd$ = DATE$'])
+        while self.interp.running and self.interp.pc < len(self.interp.program_lines):
+            self.interp.step()
+        self.assertEqual(self.interp.variables.get("D$"), "12-25-2025")
+
+    def test_time_assignment(self):
+        """Test TIME$ assignment sets custom time."""
+        self.interp.reset(['TIME$ = "14:30:00"', 't$ = TIME$'])
+        while self.interp.running and self.interp.pc < len(self.interp.program_lines):
+            self.interp.step()
+        self.assertEqual(self.interp.variables.get("T$"), "14:30:00")
+
+    def test_date_assignment_with_expression(self):
+        """Test DATE$ assignment with expression."""
+        self.interp.reset(['d$ = "01-01-2020"', 'DATE$ = d$', 'result$ = DATE$'])
+        while self.interp.running and self.interp.pc < len(self.interp.program_lines):
+            self.interp.step()
+        self.assertEqual(self.interp.variables.get("RESULT$"), "01-01-2020")
+
+    def test_time_assignment_with_expression(self):
+        """Test TIME$ assignment with expression."""
+        self.interp.reset(['t$ = "09:00:00"', 'TIME$ = t$', 'result$ = TIME$'])
+        while self.interp.running and self.interp.pc < len(self.interp.program_lines):
+            self.interp.step()
+        self.assertEqual(self.interp.variables.get("RESULT$"), "09:00:00")
+
+
+class TestCommonStatement(unittest.TestCase):
+    """Test COMMON statement for CHAIN variable preservation."""
+
+    def setUp(self):
+        """Create interpreter instance for testing."""
+        _expr_cache.clear()
+        _compiled_expr_cache.clear()
+        self.font = pygame.font.Font(None, 16)
+        self.interp = BasicInterpreter(self.font, 800, 600)
+
+    def test_common_adds_to_set(self):
+        """Test COMMON statement adds variables to common_variables set."""
+        self.interp.reset(['COMMON x, y, z'])
+        self.interp.step_line()
+        self.assertIn("X", self.interp.common_variables)
+        self.assertIn("Y", self.interp.common_variables)
+        self.assertIn("Z", self.interp.common_variables)
+
+    def test_common_with_type_suffix(self):
+        """Test COMMON with type suffix variables."""
+        self.interp.reset(['COMMON name$, count%'])
+        self.interp.step_line()
+        self.assertIn("NAME$", self.interp.common_variables)
+        self.assertIn("COUNT%", self.interp.common_variables)
+
+    def test_common_shared_adds_to_set(self):
+        """Test COMMON SHARED also adds to common_variables."""
+        self.interp.reset(['COMMON SHARED a, b'])
+        self.interp.step_line()
+        self.assertIn("A", self.interp.common_variables)
+        self.assertIn("B", self.interp.common_variables)
+
+    def test_common_with_as_type(self):
+        """Test COMMON with AS type syntax."""
+        self.interp.reset(['COMMON value AS INTEGER'])
+        self.interp.step_line()
+        self.assertIn("VALUE", self.interp.common_variables)
+
+    def test_common_continues_execution(self):
+        """Test COMMON doesn't stop execution."""
+        self.interp.reset(['COMMON x', 'x = 10'])
+        while self.interp.running and self.interp.pc < len(self.interp.program_lines):
+            self.interp.step()
+        self.assertEqual(self.interp.variables.get("X"), 10)
+
+
 class TestTronTroff(unittest.TestCase):
     """Test TRON/TROFF trace debugging."""
 
@@ -1380,6 +1465,172 @@ class TestPlayFunction(unittest.TestCase):
         result = self.interp.eval_expr('PLAY(0)')
         self.assertEqual(result, 0)
 
+    def test_on_play_gosub_sets_handler(self):
+        """Test ON PLAY GOSUB sets handler."""
+        self.interp.reset([
+            'ON PLAY(5) GOSUB handler',
+            'END',
+            'handler:',
+            'RETURN'
+        ])
+        self.interp.step_line()  # ON PLAY
+        self.assertEqual(self.interp.play_handler, "HANDLER")
+        self.assertEqual(self.interp.play_threshold, 5)
+
+    def test_play_on_off(self):
+        """Test PLAY ON and OFF."""
+        self.interp.reset([
+            'ON PLAY(5) GOSUB handler',
+            'PLAY ON',
+            'PLAY OFF',
+            'END',
+            'handler:',
+            'RETURN'
+        ])
+        self.interp.step_line()  # ON PLAY
+        self.interp.step_line()  # PLAY ON
+        self.assertTrue(self.interp.play_enabled)
+        self.interp.step_line()  # PLAY OFF
+        self.assertFalse(self.interp.play_enabled)
+
+
+class TestJoystickFunctions(unittest.TestCase):
+    """Test STICK and STRIG joystick functions."""
+
+    def setUp(self):
+        """Create interpreter instance for testing."""
+        _expr_cache.clear()
+        _compiled_expr_cache.clear()
+        self.font = pygame.font.Font(None, 16)
+        self.interp = BasicInterpreter(self.font, 800, 600)
+
+    def test_stick_returns_center_no_joystick(self):
+        """Test STICK returns center value (127) when no joystick."""
+        result = self.interp.eval_expr('STICK(0)')
+        self.assertEqual(result, 127)
+
+    def test_stick_all_values(self):
+        """Test STICK(0-3) returns center values."""
+        for i in range(4):
+            result = self.interp.eval_expr(f'STICK({i})')
+            self.assertEqual(result, 127)
+
+    def test_strig_returns_zero_no_joystick(self):
+        """Test STRIG returns 0 when no joystick."""
+        result = self.interp.eval_expr('STRIG(0)')
+        self.assertEqual(result, 0)
+
+    def test_strig_all_values(self):
+        """Test STRIG(0-7) returns 0."""
+        for i in range(8):
+            result = self.interp.eval_expr(f'STRIG({i})')
+            self.assertEqual(result, 0)
+
+    def test_stick_in_program(self):
+        """Test STICK can be used in a program."""
+        self.interp.reset(['x = STICK(0)', 'y = STICK(1)'])
+        while self.interp.running and self.interp.pc < len(self.interp.program_lines):
+            self.interp.step()
+        self.assertEqual(self.interp.variables.get("X"), 127)
+        self.assertEqual(self.interp.variables.get("Y"), 127)
+
+    def test_strig_in_program(self):
+        """Test STRIG can be used in a program."""
+        self.interp.reset(['b = STRIG(0)'])
+        while self.interp.running and self.interp.pc < len(self.interp.program_lines):
+            self.interp.step()
+        self.assertEqual(self.interp.variables.get("B"), 0)
+
+    def test_on_strig_gosub_sets_handler(self):
+        """Test ON STRIG GOSUB sets handler."""
+        self.interp.reset([
+            'ON STRIG(0) GOSUB handler',
+            'END',
+            'handler:',
+            'RETURN'
+        ])
+        self.interp.step_line()  # ON STRIG
+        self.assertEqual(self.interp.strig_handlers.get(0), "HANDLER")
+
+    def test_strig_on_off(self):
+        """Test STRIG(n) ON and OFF."""
+        self.interp.reset([
+            'ON STRIG(0) GOSUB handler',
+            'STRIG(0) ON',
+            'STRIG(0) OFF',
+            'END',
+            'handler:',
+            'RETURN'
+        ])
+        self.interp.step_line()  # ON STRIG
+        self.interp.step_line()  # STRIG ON
+        self.assertTrue(self.interp.strig_enabled.get(0))
+        self.interp.step_line()  # STRIG OFF
+        self.assertFalse(self.interp.strig_enabled.get(0))
+
+
+class TestPenFunctions(unittest.TestCase):
+    """Test PEN light pen functions (emulated with mouse)."""
+
+    def setUp(self):
+        """Create interpreter instance for testing."""
+        _expr_cache.clear()
+        _compiled_expr_cache.clear()
+        self.font = pygame.font.Font(None, 16)
+        self.interp = BasicInterpreter(self.font, 800, 600)
+
+    def test_pen_returns_zero_not_pressed(self):
+        """Test PEN(0) returns 0 when not pressed."""
+        result = self.interp.eval_expr('PEN(0)')
+        self.assertEqual(result, 0)
+
+    def test_pen_coordinates_initial(self):
+        """Test PEN coordinates are 0 initially."""
+        self.assertEqual(self.interp.eval_expr('PEN(1)'), 0)  # Activated X
+        self.assertEqual(self.interp.eval_expr('PEN(2)'), 0)  # Activated Y
+        self.assertEqual(self.interp.eval_expr('PEN(4)'), 0)  # Current X
+        self.assertEqual(self.interp.eval_expr('PEN(5)'), 0)  # Current Y
+
+    def test_pen_down_not_pressed(self):
+        """Test PEN(3) returns 0 when not pressed."""
+        result = self.interp.eval_expr('PEN(3)')
+        self.assertEqual(result, 0)
+
+    def test_on_pen_gosub_sets_handler(self):
+        """Test ON PEN GOSUB sets handler."""
+        self.interp.reset([
+            'ON PEN GOSUB handler',
+            'END',
+            'handler:',
+            'RETURN'
+        ])
+        self.interp.step_line()  # ON PEN
+        self.assertEqual(self.interp.pen_handler, "HANDLER")
+
+    def test_pen_on_off(self):
+        """Test PEN ON and OFF."""
+        self.interp.reset([
+            'ON PEN GOSUB handler',
+            'PEN ON',
+            'PEN OFF',
+            'END',
+            'handler:',
+            'RETURN'
+        ])
+        self.interp.step_line()  # ON PEN
+        self.interp.step_line()  # PEN ON
+        self.assertTrue(self.interp.pen_enabled)
+        self.interp.step_line()  # PEN OFF
+        self.assertFalse(self.interp.pen_enabled)
+
+    def test_pen_in_program(self):
+        """Test PEN can be used in a program."""
+        self.interp.reset(['x = PEN(0)', 'y = PEN(3)'])
+        while self.interp.running and self.interp.pc < len(self.interp.program_lines):
+            self.interp.step()
+        self.assertEqual(self.interp.variables.get("X"), 0)
+        self.assertEqual(self.interp.variables.get("Y"), 0)
+
 
 class TestMetacommands(unittest.TestCase):
     """Test $DYNAMIC, $STATIC metacommands."""
@@ -1402,6 +1653,53 @@ class TestMetacommands(unittest.TestCase):
         self.interp.reset(['$STATIC', 'x = 1'])
         self.interp.step_line()  # $STATIC
         self.assertTrue(self.interp.running)
+
+
+class TestHardwareIO(unittest.TestCase):
+    """Test INP, OUT, WAIT hardware I/O functions."""
+
+    def setUp(self):
+        """Create interpreter instance for testing."""
+        _expr_cache.clear()
+        _compiled_expr_cache.clear()
+        self.font = pygame.font.Font(None, 16)
+        self.interp = BasicInterpreter(self.font, 800, 600)
+
+    def test_out_and_inp(self):
+        """Test OUT writes value that INP can read back."""
+        self.interp.reset(['OUT 100, 255', 'x = INP(100)'])
+        while self.interp.running and self.interp.pc < len(self.interp.program_lines):
+            self.interp.step()
+        self.assertEqual(self.interp.variables.get("X"), 255)
+
+    def test_inp_unset_port_returns_zero(self):
+        """Test INP on unset port returns 0."""
+        self.interp.reset(['x = INP(999)'])
+        while self.interp.running and self.interp.pc < len(self.interp.program_lines):
+            self.interp.step()
+        self.assertEqual(self.interp.variables.get("X"), 0)
+
+    def test_out_masks_to_byte(self):
+        """Test OUT masks value to byte (0-255)."""
+        self.interp.reset(['OUT 50, 256', 'x = INP(50)'])
+        while self.interp.running and self.interp.pc < len(self.interp.program_lines):
+            self.interp.step()
+        # 256 & 0xFF = 0
+        self.assertEqual(self.interp.variables.get("X"), 0)
+
+    def test_wait_is_accepted(self):
+        """Test WAIT is accepted without error (no-op)."""
+        self.interp.reset(['WAIT &H3DA, 8', 'x = 1'])
+        while self.interp.running and self.interp.pc < len(self.interp.program_lines):
+            self.interp.step()
+        self.assertTrue(self.interp.running or self.interp.variables.get("X") == 1)
+
+    def test_wait_with_xor_mask(self):
+        """Test WAIT with xor_mask is accepted."""
+        self.interp.reset(['WAIT &H3DA, 8, 8', 'x = 1'])
+        while self.interp.running and self.interp.pc < len(self.interp.program_lines):
+            self.interp.step()
+        self.assertEqual(self.interp.variables.get("X"), 1)
 
 
 if __name__ == "__main__":
