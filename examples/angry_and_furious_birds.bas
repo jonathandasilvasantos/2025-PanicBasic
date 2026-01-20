@@ -392,7 +392,8 @@ animate_title:
     pulse = ABS(SIN(title_frame / 8)) * 2
 
     ' Small animated bird flying across
-    bx = (title_frame * 2) MOD (SCREEN_W + 40) - 20
+    wrap_width = SCREEN_W + 40
+    bx = (title_frame * 2) MOD wrap_width - 20
     by = 25 + SIN(title_frame / 5) * 5
 
     ' Draw mini flying bird
