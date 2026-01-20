@@ -1,0 +1,560 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PanicBasic - Retro BASIC Programming Environment</title>
+    <meta name="description" content="PanicBasic is an experimental, retro-style BASIC environment combining a code editor, interpreter, and console in Python.">
+    <style>
+        :root {
+            --bg-dark: #1a1a2e;
+            --bg-card: #16213e;
+            --accent: #0f3460;
+            --highlight: #e94560;
+            --text: #eaeaea;
+            --text-muted: #a0a0a0;
+            --code-bg: #0d1117;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            background: var(--bg-dark);
+            color: var(--text);
+            line-height: 1.6;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 0 20px;
+        }
+
+        /* Header */
+        header {
+            background: linear-gradient(135deg, var(--bg-card) 0%, var(--accent) 100%);
+            padding: 60px 0;
+            text-align: center;
+            border-bottom: 3px solid var(--highlight);
+        }
+
+        .logo {
+            font-size: 3.5rem;
+            font-weight: 800;
+            color: var(--highlight);
+            text-shadow: 0 0 20px rgba(233, 69, 96, 0.5);
+            margin-bottom: 10px;
+        }
+
+        .tagline {
+            font-size: 1.3rem;
+            color: var(--text-muted);
+            margin-bottom: 30px;
+        }
+
+        .cta-buttons {
+            display: flex;
+            gap: 15px;
+            justify-content: center;
+            flex-wrap: wrap;
+        }
+
+        .btn {
+            display: inline-block;
+            padding: 12px 30px;
+            border-radius: 8px;
+            text-decoration: none;
+            font-weight: 600;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+
+        .btn-primary {
+            background: var(--highlight);
+            color: white;
+        }
+
+        .btn-secondary {
+            background: transparent;
+            color: var(--text);
+            border: 2px solid var(--text);
+        }
+
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 20px rgba(233, 69, 96, 0.3);
+        }
+
+        /* Features */
+        .features {
+            padding: 80px 0;
+        }
+
+        .section-title {
+            text-align: center;
+            font-size: 2.5rem;
+            margin-bottom: 50px;
+            color: var(--highlight);
+        }
+
+        .feature-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 30px;
+        }
+
+        .feature-card {
+            background: var(--bg-card);
+            padding: 30px;
+            border-radius: 12px;
+            border: 1px solid var(--accent);
+            transition: transform 0.2s, border-color 0.2s;
+        }
+
+        .feature-card:hover {
+            transform: translateY(-5px);
+            border-color: var(--highlight);
+        }
+
+        .feature-icon {
+            font-size: 2.5rem;
+            margin-bottom: 15px;
+        }
+
+        .feature-card h3 {
+            font-size: 1.3rem;
+            margin-bottom: 10px;
+            color: var(--text);
+        }
+
+        .feature-card p {
+            color: var(--text-muted);
+        }
+
+        /* Code Example */
+        .code-section {
+            background: var(--bg-card);
+            padding: 80px 0;
+        }
+
+        .code-example {
+            background: var(--code-bg);
+            border-radius: 12px;
+            overflow: hidden;
+            border: 1px solid var(--accent);
+        }
+
+        .code-header {
+            background: var(--accent);
+            padding: 10px 20px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .code-dot {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+        }
+
+        .code-dot.red { background: #ff5f56; }
+        .code-dot.yellow { background: #ffbd2e; }
+        .code-dot.green { background: #27c93f; }
+
+        .code-content {
+            padding: 20px;
+            font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+            font-size: 0.9rem;
+            overflow-x: auto;
+        }
+
+        .code-content pre {
+            color: var(--text);
+        }
+
+        .code-keyword { color: #ff79c6; }
+        .code-string { color: #f1fa8c; }
+        .code-number { color: #bd93f9; }
+        .code-comment { color: #6272a4; }
+
+        /* Installation */
+        .installation {
+            padding: 80px 0;
+        }
+
+        .install-steps {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 30px;
+        }
+
+        .install-step {
+            background: var(--bg-card);
+            padding: 25px;
+            border-radius: 12px;
+            border-left: 4px solid var(--highlight);
+        }
+
+        .step-number {
+            display: inline-block;
+            width: 35px;
+            height: 35px;
+            background: var(--highlight);
+            color: white;
+            border-radius: 50%;
+            text-align: center;
+            line-height: 35px;
+            font-weight: bold;
+            margin-bottom: 15px;
+        }
+
+        .install-step h3 {
+            margin-bottom: 10px;
+        }
+
+        .install-step code {
+            display: block;
+            background: var(--code-bg);
+            padding: 10px 15px;
+            border-radius: 6px;
+            margin-top: 10px;
+            font-family: monospace;
+            color: var(--highlight);
+        }
+
+        /* Commands */
+        .commands {
+            background: var(--bg-card);
+            padding: 80px 0;
+        }
+
+        .command-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+        }
+
+        .command-category {
+            background: var(--bg-dark);
+            padding: 25px;
+            border-radius: 12px;
+        }
+
+        .command-category h3 {
+            color: var(--highlight);
+            margin-bottom: 15px;
+            font-size: 1.1rem;
+        }
+
+        .command-category ul {
+            list-style: none;
+        }
+
+        .command-category li {
+            padding: 5px 0;
+            color: var(--text-muted);
+            font-family: monospace;
+        }
+
+        .command-category li code {
+            color: var(--text);
+            background: var(--accent);
+            padding: 2px 6px;
+            border-radius: 4px;
+            margin-right: 8px;
+        }
+
+        /* Author */
+        .author {
+            padding: 80px 0;
+            text-align: center;
+        }
+
+        .author-card {
+            background: var(--bg-card);
+            padding: 40px;
+            border-radius: 12px;
+            display: inline-block;
+            border: 1px solid var(--accent);
+        }
+
+        .author-name {
+            font-size: 1.5rem;
+            margin-bottom: 10px;
+        }
+
+        .author-email {
+            color: var(--highlight);
+            text-decoration: none;
+        }
+
+        .ai-credits {
+            margin-top: 30px;
+            padding-top: 30px;
+            border-top: 1px solid var(--accent);
+        }
+
+        .ai-credits h4 {
+            color: var(--text-muted);
+            margin-bottom: 15px;
+        }
+
+        .ai-logos {
+            display: flex;
+            gap: 20px;
+            justify-content: center;
+            flex-wrap: wrap;
+        }
+
+        .ai-logos a {
+            color: var(--text);
+            text-decoration: none;
+            padding: 10px 20px;
+            background: var(--accent);
+            border-radius: 8px;
+            transition: background 0.2s;
+        }
+
+        .ai-logos a:hover {
+            background: var(--highlight);
+        }
+
+        /* Footer */
+        footer {
+            background: var(--code-bg);
+            padding: 40px 0;
+            text-align: center;
+            border-top: 1px solid var(--accent);
+        }
+
+        footer p {
+            color: var(--text-muted);
+        }
+
+        footer a {
+            color: var(--highlight);
+            text-decoration: none;
+        }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            .logo {
+                font-size: 2.5rem;
+            }
+
+            .tagline {
+                font-size: 1.1rem;
+            }
+
+            .section-title {
+                font-size: 2rem;
+            }
+
+            .cta-buttons {
+                flex-direction: column;
+                align-items: center;
+            }
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <div class="container">
+            <h1 class="logo">PanicBasic</h1>
+            <p class="tagline">A retro-style BASIC programming environment in Python</p>
+            <div class="cta-buttons">
+                <a href="https://github.com/zerojnt/pasic" class="btn btn-primary">View on GitHub</a>
+                <a href="https://github.com/zerojnt/pasic/archive/refs/heads/main.zip" class="btn btn-secondary">Download ZIP</a>
+            </div>
+        </div>
+    </header>
+
+    <section class="features">
+        <div class="container">
+            <h2 class="section-title">Features</h2>
+            <div class="feature-grid">
+                <div class="feature-card">
+                    <div class="feature-icon">&#128221;</div>
+                    <h3>Integrated Editor</h3>
+                    <p>Custom text editor with line numbering, undo/redo, cut/copy/paste, and a unique drawing layer for annotations.</p>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon">&#128187;</div>
+                    <h3>BASIC Interpreter</h3>
+                    <p>Supports classic commands like SCREEN, CLS, PRINT, LINE, CIRCLE, PAINT, loops, conditionals, and subroutines.</p>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon">&#127918;</div>
+                    <h3>Retro Graphics</h3>
+                    <p>320x200 software surface emulating classic BASIC graphics modes with 256 colors.</p>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon">&#128424;</div>
+                    <h3>Built-in Console</h3>
+                    <p>Shell-like console for running system commands directly within the application.</p>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon">&#127923;</div>
+                    <h3>Example Games</h3>
+                    <p>Includes Pong, Catch the Star, Car Racing, Pinball, and Endless Runner games.</p>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon">&#128640;</div>
+                    <h3>Easy to Use</h3>
+                    <p>Simple installation with pip, intuitive interface, and comprehensive documentation.</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section class="code-section">
+        <div class="container">
+            <h2 class="section-title">Code Example</h2>
+            <div class="code-example">
+                <div class="code-header">
+                    <span class="code-dot red"></span>
+                    <span class="code-dot yellow"></span>
+                    <span class="code-dot green"></span>
+                </div>
+                <div class="code-content">
+<pre><span class="code-comment">' Simple Pong Game in PanicBasic</span>
+<span class="code-keyword">SCREEN</span> <span class="code-number">13</span>
+<span class="code-keyword">CLS</span>
+
+<span class="code-keyword">CONST</span> PADDLE_HEIGHT = <span class="code-number">40</span>
+<span class="code-keyword">CONST</span> BALL_SIZE = <span class="code-number">4</span>
+
+ballX = <span class="code-number">160</span>
+ballY = <span class="code-number">100</span>
+
+<span class="code-keyword">DO</span>
+    <span class="code-keyword">CLS</span>
+
+    <span class="code-comment">' Draw paddle</span>
+    <span class="code-keyword">LINE</span> (<span class="code-number">0</span>, paddleY)-(<span class="code-number">10</span>, paddleY + PADDLE_HEIGHT), <span class="code-number">15</span>, BF
+
+    <span class="code-comment">' Draw ball</span>
+    <span class="code-keyword">CIRCLE</span> (ballX, ballY), BALL_SIZE, <span class="code-number">15</span>
+    <span class="code-keyword">PAINT</span> (ballX, ballY), <span class="code-number">15</span>
+
+    <span class="code-comment">' Move ball</span>
+    ballX = ballX + ballDX
+    ballY = ballY + ballDY
+
+    <span class="code-keyword">_DELAY</span> <span class="code-number">0.016</span>
+<span class="code-keyword">LOOP</span></pre>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section class="installation">
+        <div class="container">
+            <h2 class="section-title">Quick Start</h2>
+            <div class="install-steps">
+                <div class="install-step">
+                    <span class="step-number">1</span>
+                    <h3>Clone the Repository</h3>
+                    <p>Download the source code from GitHub</p>
+                    <code>git clone https://github.com/zerojnt/pasic.git</code>
+                </div>
+                <div class="install-step">
+                    <span class="step-number">2</span>
+                    <h3>Install Dependencies</h3>
+                    <p>Install required Python packages</p>
+                    <code>pip install -r requirements.txt</code>
+                </div>
+                <div class="install-step">
+                    <span class="step-number">3</span>
+                    <h3>Run PanicBasic</h3>
+                    <p>Launch the integrated environment</p>
+                    <code>python main.py</code>
+                </div>
+                <div class="install-step">
+                    <span class="step-number">4</span>
+                    <h3>Run an Example</h3>
+                    <p>Try one of the included games</p>
+                    <code>python main.py --run examples/pong.bas</code>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section class="commands">
+        <div class="container">
+            <h2 class="section-title">Supported Commands</h2>
+            <div class="command-grid">
+                <div class="command-category">
+                    <h3>Graphics</h3>
+                    <ul>
+                        <li><code>SCREEN</code> Set graphics mode</li>
+                        <li><code>CLS</code> Clear screen</li>
+                        <li><code>LINE</code> Draw lines/boxes</li>
+                        <li><code>CIRCLE</code> Draw circles</li>
+                        <li><code>PAINT</code> Flood fill</li>
+                        <li><code>PSET</code> Set pixel</li>
+                    </ul>
+                </div>
+                <div class="command-category">
+                    <h3>Flow Control</h3>
+                    <ul>
+                        <li><code>IF...THEN</code> Conditionals</li>
+                        <li><code>FOR...NEXT</code> For loops</li>
+                        <li><code>DO...LOOP</code> Do loops</li>
+                        <li><code>WHILE...WEND</code> While loops</li>
+                        <li><code>SELECT CASE</code> Switch</li>
+                        <li><code>GOSUB</code> Subroutines</li>
+                    </ul>
+                </div>
+                <div class="command-category">
+                    <h3>Variables</h3>
+                    <ul>
+                        <li><code>DIM</code> Declare arrays</li>
+                        <li><code>CONST</code> Define constants</li>
+                        <li><code>LET</code> Assign values</li>
+                    </ul>
+                </div>
+                <div class="command-category">
+                    <h3>I/O & Timing</h3>
+                    <ul>
+                        <li><code>PRINT</code> Output text</li>
+                        <li><code>INPUT</code> Get user input</li>
+                        <li><code>INKEY$</code> Get key press</li>
+                        <li><code>_DELAY</code> Non-blocking delay</li>
+                        <li><code>SLEEP</code> Blocking delay</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section class="author">
+        <div class="container">
+            <div class="author-card">
+                <h2 class="author-name">Jonathan da Silva Santos</h2>
+                <a href="mailto:silva.santos.jonathan@gmail.com" class="author-email">silva.santos.jonathan@gmail.com</a>
+
+                <div class="ai-credits">
+                    <h4>Built with assistance from</h4>
+                    <div class="ai-logos">
+                        <a href="https://claude.ai" target="_blank">Claude Code by Anthropic</a>
+                        <a href="https://gemini.google.com" target="_blank">Gemini by Google</a>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <footer>
+        <div class="container">
+            <p>PanicBasic is released under the <a href="https://github.com/zerojnt/pasic/blob/main/LICENSE">MIT License</a></p>
+            <p style="margin-top: 10px;">&copy; 2025 Jonathan da Silva Santos</p>
+        </div>
+    </footer>
+</body>
+</html>

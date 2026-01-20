@@ -1,145 +1,215 @@
-# PanicBasic
+# PanicBasic (pasic)
 
-PanicBasic is an experimental, retro-style BASIC environment combined with a code editor, interpreter, and console — all in one application. It is written in Python using [pygame](https://www.pygame.org/).
+PanicBasic is an experimental, retro-style BASIC environment combining a code editor, interpreter, and console — all in one application. Written in Python using [pygame](https://www.pygame.org/), it brings back the nostalgia of classic BASIC programming.
 
 ## Features
 
-1. **Integrated Editor**  
-   - A custom text editor with line numbering, basic editing commands (undo, redo, cut, copy, paste), and a simple drawing layer.  
-   - Automatically loads a sample BASIC game (Pong) when no file is provided.  
-   - Allows you to load your own `.bas` files for editing.
+- **Integrated Editor**: Custom text editor with line numbering, undo/redo, cut/copy/paste, and a drawing layer
+- **BASIC Interpreter**: Supports classic commands like `SCREEN`, `CLS`, `PRINT`, `LINE`, `CIRCLE`, `PAINT`, loops, conditionals, and more
+- **Built-in Console**: Shell-like console for running system commands
+- **Retro Graphics**: 320x200 software surface emulating classic BASIC graphics modes
+- **Example Games**: Includes Pong, Catch the Star, and other retro-style games
 
-2. **BASIC Interpreter**  
-   - A custom BASIC interpreter that supports classic commands such as `SCREEN`, `CLS`, `PRINT`, `LINE`, `CIRCLE`, `PAINT`, loops (`DO ... LOOP`, `FOR ... NEXT`), conditionals (`IF ... THEN`), and more.  
-   - Supports array and two-dimensional array variables (`DIM x(10)`, `DIM y(20, 10)`).  
-   - Includes special commands like `_DELAY` and `SLEEP` to control timing.  
-   - Allows you to run simple, retro-inspired games (like Pong or Catch the Star).
+## Installation
 
-3. **Console**  
-   - A basic shell-like console that can run system commands within the same pygame window.  
-   - Supports command history navigation (`↑/↓` arrows), clearing the console (`clear` or `cls`), and handling of standard output and errors.
+### Prerequisites
 
-4. **Footer Bar for Mode Switching**  
-   - Switch between the **Text** editor, **Run** mode (the BASIC interpreter), or the **Console** at any time by clicking on the corresponding buttons in the bottom footer bar.
+- Python 3.8 or higher
+- pip (Python package manager)
 
-5. **Direct Interpreter Run**  
-   - You can bypass the editor entirely and run a `.bas` file from the command line with `--run`.
+### Step 1: Clone the Repository
 
+```bash
+git clone https://github.com/zerojnt/pasic.git
+cd pasic
+```
+
+### Step 2: Create a Virtual Environment (Recommended)
+
+```bash
+# Create virtual environment
+python3 -m venv env
+
+# Activate it
+# On macOS/Linux:
+source env/bin/activate
+
+# On Windows:
+env\Scripts\activate
+```
+
+### Step 3: Install Dependencies
+
+```bash
+pip install -r requirements.txt
+```
+
+Or install manually:
+
+```bash
+pip install pygame pyperclip
+```
+
+## Usage
+
+### Using the Integrated Environment (main.py)
+
+The main entry point provides both editor and interpreter functionality.
+
+**Launch the editor:**
+```bash
+python main.py
+```
+
+**Load a specific file in the editor:**
+```bash
+python main.py examples/pong.bas
+```
+
+**Run a BASIC file directly (interpreter only):**
+```bash
+python main.py --run examples/pong.bas
+```
+
+### Using the Editor Directly (editor.py)
+
+You can also run the editor module directly:
+
+```bash
+python editor.py                    # Open with default Pong game
+python editor.py myprogram.bas      # Open a specific file
+```
+
+### Using the Interpreter Directly (interpreter.py)
+
+Run BASIC programs directly without the editor interface:
+
+```bash
+python interpreter.py examples/star.bas
+```
+
+## Editor Controls
+
+| Action | Shortcut |
+|--------|----------|
+| Undo | `Ctrl+Z` |
+| Redo | `Ctrl+Shift+Z` |
+| Cut | `Ctrl+X` |
+| Copy | `Ctrl+C` |
+| Paste | `Ctrl+V` |
+| Save | `Ctrl+S` |
+| Navigate | Arrow keys |
+| Jump to position (macOS) | `Option+Click` |
+| Drawing | Left-click and drag |
+| Erasing | Right-click and drag |
+
+## Modes
+
+Switch between modes using the footer buttons:
+
+- **Text**: Edit your BASIC code
+- **Run**: Execute the current program (320x200 scaled to window)
+- **Console**: Run shell commands
+
+## Supported BASIC Commands
+
+### Graphics
+- `SCREEN 13` - Set 320x200 resolution
+- `CLS` - Clear screen
+- `LINE (x1, y1)-(x2, y2), color [, B|BF]` - Draw lines/boxes
+- `CIRCLE (x, y), radius, color` - Draw circles
+- `PAINT (x, y), color` - Flood fill
+- `PSET (x, y), color` - Set pixel
+- `LOCATE row, col` - Position cursor
+
+### Flow Control
+- `IF ... THEN ... ELSE ... END IF`
+- `FOR ... TO ... STEP ... NEXT`
+- `DO ... LOOP [WHILE|UNTIL]`
+- `WHILE ... WEND`
+- `SELECT CASE ... END SELECT`
+- `GOSUB` / `RETURN`
+- `SUB ... END SUB`
+
+### Variables & Data
+- `DIM array(size)` - Declare arrays
+- `CONST name = value` - Define constants
+- `LET var = value` - Assign variables
+
+### Input/Output
+- `PRINT` - Output text
+- `INPUT` - Get user input
+- `INKEY$` - Get key press
+
+### Timing
+- `_DELAY seconds` - Non-blocking delay
+- `SLEEP seconds` - Blocking delay
+
+## Example Programs
+
+The `examples/` folder contains sample BASIC programs:
+
+- **pong.bas** - Classic Pong game
+- **star.bas** - Catch the falling stars
+- **car.bas** - Car racing game
+- **pinball.bas** - Pinball simulation
+- **runner.bas** - Endless runner game
+
+Run any example:
+```bash
+python main.py --run examples/pong.bas
+```
 
 ## Project Structure
 
 ```
-.
-├── main.py             # Entry point that merges the editor and interpreter
-├── editor.py           # The text editor (with basic painting capability)
-├── interpreter.py      # The BASIC interpreter logic
-├── examples
-│   ├── star.bas        # Example 'Catch the Star' game
-│   └── pong.bas        # Example Pong game
-└── README.md           # This file
+pasic/
+├── main.py           # Main entry point
+├── editor.py         # Text editor with drawing layer
+├── interpreter.py    # BASIC interpreter engine
+├── requirements.txt  # Python dependencies
+├── LICENSE           # MIT License
+├── README.md         # This file
+└── examples/         # Sample BASIC programs
+    ├── pong.bas
+    ├── star.bas
+    ├── car.bas
+    ├── pinball.bas
+    └── runner.bas
 ```
 
-### `main.py`
-- **Description**: The main entry point of PanicBasic.  
-- **Usage**:
-  - Without arguments: Launches the integrated environment with the editor open.  
-    ```bash
-    ./main.py
-    ```
-  - With `--run <file>`: Runs a BASIC file directly in interpreter mode (without the editor).  
-    ```bash
-    ./main.py --run ./examples/star.bas
-    ```
+## Dependencies
 
-### `editor.py`
-- **Description**: Implements a simple text editor with line numbering, a drawing surface, undo/redo, cut/copy/paste, etc.  
-- **Features**:
-  - **Selection & Editing**: Supports arrow keys, `Ctrl+Z`/`Ctrl+Shift+Z` (undo/redo), `Ctrl+X`/`Ctrl+C`/`Ctrl+V` (cut, copy, paste), etc.  
-  - **Drawing Layer**: Left-click draws with white lines, right-click erases.  
-  - **Scrolling & Resizing**: Automatically adjusts to the pygame window size.
+| Package | Version | License |
+|---------|---------|---------|
+| pygame | 2.5.2+ | LGPL v2.1 |
+| pyperclip | 1.8.2+ | BSD 3-Clause |
 
-### `interpreter.py`
-- **Description**: A custom BASIC interpreter supporting a subset of classic syntax.  
-- **Graphics**:
-  - Uses a 320×200 software surface by default (`SCREEN 13`).  
-  - Commands like `CLS`, `LINE`, `CIRCLE`, `PAINT`, `LOCATE`, `PRINT` for rendering text and shapes.  
-- **Flow Control**: Supports `FOR ... NEXT`, `DO ... LOOP`, `IF ... THEN ... ELSE` (single-line or block), `SELECT CASE`, and subroutine blocks `SUB ... END SUB`.  
-- **Extra Commands**:
-  - `_DELAY seconds` or `SLEEP seconds`: Wait for a specified duration (non-blocking or blocking).  
-  - `CONST`, `DIM`, array indexing.  
-- **Run**:
-  - The `run_interpreter(...)` function starts a pygame loop that executes the BASIC program until it ends or quits.
-
-### `examples` Folder
-- **`pong.bas`**: A simple Pong game demonstrating paddle movement, ball collision, scoring, and speed-up mechanics.  
-- **`star.bas`**: A "Catch the Star" game where you move a basket left and right to catch falling stars.
-
-## How to Use
-
-1. **Install Requirements**  
-   - [Python 3.x](https://www.python.org/downloads/)  
-   - [pygame](https://www.pygame.org/)  
-   - [pyperclip](https://pypi.org/project/pyperclip/) (for clipboard operations)
-
-   You can install these via:
-   ```bash
-   pip install pygame pyperclip
-   ```
-
-2. **Run the Editor/Interpreter**  
-   ```bash
-   ./main.py
-   ```
-   - The editor will open by default.  
-   - If you provided a file path as a positional argument, the editor will attempt to load that file’s contents.
-
-3. **Run a BASIC File Directly**  
-   ```bash
-   ./main.py --run ./examples/pong.bas
-   ```
-   - This launches the interpreter in a window and runs `pong.bas`.
-
-4. **Editor Usage**  
-   - Text mode is displayed by default (or click **Text** in the bottom footer).  
-   - Use arrow keys or mouse scroll to navigate.  
-   - **Drawing**: Left-click to draw, right-click to erase.  
-   - **Keyboard Shortcuts**:
-     - `Ctrl+Z`: Undo  
-     - `Ctrl+Shift+Z`: Redo  
-     - `Ctrl+X`: Cut  
-     - `Ctrl+C`: Copy  
-     - `Ctrl+V`: Paste  
-     - `Ctrl+S`: Save file  
-   - To switch to **Run** or **Console**, click their buttons at the bottom.
-
-5. **Run Mode**  
-   - Click **Run** in the footer bar to execute your code.  
-   - The screen will scale a 320×200 surface to fit your current window.  
-   - Press <kbd>Esc</kbd> (depending on the BASIC program’s code) to exit back to the editor mode, or simply click **Text** or **Console**.
-
-6. **Console**  
-   - Click **Console** in the footer bar.  
-   - Type shell commands (e.g. `ls`, `dir`, `python --version`) to see their output.  
-   - Scroll with the arrow keys or clear output with `clear` or `cls`.
-
-## Example Screenshots (Conceptual)
-
-- **Editor Mode**  
-  Displays lines of BASIC code, a drawing surface behind them, and a footer with three buttons (Text, Run, Console).
-
-- **Run Mode**  
-  Shows the 320×200 retro-style graphics scaled to your window. For example, a Pong ball and paddles.
-
-- **Console Mode**  
-  A text console at the top, your current command line at the bottom.
+All dependencies are compatible with the MIT license.
 
 ## Contributing
 
-- Feel free to submit pull requests or file issues.  
-- This code is primarily for educational/demonstration purposes.
+Contributions are welcome! Feel free to:
+
+- Report bugs or request features via [Issues](https://github.com/zerojnt/pasic/issues)
+- Submit pull requests
+- Share your BASIC programs
 
 ## License
 
-This project is provided under an MIT License. See [LICENSE](https://opensource.org/licenses/MIT) for details. 
+This project is licensed under the MIT License. See [LICENSE](LICENSE) for details.
 
-Enjoy exploring retro BASIC in Python! If you have any questions or suggestions, please let us know. Have fun coding!
+## Author
+
+**Jonathan da Silva Santos**
+Email: silva.santos.jonathan@gmail.com
+
+## Acknowledgments
+
+This project was built with extensive assistance from AI tools:
+- [Claude Code](https://claude.ai) by Anthropic
+- [Gemini](https://gemini.google.com) by Google
+
+---
+
+Enjoy exploring retro BASIC programming in Python!
