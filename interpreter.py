@@ -382,11 +382,14 @@ _common_re = LazyPattern(r"COMMON\s+(?!SHARED\s)(.+)", re.IGNORECASE)
 # DIM SHARED - Shared array declaration
 _dim_shared_re = re.compile(r"DIM\s+SHARED\s+(.+)", re.IGNORECASE)
 
+# Coordinate expression pattern - handles nested function calls like Scl(15)
+_coord_expr = r'(?:[^(),]+|\([^()]*\))+'
+
 # GET (graphics) - Capture screen region (array name can have type suffix like &)
-_get_gfx_re = re.compile(r"GET\s*\(\s*([^,]+)\s*,\s*([^)]+)\s*\)\s*-\s*\(\s*([^,]+)\s*,\s*([^)]+)\s*\)\s*,\s*([a-zA-Z_][a-zA-Z0-9_]*[\$%!#&]?)", re.IGNORECASE)
+_get_gfx_re = re.compile(rf"GET\s*\(\s*({_coord_expr})\s*,\s*({_coord_expr})\s*\)\s*-\s*\(\s*({_coord_expr})\s*,\s*({_coord_expr})\s*\)\s*,\s*([a-zA-Z_][a-zA-Z0-9_]*[\$%!#&]?)", re.IGNORECASE)
 
 # PUT (graphics) - Display sprite (array name can have type suffix like &)
-_put_gfx_re = re.compile(r"PUT\s*\(\s*([^,]+)\s*,\s*([^)]+)\s*\)\s*,\s*([a-zA-Z_][a-zA-Z0-9_]*[\$%!#&]?)(?:\s*,\s*(PSET|PRESET|AND|OR|XOR))?", re.IGNORECASE)
+_put_gfx_re = re.compile(rf"PUT\s*\(\s*({_coord_expr})\s*,\s*({_coord_expr})\s*\)\s*,\s*([a-zA-Z_][a-zA-Z0-9_]*[\$%!#&]?)(?:\s*,\s*(PSET|PRESET|AND|OR|XOR))?", re.IGNORECASE)
 
 # ON ERROR GOTO - Error handler
 _on_error_re = re.compile(r"ON\s+ERROR\s+GOTO\s+([a-zA-Z0-9_]+)", re.IGNORECASE)
