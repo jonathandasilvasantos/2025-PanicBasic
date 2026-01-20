@@ -655,6 +655,11 @@ def _replace_func_or_array_access(match: re.Match) -> str:
 
     name_base_upper = name_basic.rstrip('$%!#&').upper()  # Strip all type suffixes
 
+    # Skip BASIC reserved keywords (operators that will be converted later)
+    _reserved_keywords = {'OR', 'AND', 'NOT', 'MOD', 'XOR', 'EQV', 'IMP', 'TO', 'STEP', 'THEN', 'ELSE', 'IF'}
+    if name_base_upper in _reserved_keywords:
+        return match.group(0)  # Preserve as-is
+
     # Skip FN_ prefixed names (user-defined function calls already converted)
     if name_base_upper.startswith('FN_'):
         # Preserve as-is (already converted by _replace_fn_call)
@@ -674,11 +679,11 @@ def _replace_func_or_array_access(match: re.Match) -> str:
             # This is used when passing arrays as arguments to SUB/FUNCTION
             return py_array_name
 
-        # Array indices must be integers after evaluation
-        # Use __int__, __round__, __float__ to avoid uppercase conversion issues
-        processed_indices = [f"int({convert_basic_expr(idx, set())})" for idx in arg_parts]
-        # For multi-dimensional arrays: array[idx1][idx2]...
-        return f"{py_array_name}[{']['.join(processed_indices)}]"
+        # Convert indices (recursively process each index expression)
+        processed_indices = [convert_basic_expr(idx, set()) for idx in arg_parts]
+        # Use _ARRGET_ helper for proper lower bound handling (e.g., DIM A(1 TO 10))
+        # Format: _ARRGET_(array, "ARRAY_NAME", idx1, idx2, ...)
+        return f'_ARRGET_({py_array_name}, "{py_array_name}", {", ".join(processed_indices)})'
 
 
 def _protect_strings(expr: str) -> Tuple[str, List[str]]:
@@ -858,6 +863,10 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
 
         # OPTION BASE setting (0 or 1)
         self.option_base: int = 0
+
+        # Array lower bounds: array_name -> tuple of lower bounds per dimension
+        # e.g., "TOTALWINS" -> (1,) for DIM TotalWins(1 TO 2)
+        self.array_bounds: Dict[str, Tuple[int, ...]] = {}
 
         # INPUT$ key buffer for multi-character reads
         self._input_dollar_buffer: str = ""
@@ -1056,6 +1065,8 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
             # Multi-key input function for games
             "KEYDOWN": self._basic_keydown,  # Check if specific key is pressed
             "MULTIKEY": self._basic_keydown,  # Alias for KEYDOWN (compatibility)
+            # Array access with lower bound adjustment
+            "_ARRGET_": self._array_get,  # Access array element with bounds check
         }
 
         # Build command dispatch table for O(1) keyword lookup
@@ -2286,6 +2297,8 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
         # Reset user-defined functions and option base
         self.user_functions.clear()
         self.option_base = 0
+        # Reset array lower bounds
+        self.array_bounds.clear()
         # Reset STOP/debugging state
         self.stopped = False
         self.trace_mode = False
@@ -2468,6 +2481,112 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
     def clear_simulated_keys(self) -> None:
         """Clear any pending simulated keys."""
         self._simulated_key_buffer.clear()
+
+    def run_with_simulated_input(self, max_steps: int = 10000,
+                                 initial_keys: Optional[List[str]] = None,
+                                 random_game_keys: bool = True,
+                                 key_interval: int = 100,
+                                 verbose: bool = False) -> Tuple[bool, int, Optional[str]]:
+        """Run the interpreter with simulated key input for automated testing.
+
+        This method executes the program while injecting keys at regular intervals,
+        useful for testing games and interactive programs headlessly.
+
+        Args:
+            max_steps: Maximum number of execution steps.
+            initial_keys: List of initial keys to inject (e.g., [' ', chr(13)] for space+enter).
+            random_game_keys: If True, inject random game keys (arrows, space, enter, etc.)
+                              periodically during execution.
+            key_interval: Inject a random key every N steps (if random_game_keys is True).
+            verbose: If True, print progress every 1000 steps.
+
+        Returns:
+            Tuple of (success, steps_executed, error_message).
+            success is True if program ran without errors.
+        """
+        import random
+
+        # Common game keys: arrows, space, enter, escape, numbers, letters
+        GAME_KEYS = [
+            ' ',           # Space
+            chr(13),       # Enter
+            chr(27),       # Escape
+            chr(0) + 'H',  # Up arrow
+            chr(0) + 'P',  # Down arrow
+            chr(0) + 'K',  # Left arrow
+            chr(0) + 'M',  # Right arrow
+            'y', 'Y', 'n', 'N',  # Yes/No responses
+            '1', '2', '3', '4', '5', '6', '7', '8', '9', '0',  # Numbers
+            'a', 'A', 's', 'S', 'd', 'D', 'w', 'W',  # WASD keys
+        ]
+
+        # Inject initial keys
+        if initial_keys:
+            self.inject_keys(initial_keys)
+
+        error_message = None
+        steps = 0
+
+        for steps in range(max_steps):
+            if not self.running:
+                break
+
+            # Inject random game key at intervals
+            if random_game_keys and steps > 0 and steps % key_interval == 0:
+                key = random.choice(GAME_KEYS)
+                self.inject_key(key)
+
+            try:
+                self.step()
+            except Exception as e:
+                error_message = str(e)
+                self.running = False
+                break
+
+            if verbose and steps > 0 and steps % 1000 == 0:
+                print(f'  Step {steps}, PC={self.pc}')
+
+        success = self.running or (not error_message)
+        return (success, steps, error_message)
+
+    def _array_get(self, array: List, array_name: str, *indices: int) -> Any:
+        """Access array element with lower bound adjustment.
+
+        Args:
+            array: The Python list representing the BASIC array.
+            array_name: Name of array (for looking up bounds).
+            *indices: BASIC indices (1-based if declared with 1 TO n).
+
+        Returns:
+            The array element at the adjusted indices.
+        """
+        bounds = self.array_bounds.get(array_name, ())
+        result = array
+        for i, idx in enumerate(indices):
+            lower = bounds[i] if i < len(bounds) else self.option_base
+            adjusted_idx = int(idx) - lower
+            result = result[adjusted_idx]
+        return result
+
+    def _array_set(self, array: List, array_name: str, value: Any, *indices: int) -> None:
+        """Set array element with lower bound adjustment.
+
+        Args:
+            array: The Python list representing the BASIC array.
+            array_name: Name of array (for looking up bounds).
+            value: Value to set.
+            *indices: BASIC indices (1-based if declared with 1 TO n).
+        """
+        bounds = self.array_bounds.get(array_name, ())
+        target = array
+        for i, idx in enumerate(indices[:-1]):
+            lower = bounds[i] if i < len(bounds) else self.option_base
+            adjusted_idx = int(idx) - lower
+            target = target[adjusted_idx]
+        # Set the final element
+        last_idx = indices[-1] if indices else 0
+        lower = bounds[len(indices)-1] if len(indices)-1 < len(bounds) else self.option_base
+        target[int(last_idx) - lower] = value
 
     def update_held_keys(self) -> None:
         """Update last_key based on currently held keys for continuous input in games."""
@@ -3088,6 +3207,7 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
             try:
                 # Parse array dimensions - supports both "DIM A(10)" and "DIM A(0 TO 10)" syntax
                 dims = []
+                lower_bounds = []  # Track lower bound for each dimension
                 for idx_spec in _split_args(idx_str):
                     idx_spec = idx_spec.strip()
                     # Check for "lower TO upper" syntax (case-insensitive)
@@ -3097,12 +3217,17 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
                         upper_bound = int(self.eval_expr(to_match.group(2).strip()))
                         if not self.running: return False
                         dims.append(upper_bound - lower_bound + 1)  # Size based on explicit bounds
+                        lower_bounds.append(lower_bound)
                     else:
                         # Simple "DIM A(10)" means indices 0-10 (or 1-10 with OPTION BASE 1)
                         upper_bound = int(self.eval_expr(idx_spec))
                         if not self.running: return False
                         dims.append(upper_bound + 1 - self.option_base)
+                        lower_bounds.append(self.option_base)
                 if not self.running: return False
+
+                # Store lower bounds for this array (for runtime index adjustment)
+                self.array_bounds[var_name] = tuple(lower_bounds)
 
                 # Determine default value based on type
                 def create_default():
@@ -3262,10 +3387,17 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
                     indices = [int(round(float(self.eval_expr(idx.strip())))) for idx in indices_list]
                     if not self.running: return False
 
+                    # Adjust indices based on array lower bounds (e.g., DIM A(1 TO 10))
+                    bounds = self.array_bounds.get(var_name, ())
+                    adjusted_indices = []
+                    for i, idx in enumerate(indices):
+                        lower = bounds[i] if i < len(bounds) else self.option_base
+                        adjusted_indices.append(idx - lower)
+
                     target_array_level = self.variables[var_name]
-                    for i in range(len(indices) - 1):
-                        target_array_level = target_array_level[indices[i]]
-                    target_array_level[indices[-1]] = val_to_assign
+                    for i in range(len(adjusted_indices) - 1):
+                        target_array_level = target_array_level[adjusted_indices[i]]
+                    target_array_level[adjusted_indices[-1]] = val_to_assign
                 except IndexError:
                     print(f"Error: Array index out of bounds for '{lhs}' at PC {current_pc_num}"); self.running = False
                 except TypeError: # e.g. trying to index a non-list (if multi-dim setup failed)
@@ -3285,9 +3417,17 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
                             indices_list = _split_args(idx_str)
                             indices = [int(round(float(self.eval_expr(idx.strip())))) for idx in indices_list]
                             if not self.running: return False
+
+                            # Adjust indices based on array lower bounds
+                            bounds = self.array_bounds.get(var_name, ())
+                            adjusted_indices = []
+                            for i, idx in enumerate(indices):
+                                lower = bounds[i] if i < len(bounds) else self.option_base
+                                adjusted_indices.append(idx - lower)
+
                             # Navigate to the array element
                             target = self.variables[var_name]
-                            for idx in indices:
+                            for idx in adjusted_indices:
                                 target = target[idx]
                             # Now target should be a dict (type instance)
                             if isinstance(target, dict):
@@ -5128,6 +5268,7 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
         try:
             # Parse dimensions - supports both "REDIM A(10)" and "REDIM A(0 TO 10)" syntax
             dims = []
+            lower_bounds = []  # Track lower bound for each dimension
             for dim_expr in _split_args(dims_str):
                 dim_expr = dim_expr.strip()
                 # Check for "lower TO upper" syntax (case-insensitive)
@@ -5138,11 +5279,16 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
                     if not self.running:
                         return
                     dims.append(upper_bound - lower_bound + 1)
+                    lower_bounds.append(lower_bound)
                 else:
                     dim_val = self.eval_expr(dim_expr)
                     if not self.running:
                         return
                     dims.append(int(dim_val) + 1 - self.option_base)  # QBasic uses inclusive upper bound
+                    lower_bounds.append(self.option_base)
+
+            # Store lower bounds for this array (for runtime index adjustment)
+            self.array_bounds[var_name_upper] = tuple(lower_bounds)
 
             # Determine default value based on variable type
             default_val = "" if var_name.endswith("$") else 0
@@ -5254,6 +5400,7 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
             try:
                 # Parse array dimensions
                 dims = []
+                lower_bounds = []  # Track lower bound for each dimension
                 for idx_spec in _split_args(bounds_str):
                     idx_spec = idx_spec.strip()
                     # Check for "lower TO upper" syntax
@@ -5263,10 +5410,15 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
                         upper_bound = int(self.eval_expr(to_match.group(2).strip()))
                         if not self.running: return False
                         dims.append(upper_bound - lower_bound + 1)
+                        lower_bounds.append(lower_bound)
                     else:
                         upper_bound = int(self.eval_expr(idx_spec))
                         if not self.running: return False
                         dims.append(upper_bound + 1 - self.option_base)
+                        lower_bounds.append(self.option_base)
+
+                # Store lower bounds for this array (for runtime index adjustment)
+                self.array_bounds[var_name] = tuple(lower_bounds)
 
                 # Determine default value
                 def create_default():
