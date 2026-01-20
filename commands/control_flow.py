@@ -118,24 +118,38 @@ class ControlFlowMixin:
 
         nesting_level = 1
         search_pc = self.pc
+        is_first_line = True
 
         while search_pc < len(self.program_lines) and nesting_level > 0:
             _, _, line_to_scan = self.program_lines[search_pc]
-            first_cmd_on_line = line_to_scan.split(':')[0].strip().upper()
+            # Check ALL statements on the line, not just the first one
+            # This handles cases like "WHILE condition: WEND" on a single line
+            statements = self._split_statements(line_to_scan)
 
-            if first_cmd_on_line.startswith(start_kw_upper):
-                nesting_level += 1
-            elif first_cmd_on_line.startswith(end_kw_upper):
-                # For NEXT [var], ensure it's a NEXT, not something like NEXTPAGE
-                if end_kw_upper == "NEXT" and not _next_re.match(first_cmd_on_line):
-                    pass  # Not a true NEXT statement
-                else:
-                    nesting_level -= 1
+            skipped_first_start = False
+            for stmt in statements:
+                cmd_upper = stmt.strip().upper()
 
-            if nesting_level == 0:
-                self.pc = search_pc + 1
-                return
+                if cmd_upper.startswith(start_kw_upper):
+                    # On the first line, skip the first start keyword since
+                    # that's the block we're already inside (nesting_level=1)
+                    if is_first_line and not skipped_first_start:
+                        skipped_first_start = True
+                    else:
+                        nesting_level += 1
+                elif cmd_upper.startswith(end_kw_upper):
+                    # For NEXT [var], ensure it's a NEXT, not something like NEXTPAGE
+                    if end_kw_upper == "NEXT" and not _next_re.match(cmd_upper):
+                        pass  # Not a true NEXT statement
+                    else:
+                        nesting_level -= 1
+
+                if nesting_level == 0:
+                    self.pc = search_pc + 1
+                    return
+
             search_pc += 1
+            is_first_line = False
 
         # EOF reached before block end
         print(f"Warning: EOF reached while skipping '{start_kw_upper}' block started at PC {pc_of_block_start}.")
