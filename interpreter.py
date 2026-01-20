@@ -186,11 +186,42 @@ _draw_re = re.compile(r"DRAW\s+(.+)", re.IGNORECASE)
 # STOP - Break execution
 _stop_re = re.compile(r"STOP", re.IGNORECASE)
 
+# TRON/TROFF - Trace debugging
+_tron_re = re.compile(r"TRON", re.IGNORECASE)
+_troff_re = re.compile(r"TROFF", re.IGNORECASE)
+
+# RUN - Run/restart program
+_run_re = re.compile(r"RUN(?:\s+(.+))?", re.IGNORECASE)
+
+# CONT - Continue after STOP
+_cont_re = re.compile(r"CONT", re.IGNORECASE)
+
+# CHAIN - Load and run another program
+_chain_re = re.compile(r"CHAIN\s+(.+)", re.IGNORECASE)
+
+# $INCLUDE metacommand
+_include_re = re.compile(r"\$INCLUDE\s*:\s*['\"](.+?)['\"]", re.IGNORECASE)
+
+# $DYNAMIC/$STATIC metacommands
+_dynamic_re = re.compile(r"\$DYNAMIC", re.IGNORECASE)
+_static_re = re.compile(r"\$STATIC", re.IGNORECASE)
+
+# KEY statement for function key handling
+_key_re = re.compile(r"KEY\s+(\d+)\s*,\s*(.+)", re.IGNORECASE)
+_key_on_off_re = re.compile(r"KEY\s*\((\d+)\)\s+(ON|OFF|STOP)", re.IGNORECASE)
+_key_list_re = re.compile(r"KEY\s+(ON|OFF|LIST)", re.IGNORECASE)
+
+# ON KEY(n) GOSUB
+_on_key_re = re.compile(r"ON\s+KEY\s*\((\d+)\)\s+GOSUB\s+([a-zA-Z0-9_]+)", re.IGNORECASE)
+
 # DEFINT/DEFSNG/DEFDBL/DEFLNG/DEFSTR - Default type declarations (ignored)
 _deftype_re = re.compile(r"DEF(INT|SNG|DBL|LNG|STR)\s+[A-Za-z](?:\s*-\s*[A-Za-z])?", re.IGNORECASE)
 
 # PALETTE - Color palette
 _palette_re = re.compile(r"PALETTE(?:\s+USING\s+(.+)|\s+(\d+)\s*,\s*(.+))?", re.IGNORECASE)
+
+# PCOPY - Copy video pages
+_pcopy_re = re.compile(r"PCOPY\s+(\d+)\s*,\s*(\d+)", re.IGNORECASE)
 
 # VIEW PRINT - Text viewport
 _view_print_re = re.compile(r"VIEW\s+PRINT(?:\s+(\d+)\s+TO\s+(\d+))?", re.IGNORECASE)
@@ -272,6 +303,58 @@ _line_input_file_re = re.compile(r"LINE\s+INPUT\s+#([^\s,]+)\s*,\s*(.+)", re.IGN
 _print_file_re = re.compile(r"PRINT\s+#([^\s,]+)\s*,?\s*(.*)", re.IGNORECASE)
 _write_file_re = re.compile(r"WRITE\s+#([^\s,]+)\s*,?\s*(.*)", re.IGNORECASE)
 
+# Binary file GET/PUT (must come before graphics GET/PUT)
+# GET #filenum[, recordnum], variable
+# PUT #filenum[, recordnum], variable
+_get_file_re = re.compile(r"GET\s+#(\d+)(?:\s*,\s*(\d+))?\s*,\s*([a-zA-Z_][a-zA-Z0-9_]*\$?)", re.IGNORECASE)
+_put_file_re = re.compile(r"PUT\s+#(\d+)(?:\s*,\s*(\d+))?\s*,\s*([a-zA-Z_][a-zA-Z0-9_]*\$?)", re.IGNORECASE)
+
+# File system commands
+_kill_re = re.compile(r"KILL\s+(.+)", re.IGNORECASE)
+_name_re = re.compile(r"NAME\s+(.+?)\s+AS\s+(.+)", re.IGNORECASE)
+_mkdir_re = re.compile(r"MKDIR\s+(.+)", re.IGNORECASE)
+_rmdir_re = re.compile(r"RMDIR\s+(.+)", re.IGNORECASE)
+_chdir_re = re.compile(r"CHDIR\s+(.+)", re.IGNORECASE)
+_files_re = re.compile(r"FILES(?:\s+(.+))?", re.IGNORECASE)
+
+# File positioning
+_seek_re = re.compile(r"SEEK\s+#?(\d+)\s*,\s*(.+)", re.IGNORECASE)
+
+# ERROR statement
+_error_re = re.compile(r"ERROR\s+(.+)", re.IGNORECASE)
+
+# CLEAR statement - clear variables and set stack/heap
+_clear_re = re.compile(r"CLEAR(?:\s*,\s*(\d+))?(?:\s*,\s*(\d+))?", re.IGNORECASE)
+
+# SYSTEM/END - exit to operating system
+_system_re = re.compile(r"SYSTEM(?:\s+(.+))?", re.IGNORECASE)
+
+# SHELL - execute shell command
+_shell_re = re.compile(r"SHELL(?:\s+(.+))?", re.IGNORECASE)
+
+# VIEW - define graphics viewport
+_view_re = re.compile(r"VIEW(?:\s*\(([^)]+)\)\s*-\s*\(([^)]+)\)(?:\s*,\s*(\d+))?(?:\s*,\s*(\d+))?)?", re.IGNORECASE)
+
+# WINDOW - define logical coordinate system
+_window_re = re.compile(r"WINDOW(?:\s+SCREEN)?(?:\s*\(([^)]+)\)\s*-\s*\(([^)]+)\))?", re.IGNORECASE)
+
+# LPRINT - print to printer (console)
+_lprint_using_re = re.compile(r"LPRINT\s+USING\s+(.+?)\s*;\s*(.+)", re.IGNORECASE)
+_lprint_re = re.compile(r"LPRINT(?:\s+(.*))?", re.IGNORECASE)
+
+# FIELD - define random access record fields
+_field_re = re.compile(r"FIELD\s+#?(\d+)\s*,\s*(.+)", re.IGNORECASE)
+
+# LSET/RSET - justify string in field
+_lset_re = re.compile(r"LSET\s+([a-zA-Z_][a-zA-Z0-9_]*\$?)\s*=\s*(.+)", re.IGNORECASE)
+_rset_re = re.compile(r"RSET\s+([a-zA-Z_][a-zA-Z0-9_]*\$?)\s*=\s*(.+)", re.IGNORECASE)
+
+# ENVIRON - set environment variable
+_environ_set_re = re.compile(r"ENVIRON\s+(.+)", re.IGNORECASE)
+
+# ON TIMER GOSUB - timer event handler
+_on_timer_re = re.compile(r"ON\s+TIMER\s*\(([^)]+)\)\s+GOSUB\s+([a-zA-Z0-9_]+)", re.IGNORECASE)
+
 _expr_cache: Dict[str, str] = {}
 _python_keywords = {'and', 'or', 'not', 'in', 'is', 'lambda', 'if', 'else', 'elif', 'while', 'for', 'try', 'except', 'finally', 'with', 'as', 'def', 'class', 'import', 'from', 'pass', 'break', 'continue', 'return', 'yield', 'global', 'nonlocal', 'assert', 'del', 'True', 'False', 'None'}
 # Python builtins used in generated code (for array indexing) - keep lowercase
@@ -292,7 +375,13 @@ _basic_function_names = {
     # Environment/Input functions
     'ENVIRON', 'INPUT', 'COMMAND',
     # Memory/System functions
-    'FRE', 'PEEK', 'INP', 'FREEFILE', 'LOF', 'EOF'
+    'FRE', 'PEEK', 'INP', 'FREEFILE', 'LOF', 'EOF', 'LOC',
+    # Binary conversion functions
+    'MKI', 'MKL', 'MKS', 'MKD', 'CVI', 'CVL', 'CVS', 'CVD',
+    # Memory address functions (emulated)
+    'VARPTR', 'VARSEG', 'SADD',
+    # Music function (as callable)
+    'PLAY'
 }
 
 # --- Expression Conversion Logic ---
@@ -557,6 +646,10 @@ class BasicInterpreter:
         self.surface: Optional[pygame.Surface] = None
         self.screen_width: int = DEFAULT_SCREEN_WIDTH
         self.screen_height: int = DEFAULT_SCREEN_HEIGHT
+        # Video pages for PCOPY (up to 8 pages for mode 13, more for others)
+        self.video_pages: Dict[int, Optional[pygame.Surface]] = {}
+        self.active_page: int = 0  # Current drawing page
+        self.visual_page: int = 0  # Current display page
         self.last_key: str = ""
         self.colors: Dict[int, Tuple[int, int, int]] = {
             0: (0,0,0), 1: (0,0,170), 2: (0,170,0), 3: (0,170,170),
@@ -627,12 +720,46 @@ class BasicInterpreter:
 
         # STOP/debugging state
         self.stopped: bool = False
+        self.trace_mode: bool = False  # TRON/TROFF trace debugging
+
+        # KEY event handlers: key_number (1-10) -> label
+        self.key_handlers: Dict[int, str] = {}
+        self.key_enabled: Dict[int, bool] = {}  # KEY(n) ON/OFF state
+        self.key_definitions: Dict[int, str] = {  # Default F-key definitions
+            1: "", 2: "", 3: "", 4: "", 5: "",
+            6: "", 7: "", 8: "", 9: "", 10: ""
+        }
 
         # DRAW turtle graphics state
         self.draw_x: float = 0
         self.draw_y: float = 0
         self.draw_angle: int = 0  # 0=right, 90=down, 180=left, 270=up
         self.draw_pen_down: bool = True
+
+        # VIEW - graphics viewport (physical screen coordinates)
+        self.view_x1: int = 0
+        self.view_y1: int = 0
+        self.view_x2: Optional[int] = None  # None means full screen
+        self.view_y2: Optional[int] = None
+        self.view_fill_color: Optional[int] = None
+        self.view_border_color: Optional[int] = None
+
+        # WINDOW - logical coordinate system
+        self.window_x1: Optional[float] = None  # None means physical coordinates
+        self.window_y1: Optional[float] = None
+        self.window_x2: Optional[float] = None
+        self.window_y2: Optional[float] = None
+        self.window_screen_mode: bool = False  # True for WINDOW SCREEN (y increases down)
+
+        # FIELD - field variables for random access files
+        self.field_defs: Dict[int, List[Tuple[int, str]]] = {}  # file_num -> [(width, varname), ...]
+        self.field_buffers: Dict[int, str] = {}  # file_num -> buffer string
+
+        # ON TIMER GOSUB - timer event handling
+        self.timer_interval: float = 0  # Timer interval in seconds
+        self.timer_label: Optional[str] = None  # Label to GOSUB to
+        self.timer_enabled: bool = False  # TIMER ON/OFF state
+        self.timer_last_trigger: float = 0  # Last trigger time
 
         # Environment for eval() - functions available to BASIC expressions
         self.eval_env_funcs = {
@@ -693,6 +820,22 @@ class BasicInterpreter:
             "FREEFILE": self._basic_freefile,  # Get next available file number
             "LOF": self._basic_lof,  # Get file length
             "EOF": self._basic_eof,  # Check for end of file
+            "LOC": self._basic_loc,  # Get current file position
+            # Binary conversion functions
+            "MKI": self._basic_mki,  # Convert integer to 2-byte string
+            "MKL": self._basic_mkl,  # Convert long to 4-byte string
+            "MKS": self._basic_mks,  # Convert single to 4-byte string
+            "MKD": self._basic_mkd,  # Convert double to 8-byte string
+            "CVI": self._basic_cvi,  # Convert 2-byte string to integer
+            "CVL": self._basic_cvl,  # Convert 4-byte string to long
+            "CVS": self._basic_cvs,  # Convert 4-byte string to single
+            "CVD": self._basic_cvd,  # Convert 8-byte string to double
+            # Memory address functions (emulated)
+            "VARPTR": self._basic_varptr,  # Get variable address
+            "VARSEG": self._basic_varseg,  # Get variable segment
+            "SADD": self._basic_sadd,  # Get string address
+            # Music function
+            "PLAY": self._basic_play_func,  # Get background music queue count
         }
 
     def _basic_val(self, s_val: str) -> Any:
@@ -845,14 +988,34 @@ class BasicInterpreter:
         import os
         return os.environ.get(str(var_name), "")
 
-    def _basic_input_dollar(self, n: int) -> str:
-        """INPUT$(n) - Returns n characters from keyboard buffer.
-        In QBasic this is blocking, but here we return what's available."""
-        n = int(n)
+    def _basic_input_dollar(self, *args) -> str:
+        """INPUT$(n[, #filenum]) - Returns n characters from keyboard or file.
+        INPUT$(n) - Read n characters from keyboard (non-blocking)
+        INPUT$(n, filenum) - Read n bytes from file #filenum
+        In QBasic keyboard form is blocking, but here we return what's available."""
+        if len(args) == 0:
+            return ""
+
+        n = int(args[0])
         if n <= 0:
             return ""
 
-        # Collect characters from last_key buffer
+        # Check if file number is provided
+        if len(args) >= 2:
+            # INPUT$(n, #filenum) - read from file
+            file_num = int(args[1])
+            if file_num in self.file_handles:
+                fh = self.file_handles[file_num]
+                try:
+                    data = fh.read(n)
+                    if isinstance(data, bytes):
+                        data = data.decode('latin-1')  # Use latin-1 for binary compatibility
+                    return data
+                except Exception:
+                    return ""
+            return ""
+
+        # INPUT$(n) - read from keyboard buffer
         result = ""
         if self.last_key:
             result = self.last_key[:n]
@@ -921,6 +1084,99 @@ class BasicInterpreter:
             except:
                 pass
         return -1  # Default to EOF if file not found
+
+    def _basic_loc(self, file_num: int) -> int:
+        """LOC(n) - Returns current file position (1-based byte position for binary files,
+        record number for random access files, or line position for sequential files).
+        For simplicity, we return the byte position (1-based like QBasic)."""
+        fnum = int(file_num)
+        if fnum in self.file_handles:
+            fh = self.file_handles[fnum]
+            try:
+                pos = fh.tell()
+                return pos + 1  # QBasic uses 1-based positions
+            except:
+                pass
+        return 0
+
+    def _basic_mki(self, value: int) -> str:
+        """MKI$(n) - Convert integer to 2-byte string."""
+        import struct
+        return struct.pack('<h', int(value)).decode('latin-1')
+
+    def _basic_mkl(self, value: int) -> str:
+        """MKL$(n) - Convert long integer to 4-byte string."""
+        import struct
+        return struct.pack('<i', int(value)).decode('latin-1')
+
+    def _basic_mks(self, value: float) -> str:
+        """MKS$(n) - Convert single-precision float to 4-byte string."""
+        import struct
+        return struct.pack('<f', float(value)).decode('latin-1')
+
+    def _basic_mkd(self, value: float) -> str:
+        """MKD$(n) - Convert double-precision float to 8-byte string."""
+        import struct
+        return struct.pack('<d', float(value)).decode('latin-1')
+
+    def _basic_cvi(self, s: str) -> int:
+        """CVI(s$) - Convert 2-byte string to integer."""
+        import struct
+        if len(s) < 2:
+            s = s + '\0' * (2 - len(s))
+        return struct.unpack('<h', s[:2].encode('latin-1'))[0]
+
+    def _basic_cvl(self, s: str) -> int:
+        """CVL(s$) - Convert 4-byte string to long integer."""
+        import struct
+        if len(s) < 4:
+            s = s + '\0' * (4 - len(s))
+        return struct.unpack('<i', s[:4].encode('latin-1'))[0]
+
+    def _basic_cvs(self, s: str) -> float:
+        """CVS(s$) - Convert 4-byte string to single-precision float."""
+        import struct
+        if len(s) < 4:
+            s = s + '\0' * (4 - len(s))
+        return struct.unpack('<f', s[:4].encode('latin-1'))[0]
+
+    def _basic_cvd(self, s: str) -> float:
+        """CVD(s$) - Convert 8-byte string to double-precision float."""
+        import struct
+        if len(s) < 8:
+            s = s + '\0' * (8 - len(s))
+        return struct.unpack('<d', s[:8].encode('latin-1'))[0]
+
+    def _basic_varptr(self, var_name: Any) -> int:
+        """VARPTR(variable) - Get variable address (emulated).
+        Returns a unique emulated address for the variable."""
+        # In QBasic, VARPTR returns the offset address of a variable
+        # We emulate this by returning a hash-based address
+        name = str(var_name).upper()
+        # Use hash to generate a consistent "address" for each variable
+        return abs(hash(name)) % 65536
+
+    def _basic_varseg(self, var_name: Any) -> int:
+        """VARSEG(variable) - Get variable segment (emulated).
+        Returns an emulated segment address."""
+        # In QBasic, VARSEG returns the segment address of a variable
+        # We return a fixed emulated segment for all variables
+        return self.memory_segment if self.memory_segment else 0x4000
+
+    def _basic_sadd(self, s: str) -> int:
+        """SADD(string$) - Get string address (emulated).
+        Returns an emulated address for the string data."""
+        # SADD returns the offset address of a string's character data
+        # We emulate this by returning a hash-based address
+        return abs(hash(str(s))) % 65536
+
+    def _basic_play_func(self, n: int = 0) -> int:
+        """PLAY(n) - Get background music queue count.
+        n=0: notes remaining in background music queue
+        Since we don't have background music queue, always returns 0."""
+        # In QBasic, PLAY(n) returns the number of notes in the background
+        # music buffer. We don't implement background music, so return 0.
+        return 0
 
     def _call_user_function(self, func_name: str, args: List[Any]) -> Any:
         """Call a user-defined function (DEF FN)."""
@@ -1027,6 +1283,10 @@ class BasicInterpreter:
         self.option_base = 0
         # Reset STOP/debugging state
         self.stopped = False
+        self.trace_mode = False
+        # Reset KEY event handlers
+        self.key_handlers.clear()
+        self.key_enabled.clear()
         # Reset procedures (SUB/FUNCTION definitions)
         self.procedures.clear()
         self.procedure_stack.clear()
@@ -1035,6 +1295,43 @@ class BasicInterpreter:
         self.draw_y = self.screen_height / 2
         self.draw_angle = 0
         self.draw_pen_down = True
+
+        # Reset VIEW/WINDOW state
+        self.view_x1 = 0
+        self.view_y1 = 0
+        self.view_x2 = None
+        self.view_y2 = None
+        self.view_fill_color = None
+        self.view_border_color = None
+        self.window_x1 = None
+        self.window_y1 = None
+        self.window_x2 = None
+        self.window_y2 = None
+        self.window_screen_mode = False
+
+        # Reset FIELD state
+        self.field_defs.clear()
+        self.field_buffers.clear()
+
+        # Reset timer event state
+        self.timer_interval = 0
+        self.timer_label = None
+        self.timer_enabled = False
+        self.timer_last_trigger = 0
+
+        # Reset error handling state
+        self.error_handler_label = None
+        self.error_resume_pc = -1
+        self.in_error_handler = False
+
+        # Close any open files
+        for fh in self.file_handles.values():
+            try:
+                fh.close()
+            except:
+                pass
+        self.file_handles.clear()
+        self.next_file_number = 1
 
         self._dirty = True
         self._cached_scaled_surface = None
@@ -2529,6 +2826,20 @@ class BasicInterpreter:
         if m_on_goto:
             return self._handle_on_goto_gosub(m_on_goto.group(1), m_on_goto.group(2), "GOTO", current_pc_num)
 
+        # --- ON TIMER GOSUB statement (must come before general ON...GOSUB) ---
+        m_on_timer = _on_timer_re.fullmatch(statement)
+        if m_on_timer:
+            return self._handle_on_timer(m_on_timer, current_pc_num)
+
+        # --- ON KEY(n) GOSUB statement (must come before general ON...GOSUB) ---
+        m_on_key = _on_key_re.fullmatch(statement)
+        if m_on_key:
+            key_num = int(m_on_key.group(1))
+            label = m_on_key.group(2).upper()
+            if 1 <= key_num <= 10:
+                self.key_handlers[key_num] = label
+            return False
+
         # --- ON...GOSUB statement ---
         m_on_gosub = _on_gosub_re.fullmatch(statement)
         if m_on_gosub:
@@ -2637,6 +2948,143 @@ class BasicInterpreter:
             print(f"STOP at PC {current_pc_num}")
             return False
 
+        # --- TRON statement (trace on) ---
+        if _tron_re.fullmatch(up_stmt):
+            self.trace_mode = True
+            return False
+
+        # --- TROFF statement (trace off) ---
+        if _troff_re.fullmatch(up_stmt):
+            self.trace_mode = False
+            return False
+
+        # --- RUN statement ---
+        m_run = _run_re.fullmatch(statement)
+        if m_run:
+            # RUN without argument restarts current program
+            # RUN with line number starts at that line (not supported - we use labels)
+            # RUN with filename loads and runs that file (simplified - restart)
+            target = m_run.group(1)
+            if target:
+                target = target.strip()
+                # Try as label first
+                if target.upper() in self.labels:
+                    self.pc = self.labels[target.upper()]
+                    # Clear variables for fresh run
+                    self.variables.clear()
+                    self.gosub_stack.clear()
+                    self.for_stack.clear()
+                    self.loop_stack.clear()
+                    return True
+                # Otherwise treat as line number
+                try:
+                    line_num = int(target)
+                    if str(line_num) in self.labels:
+                        self.pc = self.labels[str(line_num)]
+                        self.variables.clear()
+                        self.gosub_stack.clear()
+                        self.for_stack.clear()
+                        self.loop_stack.clear()
+                        return True
+                except ValueError:
+                    pass
+                print(f"Error: RUN target '{target}' not found at PC {current_pc_num}")
+                self.running = False
+                return False
+            else:
+                # RUN without argument - restart from beginning
+                self.pc = 0
+                self.variables.clear()
+                self.gosub_stack.clear()
+                self.for_stack.clear()
+                self.loop_stack.clear()
+                self.data_pointer = 0
+                return True
+
+        # --- CONT statement (continue after STOP) ---
+        if _cont_re.fullmatch(up_stmt):
+            if self.stopped:
+                self.stopped = False
+                self.running = True
+                # Continue from current PC (already pointing to next statement)
+                return False
+            else:
+                print(f"Error: CONT without STOP at PC {current_pc_num}")
+                # Just continue execution
+                return False
+
+        # --- CHAIN statement (load and run another program) ---
+        m_chain = _chain_re.fullmatch(statement)
+        if m_chain:
+            filename_expr = m_chain.group(1).strip()
+            filename = str(self.eval_expr(filename_expr))
+            if not self.running:
+                return False
+            try:
+                with open(filename, 'r') as f:
+                    new_program = f.read().splitlines()
+                # Keep COMMON SHARED variables (simplified - keep all)
+                saved_vars = dict(self.variables)
+                self.reset(new_program)
+                # Restore variables (CHAIN preserves COMMON variables)
+                self.variables.update(saved_vars)
+                return True
+            except FileNotFoundError:
+                print(f"Error: CHAIN file '{filename}' not found at PC {current_pc_num}")
+                self.running = False
+                return False
+            except Exception as e:
+                print(f"Error: CHAIN failed: {e} at PC {current_pc_num}")
+                self.running = False
+                return False
+
+        # --- KEY n, string$ statement (define function key) ---
+        m_key = _key_re.fullmatch(statement)
+        if m_key:
+            key_num = int(m_key.group(1))
+            key_str = str(self.eval_expr(m_key.group(2).strip()))
+            if not self.running:
+                return False
+            if 1 <= key_num <= 10:
+                self.key_definitions[key_num] = key_str
+            return False
+
+        # --- KEY(n) ON/OFF/STOP statement ---
+        m_key_on_off = _key_on_off_re.fullmatch(statement)
+        if m_key_on_off:
+            key_num = int(m_key_on_off.group(1))
+            mode = m_key_on_off.group(2).upper()
+            if 1 <= key_num <= 10:
+                if mode == "ON":
+                    self.key_enabled[key_num] = True
+                elif mode == "OFF":
+                    self.key_enabled[key_num] = False
+                elif mode == "STOP":
+                    self.key_enabled[key_num] = False  # Suspend events
+            return False
+
+        # --- KEY ON/OFF/LIST statement ---
+        m_key_list = _key_list_re.fullmatch(statement)
+        if m_key_list:
+            mode = m_key_list.group(1).upper()
+            if mode == "LIST":
+                # Display key assignments (simplified output)
+                for i in range(1, 11):
+                    defn = self.key_definitions.get(i, "")
+                    print(f"F{i}: {defn}")
+            # KEY ON/OFF affects display of key line at bottom (ignored in this impl)
+            return False
+
+        # --- $INCLUDE metacommand (handled during parsing, but accept here) ---
+        if _include_re.match(statement):
+            # Already processed during file loading, skip here
+            return False
+
+        # --- $DYNAMIC/$STATIC metacommands (array storage - informational only) ---
+        if _dynamic_re.match(statement) or _static_re.match(statement):
+            # These affect array allocation strategy, but Python handles this automatically
+            return False
+
         if _end_re.fullmatch(up_stmt):
             self.running = False
             return False # END statement, stop execution
@@ -2651,6 +3099,11 @@ class BasicInterpreter:
             # For now, just accept and ignore palette changes
             # Full implementation would modify self.colors
             return False
+
+        # --- PCOPY statement (copy video pages) ---
+        m_pcopy = _pcopy_re.fullmatch(statement)
+        if m_pcopy:
+            return self._handle_pcopy(int(m_pcopy.group(1)), int(m_pcopy.group(2)), current_pc_num)
 
         # --- VIEW PRINT statement ---
         m_view_print = _view_print_re.fullmatch(statement)
@@ -2677,10 +3130,19 @@ class BasicInterpreter:
         if m_wait:
             return False  # Emulated as no-op
 
-        # --- TIMER ON/OFF statement (no-op for compatibility) ---
+        # --- TIMER ON/OFF statement ---
         m_timer_on_off = _timer_on_off_re.fullmatch(statement)
         if m_timer_on_off:
-            return False  # Timer events not implemented, just ignore
+            mode = m_timer_on_off.group(1).upper()
+            if mode == "ON":
+                self.timer_enabled = True
+                self.timer_last_trigger = time.time()
+            elif mode == "OFF":
+                self.timer_enabled = False
+            # STOP suspends timer events until ON is used again
+            elif mode == "STOP":
+                self.timer_enabled = False
+            return False
 
         # --- OUT statement (port I/O emulated) ---
         m_out = _out_re.fullmatch(statement)
@@ -2829,6 +3291,112 @@ class BasicInterpreter:
         m_write_file = _write_file_re.fullmatch(statement)
         if m_write_file:
             return self._handle_write_file(m_write_file, current_pc_num)
+
+        # --- File I/O: GET # statement (binary read) ---
+        m_get_file = _get_file_re.fullmatch(statement)
+        if m_get_file:
+            return self._handle_get_file(m_get_file, current_pc_num)
+
+        # --- File I/O: PUT # statement (binary write) ---
+        m_put_file = _put_file_re.fullmatch(statement)
+        if m_put_file:
+            return self._handle_put_file(m_put_file, current_pc_num)
+
+        # --- File system: KILL (delete file) ---
+        m_kill = _kill_re.fullmatch(statement)
+        if m_kill:
+            return self._handle_kill(m_kill.group(1).strip(), current_pc_num)
+
+        # --- File system: NAME (rename file) ---
+        m_name = _name_re.fullmatch(statement)
+        if m_name:
+            return self._handle_name(m_name.group(1).strip(), m_name.group(2).strip(), current_pc_num)
+
+        # --- File system: MKDIR (create directory) ---
+        m_mkdir = _mkdir_re.fullmatch(statement)
+        if m_mkdir:
+            return self._handle_mkdir(m_mkdir.group(1).strip(), current_pc_num)
+
+        # --- File system: RMDIR (remove directory) ---
+        m_rmdir = _rmdir_re.fullmatch(statement)
+        if m_rmdir:
+            return self._handle_rmdir(m_rmdir.group(1).strip(), current_pc_num)
+
+        # --- File system: CHDIR (change directory) ---
+        m_chdir = _chdir_re.fullmatch(statement)
+        if m_chdir:
+            return self._handle_chdir(m_chdir.group(1).strip(), current_pc_num)
+
+        # --- File system: FILES (list directory) ---
+        m_files = _files_re.fullmatch(statement)
+        if m_files:
+            return self._handle_files(m_files.group(1), current_pc_num)
+
+        # --- File positioning: SEEK ---
+        m_seek = _seek_re.fullmatch(statement)
+        if m_seek:
+            return self._handle_seek(m_seek.group(1), m_seek.group(2).strip(), current_pc_num)
+
+        # --- ERROR statement (trigger runtime error) ---
+        m_error = _error_re.fullmatch(statement)
+        if m_error:
+            return self._handle_error(m_error.group(1).strip(), current_pc_num)
+
+        # --- CLEAR statement ---
+        m_clear = _clear_re.fullmatch(statement)
+        if m_clear:
+            return self._handle_clear(current_pc_num)
+
+        # --- SYSTEM statement (exit to OS) ---
+        m_system = _system_re.fullmatch(statement)
+        if m_system:
+            self.running = False
+            return False
+
+        # --- SHELL statement (execute shell command) ---
+        m_shell = _shell_re.fullmatch(statement)
+        if m_shell:
+            return self._handle_shell(m_shell.group(1), current_pc_num)
+
+        # --- VIEW statement (graphics viewport) ---
+        m_view = _view_re.fullmatch(statement)
+        if m_view:
+            return self._handle_view(m_view, current_pc_num)
+
+        # --- WINDOW statement (logical coordinates) ---
+        m_window = _window_re.fullmatch(statement)
+        if m_window:
+            return self._handle_window(m_window, statement, current_pc_num)
+
+        # --- LPRINT USING statement (formatted printer output) ---
+        m_lprint_using = _lprint_using_re.fullmatch(statement)
+        if m_lprint_using:
+            return self._handle_lprint_using(m_lprint_using.group(1).strip(), m_lprint_using.group(2).strip(), current_pc_num)
+
+        # --- LPRINT statement (print to console) ---
+        m_lprint = _lprint_re.fullmatch(statement)
+        if m_lprint:
+            return self._handle_lprint(m_lprint.group(1), current_pc_num)
+
+        # --- FIELD statement (random access file fields) ---
+        m_field = _field_re.fullmatch(statement)
+        if m_field:
+            return self._handle_field(m_field, current_pc_num)
+
+        # --- LSET statement (left-justify string in field) ---
+        m_lset = _lset_re.fullmatch(statement)
+        if m_lset:
+            return self._handle_lset(m_lset.group(1), m_lset.group(2), current_pc_num)
+
+        # --- RSET statement (right-justify string in field) ---
+        m_rset = _rset_re.fullmatch(statement)
+        if m_rset:
+            return self._handle_rset(m_rset.group(1), m_rset.group(2), current_pc_num)
+
+        # --- ENVIRON statement (set environment variable) ---
+        m_environ = _environ_set_re.fullmatch(statement)
+        if m_environ:
+            return self._handle_environ_set(m_environ.group(1).strip(), current_pc_num)
 
         # --- Implicit SUB/FUNCTION call (without CALL keyword) ---
         # Check if statement starts with a known procedure name
@@ -4732,6 +5300,745 @@ class BasicInterpreter:
             print(f"Error in WRITE # at PC {pc}: {e}")
             return False
 
+    def _handle_get_file(self, match, pc: int) -> bool:
+        """Handle GET #filenum[, recordnum], variable - read binary data from file."""
+        import struct
+        try:
+            file_num = int(match.group(1))
+            record_num = match.group(2)
+            var_name = match.group(3).strip().upper()
+
+            if file_num not in self.file_handles:
+                print(f"Error: File #{file_num} not open at PC {pc}")
+                self.running = False
+                return False
+
+            fh = self.file_handles[file_num]
+
+            # If record number is specified, seek to that position
+            # (record number is 1-based in QBasic)
+            if record_num:
+                record_num = int(record_num)
+                # For simplicity, use byte position (real QBasic uses record length)
+                fh.seek(record_num - 1)
+
+            # Read data based on variable type
+            if var_name.endswith('$') or var_name.endswith('_STR'):
+                # String variable - read until null or newline
+                data = b''
+                while True:
+                    byte = fh.read(1)
+                    if not byte or byte == b'\0' or byte == b'\n':
+                        break
+                    data += byte
+                self.variables[var_name] = data.decode('latin-1')
+            elif var_name.endswith('_INT') or var_name.endswith('%'):
+                # Integer - read 2 bytes
+                data = fh.read(2)
+                if len(data) == 2:
+                    self.variables[var_name] = struct.unpack('<h', data)[0]
+                else:
+                    self.variables[var_name] = 0
+            elif var_name.endswith('_LNG') or var_name.endswith('&'):
+                # Long - read 4 bytes
+                data = fh.read(4)
+                if len(data) == 4:
+                    self.variables[var_name] = struct.unpack('<i', data)[0]
+                else:
+                    self.variables[var_name] = 0
+            elif var_name.endswith('_SNG') or var_name.endswith('!'):
+                # Single - read 4 bytes
+                data = fh.read(4)
+                if len(data) == 4:
+                    self.variables[var_name] = struct.unpack('<f', data)[0]
+                else:
+                    self.variables[var_name] = 0.0
+            elif var_name.endswith('_DBL') or var_name.endswith('#'):
+                # Double - read 8 bytes
+                data = fh.read(8)
+                if len(data) == 8:
+                    self.variables[var_name] = struct.unpack('<d', data)[0]
+                else:
+                    self.variables[var_name] = 0.0
+            else:
+                # Default: try to read as integer
+                data = fh.read(2)
+                if len(data) >= 2:
+                    self.variables[var_name] = struct.unpack('<h', data)[0]
+                else:
+                    self.variables[var_name] = 0
+
+            return False
+        except Exception as e:
+            print(f"Error in GET # at PC {pc}: {e}")
+            self.running = False
+            return False
+
+    def _handle_put_file(self, match, pc: int) -> bool:
+        """Handle PUT #filenum[, recordnum], variable - write binary data to file."""
+        import struct
+        try:
+            file_num = int(match.group(1))
+            record_num = match.group(2)
+            var_name = match.group(3).strip().upper()
+
+            if file_num not in self.file_handles:
+                print(f"Error: File #{file_num} not open at PC {pc}")
+                self.running = False
+                return False
+
+            fh = self.file_handles[file_num]
+
+            # If record number is specified, seek to that position
+            if record_num:
+                record_num = int(record_num)
+                fh.seek(record_num - 1)
+
+            # Get variable value
+            value = self.variables.get(var_name, 0)
+
+            # Write data based on variable type
+            if var_name.endswith('$') or var_name.endswith('_STR'):
+                # String variable
+                data = str(value).encode('latin-1')
+                fh.write(data)
+            elif var_name.endswith('_INT') or var_name.endswith('%'):
+                # Integer - write 2 bytes
+                fh.write(struct.pack('<h', int(value)))
+            elif var_name.endswith('_LNG') or var_name.endswith('&'):
+                # Long - write 4 bytes
+                fh.write(struct.pack('<i', int(value)))
+            elif var_name.endswith('_SNG') or var_name.endswith('!'):
+                # Single - write 4 bytes
+                fh.write(struct.pack('<f', float(value)))
+            elif var_name.endswith('_DBL') or var_name.endswith('#'):
+                # Double - write 8 bytes
+                fh.write(struct.pack('<d', float(value)))
+            else:
+                # Default: write as integer
+                fh.write(struct.pack('<h', int(value)))
+
+            return False
+        except Exception as e:
+            print(f"Error in PUT # at PC {pc}: {e}")
+            self.running = False
+            return False
+
+    def _handle_kill(self, filename_expr: str, pc: int) -> bool:
+        """Handle KILL filename - delete a file."""
+        import os
+        try:
+            # Evaluate filename
+            if filename_expr.startswith('"') and filename_expr.endswith('"'):
+                filename = filename_expr[1:-1]
+            else:
+                filename = str(self.eval_expr(filename_expr))
+                if not self.running: return False
+
+            os.remove(filename)
+            return False
+        except FileNotFoundError:
+            print(f"Error in KILL at PC {pc}: File not found '{filename}'")
+            self.running = False
+            return False
+        except Exception as e:
+            print(f"Error in KILL at PC {pc}: {e}")
+            self.running = False
+            return False
+
+    def _handle_name(self, old_name_expr: str, new_name_expr: str, pc: int) -> bool:
+        """Handle NAME oldname AS newname - rename a file."""
+        import os
+        try:
+            # Evaluate old filename
+            if old_name_expr.startswith('"') and old_name_expr.endswith('"'):
+                old_name = old_name_expr[1:-1]
+            else:
+                old_name = str(self.eval_expr(old_name_expr))
+                if not self.running: return False
+
+            # Evaluate new filename
+            if new_name_expr.startswith('"') and new_name_expr.endswith('"'):
+                new_name = new_name_expr[1:-1]
+            else:
+                new_name = str(self.eval_expr(new_name_expr))
+                if not self.running: return False
+
+            os.rename(old_name, new_name)
+            return False
+        except FileNotFoundError:
+            print(f"Error in NAME at PC {pc}: File not found '{old_name}'")
+            self.running = False
+            return False
+        except Exception as e:
+            print(f"Error in NAME at PC {pc}: {e}")
+            self.running = False
+            return False
+
+    def _handle_mkdir(self, dir_expr: str, pc: int) -> bool:
+        """Handle MKDIR dirname - create a directory."""
+        import os
+        try:
+            # Evaluate directory name
+            if dir_expr.startswith('"') and dir_expr.endswith('"'):
+                dirname = dir_expr[1:-1]
+            else:
+                dirname = str(self.eval_expr(dir_expr))
+                if not self.running: return False
+
+            os.mkdir(dirname)
+            return False
+        except FileExistsError:
+            print(f"Error in MKDIR at PC {pc}: Directory already exists '{dirname}'")
+            self.running = False
+            return False
+        except Exception as e:
+            print(f"Error in MKDIR at PC {pc}: {e}")
+            self.running = False
+            return False
+
+    def _handle_rmdir(self, dir_expr: str, pc: int) -> bool:
+        """Handle RMDIR dirname - remove a directory."""
+        import os
+        try:
+            # Evaluate directory name
+            if dir_expr.startswith('"') and dir_expr.endswith('"'):
+                dirname = dir_expr[1:-1]
+            else:
+                dirname = str(self.eval_expr(dir_expr))
+                if not self.running: return False
+
+            os.rmdir(dirname)
+            return False
+        except FileNotFoundError:
+            print(f"Error in RMDIR at PC {pc}: Directory not found '{dirname}'")
+            self.running = False
+            return False
+        except OSError as e:
+            print(f"Error in RMDIR at PC {pc}: {e}")
+            self.running = False
+            return False
+        except Exception as e:
+            print(f"Error in RMDIR at PC {pc}: {e}")
+            self.running = False
+            return False
+
+    def _handle_chdir(self, dir_expr: str, pc: int) -> bool:
+        """Handle CHDIR dirname - change current directory."""
+        import os
+        try:
+            # Evaluate directory name
+            if dir_expr.startswith('"') and dir_expr.endswith('"'):
+                dirname = dir_expr[1:-1]
+            else:
+                dirname = str(self.eval_expr(dir_expr))
+                if not self.running: return False
+
+            os.chdir(dirname)
+            return False
+        except FileNotFoundError:
+            print(f"Error in CHDIR at PC {pc}: Directory not found '{dirname}'")
+            self.running = False
+            return False
+        except Exception as e:
+            print(f"Error in CHDIR at PC {pc}: {e}")
+            self.running = False
+            return False
+
+    def _handle_files(self, pattern_expr: Optional[str], pc: int) -> bool:
+        """Handle FILES [pattern] - list directory contents."""
+        import os
+        import glob
+        try:
+            # Evaluate pattern if provided
+            if pattern_expr:
+                pattern_expr = pattern_expr.strip()
+                if pattern_expr.startswith('"') and pattern_expr.endswith('"'):
+                    pattern = pattern_expr[1:-1]
+                else:
+                    pattern = str(self.eval_expr(pattern_expr))
+                    if not self.running: return False
+            else:
+                pattern = "*.*"
+
+            # Get matching files
+            files = glob.glob(pattern)
+            if not files:
+                files = glob.glob(os.path.join(pattern, "*")) if os.path.isdir(pattern) else []
+
+            # Print files in QBasic-like format (always to console for simplicity)
+            # In QBasic, FILES prints to the screen, but for this interpreter
+            # we print to stdout for easier debugging
+            for f in sorted(files):
+                print(os.path.basename(f), end="  ")
+            print()
+
+            return False
+        except Exception as e:
+            print(f"Error in FILES at PC {pc}: {e}")
+            return False
+
+    def _handle_seek(self, file_num_str: str, position_expr: str, pc: int) -> bool:
+        """Handle SEEK #n, position - set file position."""
+        try:
+            file_num = int(file_num_str)
+            position = int(self.eval_expr(position_expr))
+            if not self.running: return False
+
+            if file_num not in self.file_handles:
+                print(f"Error: File #{file_num} not open at PC {pc}")
+                self.running = False
+                return False
+
+            fh = self.file_handles[file_num]
+            # QBasic SEEK uses 1-based byte positions, Python uses 0-based
+            fh.seek(position - 1)
+            return False
+        except Exception as e:
+            print(f"Error in SEEK at PC {pc}: {e}")
+            self.running = False
+            return False
+
+    def _handle_error(self, error_num_expr: str, pc: int) -> bool:
+        """Handle ERROR n - trigger a runtime error."""
+        try:
+            error_num = int(self.eval_expr(error_num_expr))
+            if not self.running: return False
+
+            # Raise a runtime error that can be caught by ON ERROR GOTO
+            raise BasicRuntimeError(f"Error {error_num} triggered by ERROR statement", "user")
+        except BasicRuntimeError:
+            raise  # Re-raise to be caught by step_line
+        except Exception as e:
+            print(f"Error in ERROR statement at PC {pc}: {e}")
+            self.running = False
+            return False
+
+    def _handle_clear(self, pc: int) -> bool:
+        """Handle CLEAR statement - clears all variables.
+        CLEAR [,stack_size][,heap_size] - stack/heap sizes ignored (Python manages memory)."""
+        # Clear all variables (keep constants)
+        self.variables.clear()
+        # Reset arrays
+        self.data_pointer = 0
+        # Reset FOR/GOSUB stacks
+        self.for_stack.clear()
+        self.gosub_stack.clear()
+        self.loop_stack.clear()
+        # Clear user-defined functions
+        self.user_functions.clear()
+        # Reset error handler
+        self.error_handler_label = None
+        self.error_resume_pc = -1
+        self.in_error_handler = False
+        return False
+
+    def _handle_shell(self, cmd_expr: Optional[str], pc: int) -> bool:
+        """Handle SHELL statement - execute shell command.
+        SHELL ["command"] - executes the command or opens an interactive shell."""
+        import subprocess
+        import shlex
+        try:
+            if cmd_expr and cmd_expr.strip():
+                cmd = str(self.eval_expr(cmd_expr.strip()))
+                if not self.running:
+                    return False
+                # Execute the command
+                try:
+                    # Use shell=True to allow shell commands
+                    result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=30)
+                    # Print output to console (simulating QBasic behavior)
+                    if result.stdout:
+                        print(result.stdout, end='')
+                    if result.stderr:
+                        print(result.stderr, end='')
+                except subprocess.TimeoutExpired:
+                    print(f"SHELL command timed out at PC {pc}")
+                except Exception as e:
+                    print(f"SHELL command failed at PC {pc}: {e}")
+            # If no command, QBasic would open interactive shell - skip in this implementation
+            return False
+        except Exception as e:
+            print(f"Error in SHELL statement at PC {pc}: {e}")
+            return False
+
+    def _handle_view(self, match: re.Match, pc: int) -> bool:
+        """Handle VIEW statement - define graphics viewport.
+        VIEW [(x1,y1)-(x2,y2)[,fill_color][,border_color]]
+        Without coordinates, resets to full screen."""
+        try:
+            if match.group(1) is None:
+                # VIEW without arguments - reset to full screen
+                self.view_x1 = 0
+                self.view_y1 = 0
+                self.view_x2 = None
+                self.view_y2 = None
+                self.view_fill_color = None
+                self.view_border_color = None
+                return False
+
+            # Parse coordinates
+            coords1 = _split_args(match.group(1))
+            coords2 = _split_args(match.group(2))
+            if len(coords1) >= 2 and len(coords2) >= 2:
+                self.view_x1 = int(self.eval_expr(coords1[0].strip()))
+                self.view_y1 = int(self.eval_expr(coords1[1].strip()))
+                self.view_x2 = int(self.eval_expr(coords2[0].strip()))
+                self.view_y2 = int(self.eval_expr(coords2[1].strip()))
+                if not self.running:
+                    return False
+
+                # Optional fill and border colors
+                if match.group(3):
+                    self.view_fill_color = int(match.group(3))
+                    # Fill the viewport with the fill color
+                    if self.surface and self.view_fill_color is not None:
+                        rect = pygame.Rect(self.view_x1, self.view_y1,
+                                          self.view_x2 - self.view_x1 + 1,
+                                          self.view_y2 - self.view_y1 + 1)
+                        self.surface.fill(self.basic_color(self.view_fill_color), rect)
+                        self.mark_dirty()
+
+                if match.group(4):
+                    self.view_border_color = int(match.group(4))
+                    # Draw border around viewport
+                    if self.surface and self.view_border_color is not None:
+                        rect = pygame.Rect(self.view_x1, self.view_y1,
+                                          self.view_x2 - self.view_x1 + 1,
+                                          self.view_y2 - self.view_y1 + 1)
+                        pygame.draw.rect(self.surface, self.basic_color(self.view_border_color), rect, 1)
+                        self.mark_dirty()
+
+            return False
+        except Exception as e:
+            print(f"Error in VIEW statement at PC {pc}: {e}")
+            self.running = False
+            return False
+
+    def _handle_window(self, match: re.Match, statement: str, pc: int) -> bool:
+        """Handle WINDOW statement - define logical coordinate system.
+        WINDOW [(x1,y1)-(x2,y2)] - y increases upward (Cartesian)
+        WINDOW SCREEN [(x1,y1)-(x2,y2)] - y increases downward (screen coords)
+        Without coordinates, resets to physical coordinates."""
+        try:
+            # Check for SCREEN modifier
+            self.window_screen_mode = 'SCREEN' in statement.upper().split('(')[0] if '(' in statement else 'SCREEN' in statement.upper()
+
+            if match.group(1) is None:
+                # WINDOW without coordinates - reset to physical coordinates
+                self.window_x1 = None
+                self.window_y1 = None
+                self.window_x2 = None
+                self.window_y2 = None
+                return False
+
+            # Parse coordinates
+            coords1 = _split_args(match.group(1))
+            coords2 = _split_args(match.group(2))
+            if len(coords1) >= 2 and len(coords2) >= 2:
+                self.window_x1 = float(self.eval_expr(coords1[0].strip()))
+                self.window_y1 = float(self.eval_expr(coords1[1].strip()))
+                self.window_x2 = float(self.eval_expr(coords2[0].strip()))
+                self.window_y2 = float(self.eval_expr(coords2[1].strip()))
+                if not self.running:
+                    return False
+
+            return False
+        except Exception as e:
+            print(f"Error in WINDOW statement at PC {pc}: {e}")
+            self.running = False
+            return False
+
+    def _logical_to_physical(self, lx: float, ly: float) -> Tuple[int, int]:
+        """Convert logical (WINDOW) coordinates to physical screen coordinates."""
+        if self.window_x1 is None:
+            # No WINDOW set, use physical coordinates directly
+            return (int(lx), int(ly))
+
+        # Get viewport bounds
+        vx1 = self.view_x1
+        vy1 = self.view_y1
+        vx2 = self.view_x2 if self.view_x2 is not None else self.screen_width - 1
+        vy2 = self.view_y2 if self.view_y2 is not None else self.screen_height - 1
+
+        # Map logical to physical
+        vw = vx2 - vx1
+        vh = vy2 - vy1
+        ww = self.window_x2 - self.window_x1
+        wh = self.window_y2 - self.window_y1
+
+        if ww == 0 or wh == 0:
+            return (int(lx), int(ly))
+
+        px = vx1 + (lx - self.window_x1) * vw / ww
+
+        if self.window_screen_mode:
+            # WINDOW SCREEN - y increases downward
+            py = vy1 + (ly - self.window_y1) * vh / wh
+        else:
+            # Regular WINDOW - y increases upward (Cartesian)
+            py = vy2 - (ly - self.window_y1) * vh / wh
+
+        return (int(px), int(py))
+
+    def _handle_lprint(self, content: Optional[str], pc: int) -> bool:
+        """Handle LPRINT statement - print to console (simulating printer).
+        LPRINT [expression][;|,]..."""
+        output = ""
+        if content and content.strip():
+            # Parse similar to PRINT but output to console
+            parts = []
+            current_part = ""
+            in_string = False
+            paren_depth = 0
+            for char in content:
+                if char == '"' and paren_depth == 0:
+                    in_string = not in_string
+                if not in_string:
+                    if char == '(':
+                        paren_depth += 1
+                    elif char == ')':
+                        paren_depth -= 1
+                if not in_string and paren_depth == 0 and (char == ';' or char == ','):
+                    if current_part:
+                        parts.append(current_part.strip())
+                    parts.append(char)
+                    current_part = ""
+                else:
+                    current_part += char
+            if current_part:
+                parts.append(current_part.strip())
+
+            for i, part in enumerate(parts):
+                if part == ';':
+                    pass  # No space
+                elif part == ',':
+                    output += '\t'  # Tab separator
+                else:
+                    val = self.eval_expr(part)
+                    if not self.running:
+                        return False
+                    s_val = str(val)
+                    if isinstance(val, (int, float)):
+                        s_val = (" " if val >= 0 else "") + s_val + " "
+                    output += s_val
+
+        # Print to console (simulating printer output)
+        ends_with_sep = content and (content.strip().endswith(';') or content.strip().endswith(','))
+        if ends_with_sep:
+            print(output, end='')
+        else:
+            print(output)
+        return False
+
+    def _handle_lprint_using(self, format_expr: str, values_expr: str, pc: int) -> bool:
+        """Handle LPRINT USING statement - formatted printer output.
+        Uses same format specifiers as PRINT USING but outputs to console."""
+        try:
+            # Evaluate format string
+            format_str = str(self.eval_expr(format_expr))
+            if not self.running:
+                return False
+
+            # Parse values
+            value_parts = []
+            current = ""
+            paren_level = 0
+            in_string = False
+            for char in values_expr:
+                if char == '"':
+                    in_string = not in_string
+                    current += char
+                elif char == '(' and not in_string:
+                    paren_level += 1
+                    current += char
+                elif char == ')' and not in_string:
+                    paren_level -= 1
+                    current += char
+                elif char == ',' and paren_level == 0 and not in_string:
+                    if current.strip():
+                        value_parts.append(current.strip())
+                    current = ""
+                else:
+                    current += char
+            if current.strip():
+                value_parts.append(current.strip())
+
+            values = []
+            for part in value_parts:
+                val = self.eval_expr(part)
+                if not self.running:
+                    return False
+                values.append(val)
+
+            # Format and print
+            output = self._format_using(format_str, values)
+            print(output)
+            return False
+        except Exception as e:
+            print(f"Error in LPRINT USING at PC {pc}: {e}")
+            return False
+
+    def _handle_field(self, match: re.Match, pc: int) -> bool:
+        """Handle FIELD statement - define record fields for random access files.
+        FIELD #filenum, width AS var$, width AS var$, ..."""
+        try:
+            file_num = int(match.group(1))
+            fields_str = match.group(2)
+
+            # Parse field definitions: width AS varname
+            fields = []
+            field_pattern = re.compile(r'(\d+)\s+AS\s+([a-zA-Z_][a-zA-Z0-9_]*\$?)', re.IGNORECASE)
+            for field_match in field_pattern.finditer(fields_str):
+                width = int(field_match.group(1))
+                var_name = field_match.group(2).upper()
+                fields.append((width, var_name))
+                # Initialize the variable as empty string of the specified width
+                self.variables[var_name] = " " * width
+
+            self.field_defs[file_num] = fields
+            # Initialize buffer
+            total_width = sum(w for w, _ in fields)
+            self.field_buffers[file_num] = " " * total_width
+
+            return False
+        except Exception as e:
+            print(f"Error in FIELD statement at PC {pc}: {e}")
+            self.running = False
+            return False
+
+    def _handle_lset(self, var_name: str, value_expr: str, pc: int) -> bool:
+        """Handle LSET statement - left-justify string in field variable.
+        LSET var$ = expression$"""
+        try:
+            var_upper = var_name.upper()
+            value = str(self.eval_expr(value_expr))
+            if not self.running:
+                return False
+
+            # Get current field width
+            if var_upper in self.variables and isinstance(self.variables[var_upper], str):
+                field_width = len(self.variables[var_upper])
+                # Left-justify: truncate or pad with spaces
+                if len(value) >= field_width:
+                    self.variables[var_upper] = value[:field_width]
+                else:
+                    self.variables[var_upper] = value + " " * (field_width - len(value))
+            else:
+                # If not a field variable, just assign
+                self.variables[var_upper] = value
+
+            return False
+        except Exception as e:
+            print(f"Error in LSET statement at PC {pc}: {e}")
+            self.running = False
+            return False
+
+    def _handle_rset(self, var_name: str, value_expr: str, pc: int) -> bool:
+        """Handle RSET statement - right-justify string in field variable.
+        RSET var$ = expression$"""
+        try:
+            var_upper = var_name.upper()
+            value = str(self.eval_expr(value_expr))
+            if not self.running:
+                return False
+
+            # Get current field width
+            if var_upper in self.variables and isinstance(self.variables[var_upper], str):
+                field_width = len(self.variables[var_upper])
+                # Right-justify: truncate from left or pad with spaces on left
+                if len(value) >= field_width:
+                    self.variables[var_upper] = value[-field_width:]
+                else:
+                    self.variables[var_upper] = " " * (field_width - len(value)) + value
+            else:
+                # If not a field variable, just assign
+                self.variables[var_upper] = value
+
+            return False
+        except Exception as e:
+            print(f"Error in RSET statement at PC {pc}: {e}")
+            self.running = False
+            return False
+
+    def _handle_environ_set(self, expr: str, pc: int) -> bool:
+        """Handle ENVIRON statement - set environment variable.
+        ENVIRON "NAME=VALUE" or ENVIRON name$ where name$ contains "NAME=VALUE"."""
+        import os
+        try:
+            env_str = str(self.eval_expr(expr))
+            if not self.running:
+                return False
+
+            # Parse NAME=VALUE format
+            if '=' in env_str:
+                name, value = env_str.split('=', 1)
+                os.environ[name.strip()] = value
+            else:
+                print(f"Warning: ENVIRON requires NAME=VALUE format at PC {pc}")
+
+            return False
+        except Exception as e:
+            print(f"Error in ENVIRON statement at PC {pc}: {e}")
+            return False
+
+    def _handle_on_timer(self, match: re.Match, pc: int) -> bool:
+        """Handle ON TIMER(n) GOSUB label - set up timer event handler.
+        n is the interval in seconds."""
+        try:
+            interval_expr = match.group(1)
+            label = match.group(2).upper()
+
+            self.timer_interval = float(self.eval_expr(interval_expr))
+            if not self.running:
+                return False
+
+            self.timer_label = label
+            self.timer_last_trigger = time.time()
+            # Note: Timer is not enabled until TIMER ON is executed
+
+            return False
+        except Exception as e:
+            print(f"Error in ON TIMER statement at PC {pc}: {e}")
+            return False
+
+    def _handle_pcopy(self, source_page: int, dest_page: int, pc: int) -> bool:
+        """Handle PCOPY source, dest - copy video page contents.
+        PCOPY copies the contents of one video page to another.
+        Page 0 is the main display surface."""
+        try:
+            # Ensure we have a surface
+            if self.surface is None:
+                return False
+
+            # Get or create source page
+            if source_page == 0:
+                source_surface = self.surface
+            else:
+                if source_page not in self.video_pages or self.video_pages[source_page] is None:
+                    # Create empty page
+                    self.video_pages[source_page] = pygame.Surface(
+                        (self.screen_width, self.screen_height)).convert()
+                    self.video_pages[source_page].fill(self.basic_color(self.current_bg_color))
+                source_surface = self.video_pages[source_page]
+
+            # Copy to destination page
+            if dest_page == 0:
+                # Copy to main surface
+                self.surface.blit(source_surface, (0, 0))
+                self.mark_dirty()
+            else:
+                # Create dest page if needed
+                if dest_page not in self.video_pages or self.video_pages[dest_page] is None:
+                    self.video_pages[dest_page] = pygame.Surface(
+                        (self.screen_width, self.screen_height)).convert()
+                self.video_pages[dest_page].blit(source_surface, (0, 0))
+
+            return False
+        except Exception as e:
+            print(f"Error in PCOPY at PC {pc}: {e}")
+            return False
+
     def _assign_variable(self, var_str: str, value: Any, pc: int) -> None:
         """Assign a value to a variable (scalar or array element)."""
         var_str = var_str.strip()
@@ -4830,6 +6137,10 @@ class BasicInterpreter:
 
         pc_of_this_line, _, logical_line_content = self.program_lines[self.pc]
         self.pc += 1 # Advance PC for the next line BEFORE executing current one
+
+        # TRON trace output - print line number being executed
+        if self.trace_mode:
+            print(f"[{pc_of_this_line}]", end=" ")
 
         # Execute the logical line (which might contain multiple statements separated by ':')
         # The return value of execute_logical_line indicates if a GOTO, GOSUB, or DELAY happened.

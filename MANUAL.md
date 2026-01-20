@@ -406,6 +406,376 @@ skip:
 
 ---
 
+## File I/O
+
+### OPEN / CLOSE
+
+```basic
+OPEN "data.txt" FOR INPUT AS #1      ' Open for reading
+OPEN "out.txt" FOR OUTPUT AS #2      ' Open for writing (creates/overwrites)
+OPEN "log.txt" FOR APPEND AS #3      ' Open for appending
+OPEN "data.bin" FOR BINARY AS #4     ' Open for binary access
+CLOSE #1                              ' Close file #1
+CLOSE                                 ' Close all open files
+```
+
+### INPUT # / LINE INPUT #
+
+```basic
+INPUT #1, a, b$, c                    ' Read comma-separated values from file
+LINE INPUT #1, text$                  ' Read entire line from file
+```
+
+### PRINT # / WRITE #
+
+```basic
+PRINT #1, "Hello"; x; y               ' Write formatted output to file
+WRITE #1, a, b$, c                    ' Write comma-delimited data with quotes
+```
+
+### File Functions
+
+```basic
+n = FREEFILE                          ' Get next available file number
+length = LOF(1)                       ' Get length of file #1
+atEnd = EOF(1)                        ' Check if at end of file (-1 if true)
+pos = LOC(1)                          ' Get current file position (1-based)
+```
+
+### SEEK
+
+```basic
+SEEK #1, 100                          ' Set file position to byte 100 (1-based)
+```
+
+### GET # / PUT # (Binary File Access)
+
+```basic
+' Open file for binary access
+OPEN "data.bin" FOR BINARY AS #1
+
+' Write binary data
+x% = 12345
+PUT #1, 1, x%                         ' Write integer at position 1
+
+' Read binary data
+GET #1, 1, y%                         ' Read integer from position 1
+
+CLOSE #1
+```
+
+### Binary Conversion Functions
+
+```basic
+' Convert numbers to binary strings (for random-access files)
+a$ = MKI$(12345)                      ' Integer to 2-byte string
+b$ = MKL$(123456789)                  ' Long to 4-byte string
+c$ = MKS$(3.14)                       ' Single to 4-byte string
+d$ = MKD$(3.14159265359)              ' Double to 8-byte string
+
+' Convert binary strings back to numbers
+i% = CVI(a$)                          ' 2-byte string to integer
+l& = CVL(b$)                          ' 4-byte string to long
+s! = CVS(c$)                          ' 4-byte string to single
+d# = CVD(d$)                          ' 8-byte string to double
+```
+
+### FIELD / LSET / RSET (Random Access Files)
+
+```basic
+' FIELD defines record structure for random-access files
+OPEN "data.dat" FOR RANDOM AS #1 LEN = 30
+FIELD #1, 20 AS Name$, 10 AS Phone$
+
+' LSET left-justifies a string in a field variable
+LSET Name$ = "John Doe"               ' Pads with spaces on right
+
+' RSET right-justifies a string in a field variable
+RSET Phone$ = "555-1234"              ' Pads with spaces on left
+
+' Write the record
+PUT #1, 1
+
+' Read the record back
+GET #1, 1
+
+CLOSE #1
+```
+
+### INPUT$ (Read Characters)
+
+```basic
+' Read from keyboard
+c$ = INPUT$(1)                        ' Read 1 character from keyboard
+
+' Read from file
+OPEN "data.txt" FOR BINARY AS #1
+data$ = INPUT$(10, 1)                 ' Read 10 bytes from file #1
+CLOSE #1
+```
+
+### KILL / NAME
+
+```basic
+KILL "oldfile.txt"                    ' Delete a file
+NAME "old.txt" AS "new.txt"           ' Rename a file
+```
+
+### Directory Commands
+
+```basic
+MKDIR "newdir"                        ' Create a directory
+RMDIR "olddir"                        ' Remove an empty directory
+CHDIR "subdir"                        ' Change current directory
+FILES "*.txt"                         ' List files matching pattern
+FILES                                 ' List all files in current directory
+```
+
+---
+
+## Error Handling
+
+### ON ERROR GOTO
+
+```basic
+ON ERROR GOTO handler                 ' Set error handler
+ON ERROR GOTO 0                       ' Disable error handling
+
+' ... code that might error ...
+END
+
+handler:
+    PRINT "An error occurred!"
+    RESUME NEXT                       ' Continue at next statement
+```
+
+### ERROR
+
+```basic
+ERROR 5                               ' Trigger runtime error #5
+' Can be caught by ON ERROR GOTO handler
+```
+
+### RESUME
+
+```basic
+RESUME                                ' Retry the statement that caused error
+RESUME NEXT                           ' Continue at statement after error
+RESUME label                          ' Continue at specified label
+```
+
+---
+
+## Program Control
+
+### CLEAR
+
+```basic
+CLEAR                                 ' Clear all variables and reset stacks
+' Note: Stack and heap size parameters are ignored (Python manages memory)
+```
+
+### SHELL
+
+```basic
+SHELL "dir"                           ' Execute shell command (DOS: dir, Unix: ls)
+SHELL "echo Hello"                    ' Run any shell command
+SHELL                                 ' Without arguments, does nothing
+```
+
+Note: Shell commands have a 30-second timeout for safety.
+
+### SYSTEM
+
+```basic
+SYSTEM                                ' Exit program and return to operating system
+' Equivalent to END, stops program execution
+```
+
+### END / STOP
+
+```basic
+END                                   ' End program execution
+STOP                                  ' Stop program (can be continued with CONT)
+```
+
+### RUN
+
+```basic
+RUN                                   ' Restart program from beginning
+RUN label                             ' Restart from specified label
+' Variables are cleared when RUN is executed
+```
+
+### CHAIN
+
+```basic
+CHAIN "other.bas"                     ' Load and run another BASIC program
+' Variables are preserved across CHAIN calls
+```
+
+### CONT (Continue After STOP)
+
+```basic
+' After STOP has paused execution, use CONT to resume
+' Note: In the interpreter, CONT is primarily for interactive debugging
+STOP                                  ' Pause here
+' ... later, CONT would resume
+```
+
+### TRON / TROFF (Trace Debugging)
+
+```basic
+TRON                                  ' Turn on trace mode
+' When trace is ON, line numbers are printed as they execute
+' Output looks like: [0] [1] [2] ...
+
+TROFF                                 ' Turn off trace mode
+' Useful for debugging program flow
+```
+
+---
+
+## Memory Functions
+
+### VARPTR / VARSEG / SADD
+
+```basic
+' Get emulated memory addresses of variables
+x = 100
+addr = VARPTR(x)                      ' Get offset address of variable
+seg = VARSEG(x)                       ' Get segment address of variable
+
+s$ = "Hello"
+saddr = SADD(s$)                      ' Get address of string data
+
+' Note: These return emulated addresses, not actual memory locations
+' Useful for compatibility with programs that use these functions
+```
+
+---
+
+## Function Key Handling
+
+### KEY (Define Function Key)
+
+```basic
+KEY 1, "HELP"                         ' Define F1 to type "HELP"
+KEY 2, "RUN" + CHR$(13)              ' Define F2 to type "RUN" and Enter
+' Key numbers 1-10 correspond to F1-F10
+```
+
+### KEY(n) ON/OFF/STOP
+
+```basic
+KEY(1) ON                             ' Enable F1 key event trapping
+KEY(1) OFF                            ' Disable F1 key event trapping
+KEY(1) STOP                           ' Suspend F1 key events
+```
+
+### ON KEY(n) GOSUB
+
+```basic
+ON KEY(1) GOSUB helpHandler           ' Set F1 to call helpHandler
+KEY(1) ON                             ' Enable the key trap
+
+' ... program continues ...
+
+helpHandler:
+    PRINT "Help requested!"
+    RETURN
+```
+
+### KEY ON/OFF/LIST
+
+```basic
+KEY ON                                ' Display function key definitions at bottom
+KEY OFF                               ' Hide function key display
+KEY LIST                              ' List all function key definitions
+```
+
+---
+
+## Metacommands
+
+### $INCLUDE
+
+```basic
+'$INCLUDE: 'common.bi'                ' Include another BASIC file
+'$INCLUDE: "utils.bas"                ' Quotes or apostrophes work
+' Note: The interpreter accepts this but actual file inclusion
+' should be done during the file loading phase
+```
+
+### $DYNAMIC / $STATIC
+
+```basic
+'$DYNAMIC                             ' Arrays can be resized with REDIM
+'$STATIC                              ' Arrays have fixed size (default)
+' Note: Python handles array resizing automatically,
+' so these are accepted for compatibility but have no effect
+```
+
+---
+
+## Music Function
+
+### PLAY(n)
+
+```basic
+notes = PLAY(0)                       ' Get count of notes in background queue
+' Returns 0 since background music queue is not implemented
+' Useful for checking if background music is still playing
+```
+
+---
+
+## Environment
+
+### ENVIRON$ (Read Environment Variable)
+
+```basic
+path$ = ENVIRON$("PATH")              ' Get value of PATH environment variable
+user$ = ENVIRON$("USER")              ' Get value of USER
+```
+
+### ENVIRON (Set Environment Variable)
+
+```basic
+ENVIRON "MY_VAR=hello"                ' Set environment variable
+ENVIRON name$ + "=" + value$          ' Use expression
+```
+
+---
+
+## Timer Events
+
+### ON TIMER GOSUB
+
+```basic
+' Set up timer event handler
+ON TIMER(5) GOSUB updateClock         ' Call updateClock every 5 seconds
+
+' Enable/disable timer
+TIMER ON                              ' Enable timer events
+TIMER OFF                             ' Disable timer events
+TIMER STOP                            ' Suspend timer events
+
+' Main program loop
+DO
+    ' Program logic
+LOOP
+
+updateClock:
+    LOCATE 1, 70
+    PRINT TIME$
+    RETURN
+```
+
+Note: Timer events are triggered during program execution when the specified interval has elapsed.
+
+---
+
 ## Graphics Commands
 
 ### SCREEN
@@ -418,6 +788,18 @@ SCREEN 13                  ' Set 320x200 graphics mode
 
 ```basic
 CLS                        ' Clear screen with background color
+```
+
+### PCOPY (Video Page Copy)
+
+```basic
+' Copy video page contents
+' Page 0 is the main display, pages 1-7 are offscreen buffers
+PCOPY 0, 1                 ' Copy display to page 1 (save screen)
+PCOPY 1, 0                 ' Copy page 1 to display (restore screen)
+
+' Useful for double-buffering:
+' Draw to page 1, then PCOPY 1, 0 to display
 ```
 
 ### COLOR
@@ -513,6 +895,47 @@ PRINT x; y; z              ' Print multiple values (semicolon = no space)
 PRINT "Score:"; score
 PRINT                      ' Print blank line
 ```
+
+### LPRINT (Printer Output)
+
+```basic
+LPRINT "Hello World"       ' Print to printer (outputs to console)
+LPRINT x; y; z             ' Same format specifiers as PRINT
+LPRINT USING "##.##"; 3.14 ' Formatted printer output
+```
+
+Note: LPRINT statements output to the console (stdout) since most systems don't have line printers.
+
+### VIEW (Graphics Viewport)
+
+```basic
+' Define a graphics viewport (clipping region)
+VIEW (x1, y1)-(x2, y2)
+VIEW (10, 10)-(100, 100)   ' Drawing clipped to this rectangle
+
+' With fill and border colors
+VIEW (x1, y1)-(x2, y2), fillColor, borderColor
+VIEW (10, 10)-(100, 100), 1, 15    ' Fill with blue, white border
+
+' Reset to full screen
+VIEW
+```
+
+### WINDOW (Logical Coordinates)
+
+```basic
+' Define a logical coordinate system
+WINDOW (x1, y1)-(x2, y2)
+WINDOW (-100, -100)-(100, 100)     ' Cartesian coordinates (y up)
+
+' WINDOW SCREEN - y increases downward
+WINDOW SCREEN (0, 0)-(320, 200)    ' Top-left origin
+
+' Reset to physical coordinates
+WINDOW
+```
+
+Note: WINDOW maps logical coordinates to physical screen coordinates within the VIEW viewport.
 
 ---
 

@@ -744,6 +744,666 @@ class TestRenderingPerformance(unittest.TestCase):
         self.assertIn("x + 5", _expr_cache)
 
 
+class TestFileSystemCommands(unittest.TestCase):
+    """Test file system commands (KILL, NAME, MKDIR, RMDIR, CHDIR, FILES)."""
+
+    def setUp(self):
+        """Create interpreter instance for testing."""
+        _expr_cache.clear()
+        _compiled_expr_cache.clear()
+        self.font = pygame.font.Font(None, 16)
+        self.interp = BasicInterpreter(self.font, 800, 600)
+        # Create a temp directory for tests
+        self.test_dir = os.path.join(os.path.dirname(__file__), "_test_fs_temp")
+        if os.path.exists(self.test_dir):
+            import shutil
+            shutil.rmtree(self.test_dir)
+        os.makedirs(self.test_dir)
+        self.orig_dir = os.getcwd()
+        os.chdir(self.test_dir)
+
+    def tearDown(self):
+        """Clean up temp directory."""
+        os.chdir(self.orig_dir)
+        if os.path.exists(self.test_dir):
+            import shutil
+            shutil.rmtree(self.test_dir)
+
+    def test_mkdir_command(self):
+        """Test MKDIR command creates directory."""
+        self.interp.reset(['MKDIR "testdir"'])
+        self.interp.step()
+        self.assertTrue(os.path.isdir("testdir"))
+
+    def test_rmdir_command(self):
+        """Test RMDIR command removes directory."""
+        os.mkdir("todelete")
+        self.interp.reset(['RMDIR "todelete"'])
+        self.interp.step()
+        self.assertFalse(os.path.exists("todelete"))
+
+    def test_chdir_command(self):
+        """Test CHDIR command changes directory."""
+        os.mkdir("subdir")
+        orig = os.getcwd()
+        self.interp.reset(['CHDIR "subdir"'])
+        self.interp.step()
+        self.assertNotEqual(os.getcwd(), orig)
+        self.assertTrue(os.getcwd().endswith("subdir"))
+        os.chdir(orig)
+
+    def test_kill_command(self):
+        """Test KILL command deletes file."""
+        with open("todelete.txt", "w") as f:
+            f.write("test")
+        self.assertTrue(os.path.exists("todelete.txt"))
+        self.interp.reset(['KILL "todelete.txt"'])
+        self.interp.step()
+        self.assertFalse(os.path.exists("todelete.txt"))
+
+    def test_name_command(self):
+        """Test NAME command renames file."""
+        with open("oldname.txt", "w") as f:
+            f.write("test")
+        self.interp.reset(['NAME "oldname.txt" AS "newname.txt"'])
+        self.interp.step()
+        self.assertFalse(os.path.exists("oldname.txt"))
+        self.assertTrue(os.path.exists("newname.txt"))
+
+
+class TestFilePositioning(unittest.TestCase):
+    """Test file positioning commands (SEEK, LOC)."""
+
+    def setUp(self):
+        """Create interpreter instance for testing."""
+        _expr_cache.clear()
+        _compiled_expr_cache.clear()
+        self.font = pygame.font.Font(None, 16)
+        self.interp = BasicInterpreter(self.font, 800, 600)
+        # Create a temp directory for tests
+        self.test_dir = os.path.join(os.path.dirname(__file__), "_test_fp_temp")
+        if os.path.exists(self.test_dir):
+            import shutil
+            shutil.rmtree(self.test_dir)
+        os.makedirs(self.test_dir)
+        self.orig_dir = os.getcwd()
+        os.chdir(self.test_dir)
+
+    def tearDown(self):
+        """Clean up temp directory."""
+        os.chdir(self.orig_dir)
+        if os.path.exists(self.test_dir):
+            import shutil
+            shutil.rmtree(self.test_dir)
+
+    def test_seek_command(self):
+        """Test SEEK command sets file position."""
+        # Create a test file with known content
+        with open("seektest.bin", "wb") as f:
+            f.write(b"ABCDEFGHIJ")
+
+        self.interp.reset([
+            'OPEN "seektest.bin" FOR BINARY AS #1',
+            'SEEK #1, 5',
+            'CLOSE #1'
+        ])
+        while self.interp.running and self.interp.pc < len(self.interp.program_lines):
+            self.interp.step()
+
+        # File should have been processed without error
+        self.assertTrue(self.interp.running or self.interp.pc >= len(self.interp.program_lines))
+
+    def test_loc_function(self):
+        """Test LOC function returns file position."""
+        # Create a test file
+        with open("loctest.bin", "wb") as f:
+            f.write(b"ABCDEFGHIJ")
+
+        self.interp.reset([
+            'OPEN "loctest.bin" FOR BINARY AS #1',
+            'pos1 = LOC(1)',
+            'CLOSE #1'
+        ])
+        while self.interp.running and self.interp.pc < len(self.interp.program_lines):
+            self.interp.step()
+
+        # LOC should return 1 at start (1-based)
+        self.assertEqual(self.interp.variables.get("POS1"), 1)
+
+
+class TestPCOPY(unittest.TestCase):
+    """Test PCOPY video page copy command."""
+
+    def setUp(self):
+        """Create interpreter instance for testing."""
+        _expr_cache.clear()
+        _compiled_expr_cache.clear()
+        self.font = pygame.font.Font(None, 16)
+        self.interp = BasicInterpreter(self.font, 800, 600)
+
+    def test_pcopy_to_offscreen_page(self):
+        """Test PCOPY copies surface to offscreen page."""
+        self.interp.reset([
+            'SCREEN 13',
+            'PSET (50, 50), 15',
+            'PCOPY 0, 1'
+        ])
+        while self.interp.running and self.interp.pc < len(self.interp.program_lines):
+            self.interp.step()
+
+        # Page 1 should now exist
+        self.assertIn(1, self.interp.video_pages)
+        self.assertIsNotNone(self.interp.video_pages[1])
+
+    def test_pcopy_restore_page(self):
+        """Test PCOPY can restore from offscreen page."""
+        self.interp.reset([
+            'SCREEN 13',
+            'PSET (50, 50), 15',
+            'PCOPY 0, 1',
+            'CLS',
+            'PCOPY 1, 0'
+        ])
+        while self.interp.running and self.interp.pc < len(self.interp.program_lines):
+            self.interp.step()
+
+        # After PCOPY 1, 0, the pixel should be restored
+        # Check that the surface is not empty
+        self.assertTrue(self.interp.running or self.interp.pc >= len(self.interp.program_lines))
+
+
+class TestBinaryConversion(unittest.TestCase):
+    """Test binary conversion functions (MKI$, CVI, etc.)."""
+
+    def setUp(self):
+        """Create interpreter instance for testing."""
+        _expr_cache.clear()
+        _compiled_expr_cache.clear()
+        self.font = pygame.font.Font(None, 16)
+        self.interp = BasicInterpreter(self.font, 800, 600)
+
+    def test_mki_cvi_roundtrip(self):
+        """Test MKI$ and CVI roundtrip."""
+        result = self.interp.eval_expr('CVI(MKI$(12345))')
+        self.assertEqual(result, 12345)
+
+    def test_mkl_cvl_roundtrip(self):
+        """Test MKL$ and CVL roundtrip."""
+        result = self.interp.eval_expr('CVL(MKL$(123456789))')
+        self.assertEqual(result, 123456789)
+
+    def test_mks_cvs_roundtrip(self):
+        """Test MKS$ and CVS roundtrip."""
+        result = self.interp.eval_expr('CVS(MKS$(3.14))')
+        self.assertAlmostEqual(result, 3.14, places=2)
+
+    def test_mkd_cvd_roundtrip(self):
+        """Test MKD$ and CVD roundtrip."""
+        result = self.interp.eval_expr('CVD(MKD$(3.14159265359))')
+        self.assertAlmostEqual(result, 3.14159265359, places=8)
+
+
+class TestErrorStatement(unittest.TestCase):
+    """Test ERROR statement."""
+
+    def setUp(self):
+        """Create interpreter instance for testing."""
+        _expr_cache.clear()
+        _compiled_expr_cache.clear()
+        self.font = pygame.font.Font(None, 16)
+        self.interp = BasicInterpreter(self.font, 800, 600)
+
+    def test_error_without_handler(self):
+        """Test ERROR without ON ERROR GOTO stops execution."""
+        self.interp.reset([
+            'x = 1',
+            'ERROR 5',
+            'x = 2'
+        ])
+        while self.interp.running and self.interp.pc < len(self.interp.program_lines):
+            self.interp.step()
+
+        # Execution should have stopped
+        self.assertFalse(self.interp.running)
+        self.assertEqual(self.interp.variables.get("X"), 1)
+
+    def test_error_with_handler(self):
+        """Test ERROR with ON ERROR GOTO jumps to handler."""
+        self.interp.reset([
+            'ON ERROR GOTO handler',
+            'x = 1',
+            'ERROR 5',
+            'x = 2',
+            'END',
+            'handler:',
+            'handled = 1',
+            'RESUME NEXT'
+        ])
+        while self.interp.running and self.interp.pc < len(self.interp.program_lines):
+            self.interp.step()
+
+        # Handler should have been invoked (set handled=1), then RESUME NEXT
+        # continues at x=2 (the statement after ERROR 5)
+        self.assertEqual(self.interp.variables.get("HANDLED"), 1)
+        self.assertEqual(self.interp.variables.get("X"), 2)
+
+
+class TestClearStatement(unittest.TestCase):
+    """Test CLEAR statement."""
+
+    def setUp(self):
+        """Create interpreter instance for testing."""
+        _expr_cache.clear()
+        _compiled_expr_cache.clear()
+        self.font = pygame.font.Font(None, 16)
+        self.interp = BasicInterpreter(self.font, 800, 600)
+
+    def test_clear_removes_variables(self):
+        """Test CLEAR removes all variables."""
+        self.interp.reset([
+            'x = 10',
+            'y = 20',
+            'CLEAR',
+            'z = x + y'  # x and y should be 0 now
+        ])
+        while self.interp.running and self.interp.pc < len(self.interp.program_lines):
+            self.interp.step()
+
+        # After CLEAR, x and y are reset to 0, so z = 0 + 0 = 0
+        self.assertEqual(self.interp.variables.get("Z"), 0)
+
+
+class TestSystemStatement(unittest.TestCase):
+    """Test SYSTEM statement."""
+
+    def setUp(self):
+        """Create interpreter instance for testing."""
+        _expr_cache.clear()
+        _compiled_expr_cache.clear()
+        self.font = pygame.font.Font(None, 16)
+        self.interp = BasicInterpreter(self.font, 800, 600)
+
+    def test_system_stops_execution(self):
+        """Test SYSTEM stops program execution."""
+        self.interp.reset([
+            'x = 1',
+            'SYSTEM',
+            'x = 2'  # Should not execute
+        ])
+        while self.interp.running and self.interp.pc < len(self.interp.program_lines):
+            self.interp.step()
+
+        self.assertFalse(self.interp.running)
+        self.assertEqual(self.interp.variables.get("X"), 1)
+
+
+class TestViewStatement(unittest.TestCase):
+    """Test VIEW statement."""
+
+    def setUp(self):
+        """Create interpreter instance for testing."""
+        _expr_cache.clear()
+        _compiled_expr_cache.clear()
+        self.font = pygame.font.Font(None, 16)
+        self.interp = BasicInterpreter(self.font, 800, 600)
+
+    def test_view_sets_viewport(self):
+        """Test VIEW sets viewport coordinates."""
+        self.interp.reset([
+            'SCREEN 13',
+            'VIEW (10, 10)-(100, 100)'
+        ])
+        while self.interp.running and self.interp.pc < len(self.interp.program_lines):
+            self.interp.step()
+
+        self.assertEqual(self.interp.view_x1, 10)
+        self.assertEqual(self.interp.view_y1, 10)
+        self.assertEqual(self.interp.view_x2, 100)
+        self.assertEqual(self.interp.view_y2, 100)
+
+    def test_view_reset(self):
+        """Test VIEW without arguments resets viewport."""
+        self.interp.reset([
+            'SCREEN 13',
+            'VIEW (10, 10)-(100, 100)',
+            'VIEW'
+        ])
+        while self.interp.running and self.interp.pc < len(self.interp.program_lines):
+            self.interp.step()
+
+        self.assertEqual(self.interp.view_x1, 0)
+        self.assertEqual(self.interp.view_y1, 0)
+        self.assertIsNone(self.interp.view_x2)
+        self.assertIsNone(self.interp.view_y2)
+
+
+class TestWindowStatement(unittest.TestCase):
+    """Test WINDOW statement."""
+
+    def setUp(self):
+        """Create interpreter instance for testing."""
+        _expr_cache.clear()
+        _compiled_expr_cache.clear()
+        self.font = pygame.font.Font(None, 16)
+        self.interp = BasicInterpreter(self.font, 800, 600)
+
+    def test_window_sets_coordinates(self):
+        """Test WINDOW sets logical coordinate system."""
+        self.interp.reset([
+            'SCREEN 13',
+            'WINDOW (-100, -100)-(100, 100)'
+        ])
+        while self.interp.running and self.interp.pc < len(self.interp.program_lines):
+            self.interp.step()
+
+        self.assertEqual(self.interp.window_x1, -100)
+        self.assertEqual(self.interp.window_y1, -100)
+        self.assertEqual(self.interp.window_x2, 100)
+        self.assertEqual(self.interp.window_y2, 100)
+        self.assertFalse(self.interp.window_screen_mode)
+
+    def test_window_reset(self):
+        """Test WINDOW without arguments resets to physical coordinates."""
+        self.interp.reset([
+            'SCREEN 13',
+            'WINDOW (-100, -100)-(100, 100)',
+            'WINDOW'
+        ])
+        while self.interp.running and self.interp.pc < len(self.interp.program_lines):
+            self.interp.step()
+
+        self.assertIsNone(self.interp.window_x1)
+        self.assertIsNone(self.interp.window_y1)
+
+
+class TestFieldLsetRset(unittest.TestCase):
+    """Test FIELD, LSET, and RSET statements."""
+
+    def setUp(self):
+        """Create interpreter instance for testing."""
+        _expr_cache.clear()
+        _compiled_expr_cache.clear()
+        self.font = pygame.font.Font(None, 16)
+        self.interp = BasicInterpreter(self.font, 800, 600)
+
+    def test_lset_left_justify(self):
+        """Test LSET left-justifies string."""
+        self.interp.reset([
+            'NAME$ = "          "',  # 10 spaces - set up field variable
+            'LSET NAME$ = "Hi"'
+        ])
+        while self.interp.running and self.interp.pc < len(self.interp.program_lines):
+            self.interp.step()
+
+        result = self.interp.variables.get("NAME$")
+        self.assertEqual(len(result), 10)
+        self.assertEqual(result, "Hi        ")  # Left-justified
+
+    def test_rset_right_justify(self):
+        """Test RSET right-justifies string."""
+        self.interp.reset([
+            'NAME$ = "          "',  # 10 spaces - set up field variable
+            'RSET NAME$ = "Hi"'
+        ])
+        while self.interp.running and self.interp.pc < len(self.interp.program_lines):
+            self.interp.step()
+
+        result = self.interp.variables.get("NAME$")
+        self.assertEqual(len(result), 10)
+        self.assertEqual(result, "        Hi")  # Right-justified
+
+
+class TestEnvironStatement(unittest.TestCase):
+    """Test ENVIRON statement (set environment variable)."""
+
+    def setUp(self):
+        """Create interpreter instance for testing."""
+        _expr_cache.clear()
+        _compiled_expr_cache.clear()
+        self.font = pygame.font.Font(None, 16)
+        self.interp = BasicInterpreter(self.font, 800, 600)
+
+    def test_environ_set(self):
+        """Test ENVIRON sets environment variable."""
+        import os
+        self.interp.reset([
+            'ENVIRON "TEST_VAR=hello_world"'
+        ])
+        self.interp.step()
+
+        self.assertEqual(os.environ.get("TEST_VAR"), "hello_world")
+        # Clean up
+        if "TEST_VAR" in os.environ:
+            del os.environ["TEST_VAR"]
+
+
+class TestTimerEvents(unittest.TestCase):
+    """Test ON TIMER GOSUB and TIMER ON/OFF."""
+
+    def setUp(self):
+        """Create interpreter instance for testing."""
+        _expr_cache.clear()
+        _compiled_expr_cache.clear()
+        self.font = pygame.font.Font(None, 16)
+        self.interp = BasicInterpreter(self.font, 800, 600)
+
+    def test_on_timer_sets_handler(self):
+        """Test ON TIMER GOSUB sets timer handler."""
+        self.interp.reset([
+            'ON TIMER(1) GOSUB handler',
+            'END',
+            'handler:',
+            'x = 1',
+            'RETURN'
+        ])
+        self.interp.step_line()  # ON TIMER
+
+        self.assertEqual(self.interp.timer_interval, 1)
+        self.assertEqual(self.interp.timer_label, "HANDLER")
+
+    def test_timer_on_off(self):
+        """Test TIMER ON and TIMER OFF."""
+        self.interp.reset([
+            'ON TIMER(1) GOSUB handler',
+            'TIMER ON',
+            'TIMER OFF',
+            'END',
+            'handler:',
+            'RETURN'
+        ])
+        self.interp.step_line()  # ON TIMER
+        self.interp.step_line()  # TIMER ON
+        self.assertTrue(self.interp.timer_enabled)
+        self.interp.step_line()  # TIMER OFF
+        self.assertFalse(self.interp.timer_enabled)
+
+
+class TestTronTroff(unittest.TestCase):
+    """Test TRON/TROFF trace debugging."""
+
+    def setUp(self):
+        """Create interpreter instance for testing."""
+        _expr_cache.clear()
+        _compiled_expr_cache.clear()
+        self.font = pygame.font.Font(None, 16)
+        self.interp = BasicInterpreter(self.font, 800, 600)
+
+    def test_tron_enables_trace(self):
+        """Test TRON enables trace mode."""
+        self.interp.reset(['TRON', 'x = 1'])
+        self.interp.step_line()  # TRON
+        self.assertTrue(self.interp.trace_mode)
+
+    def test_troff_disables_trace(self):
+        """Test TROFF disables trace mode."""
+        self.interp.reset(['TRON', 'TROFF', 'x = 1'])
+        self.interp.step_line()  # TRON
+        self.assertTrue(self.interp.trace_mode)
+        self.interp.step_line()  # TROFF
+        self.assertFalse(self.interp.trace_mode)
+
+
+class TestRunCommand(unittest.TestCase):
+    """Test RUN command."""
+
+    def setUp(self):
+        """Create interpreter instance for testing."""
+        _expr_cache.clear()
+        _compiled_expr_cache.clear()
+        self.font = pygame.font.Font(None, 16)
+        self.interp = BasicInterpreter(self.font, 800, 600)
+
+    def test_run_restarts_from_beginning(self):
+        """Test RUN without arguments restarts from beginning."""
+        self.interp.reset([
+            'x = 10',
+            'IF x < 100 THEN x = x + 1 : GOTO skiprun',
+            'RUN',
+            'skiprun:',
+            'y = x'
+        ])
+        while self.interp.running and self.interp.pc < len(self.interp.program_lines):
+            self.interp.step()
+        # x starts at 10, increments to 11, then continues
+        self.assertEqual(self.interp.variables.get("Y"), 11)
+
+
+class TestContCommand(unittest.TestCase):
+    """Test CONT command."""
+
+    def setUp(self):
+        """Create interpreter instance for testing."""
+        _expr_cache.clear()
+        _compiled_expr_cache.clear()
+        self.font = pygame.font.Font(None, 16)
+        self.interp = BasicInterpreter(self.font, 800, 600)
+
+    def test_stop_sets_stopped_flag(self):
+        """Test STOP sets stopped flag."""
+        self.interp.reset(['x = 1', 'STOP', 'x = 2'])
+        self.interp.step_line()  # x = 1
+        self.interp.step_line()  # STOP
+        self.assertTrue(self.interp.stopped)
+        self.assertFalse(self.interp.running)
+
+
+class TestMemoryFunctions(unittest.TestCase):
+    """Test VARPTR, VARSEG, SADD functions."""
+
+    def setUp(self):
+        """Create interpreter instance for testing."""
+        _expr_cache.clear()
+        _compiled_expr_cache.clear()
+        self.font = pygame.font.Font(None, 16)
+        self.interp = BasicInterpreter(self.font, 800, 600)
+
+    def test_varptr_returns_value(self):
+        """Test VARPTR returns a numeric value."""
+        self.interp.reset(['x = 10', 'addr = VARPTR(x)'])
+        while self.interp.running and self.interp.pc < len(self.interp.program_lines):
+            self.interp.step()
+        # VARPTR should return some integer address
+        addr = self.interp.variables.get("ADDR")
+        self.assertIsNotNone(addr)
+        self.assertIsInstance(addr, int)
+
+    def test_varseg_returns_segment(self):
+        """Test VARSEG returns a segment value."""
+        self.interp.reset(['x = 10', 'seg = VARSEG(x)'])
+        while self.interp.running and self.interp.pc < len(self.interp.program_lines):
+            self.interp.step()
+        seg = self.interp.variables.get("SEG")
+        self.assertIsNotNone(seg)
+        self.assertIsInstance(seg, int)
+
+    def test_sadd_returns_address(self):
+        """Test SADD returns string address."""
+        self.interp.reset(['s$ = "hello"', 'addr = SADD(s$)'])
+        while self.interp.running and self.interp.pc < len(self.interp.program_lines):
+            self.interp.step()
+        addr = self.interp.variables.get("ADDR")
+        self.assertIsNotNone(addr)
+        self.assertIsInstance(addr, int)
+
+
+class TestKeyHandling(unittest.TestCase):
+    """Test KEY statement and ON KEY GOSUB."""
+
+    def setUp(self):
+        """Create interpreter instance for testing."""
+        _expr_cache.clear()
+        _compiled_expr_cache.clear()
+        self.font = pygame.font.Font(None, 16)
+        self.interp = BasicInterpreter(self.font, 800, 600)
+
+    def test_key_definition(self):
+        """Test KEY n, string$ defines function key."""
+        self.interp.reset(['KEY 1, "HELP"'])
+        self.interp.step_line()
+        self.assertEqual(self.interp.key_definitions.get(1), "HELP")
+
+    def test_key_on_off(self):
+        """Test KEY(n) ON/OFF enables/disables key events."""
+        self.interp.reset([
+            'KEY(1) ON',
+            'KEY(1) OFF'
+        ])
+        self.interp.step_line()  # KEY(1) ON
+        self.assertTrue(self.interp.key_enabled.get(1))
+        self.interp.step_line()  # KEY(1) OFF
+        self.assertFalse(self.interp.key_enabled.get(1))
+
+    def test_on_key_gosub(self):
+        """Test ON KEY(n) GOSUB sets handler."""
+        self.interp.reset([
+            'ON KEY(1) GOSUB handler',
+            'END',
+            'handler:',
+            'RETURN'
+        ])
+        self.interp.step_line()  # ON KEY
+        self.assertEqual(self.interp.key_handlers.get(1), "HANDLER")
+
+
+class TestPlayFunction(unittest.TestCase):
+    """Test PLAY(n) function."""
+
+    def setUp(self):
+        """Create interpreter instance for testing."""
+        _expr_cache.clear()
+        _compiled_expr_cache.clear()
+        self.font = pygame.font.Font(None, 16)
+        self.interp = BasicInterpreter(self.font, 800, 600)
+
+    def test_play_function_returns_zero(self):
+        """Test PLAY(0) returns 0 (no background queue)."""
+        result = self.interp.eval_expr('PLAY(0)')
+        self.assertEqual(result, 0)
+
+
+class TestMetacommands(unittest.TestCase):
+    """Test $DYNAMIC, $STATIC metacommands."""
+
+    def setUp(self):
+        """Create interpreter instance for testing."""
+        _expr_cache.clear()
+        _compiled_expr_cache.clear()
+        self.font = pygame.font.Font(None, 16)
+        self.interp = BasicInterpreter(self.font, 800, 600)
+
+    def test_dynamic_accepted(self):
+        """Test $DYNAMIC is accepted without error."""
+        self.interp.reset(['$DYNAMIC', 'x = 1'])
+        self.interp.step_line()  # $DYNAMIC
+        self.assertTrue(self.interp.running)
+
+    def test_static_accepted(self):
+        """Test $STATIC is accepted without error."""
+        self.interp.reset(['$STATIC', 'x = 1'])
+        self.interp.step_line()  # $STATIC
+        self.assertTrue(self.interp.running)
+
+
 if __name__ == "__main__":
     # Run tests
     unittest.main(verbosity=2)

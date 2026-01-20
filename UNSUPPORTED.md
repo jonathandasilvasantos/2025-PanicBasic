@@ -6,19 +6,16 @@ This document lists QBasic 4.5 features and instructions that are **not currentl
 
 ## Graphics Commands
 
-| Command | Description |
-|---------|-------------|
-| `PCOPY` | Copy video pages |
-| `VIEW` | Define graphics viewport |
-| `WINDOW` | Define logical coordinate system |
-
 **NOW SUPPORTED:**
+- `PCOPY` - Copy video pages
 - `GET (graphics)` - Capture screen region to array
 - `PUT (graphics)` - Display array as sprite on screen
 - `PALETTE` / `PALETTE USING` - Modify color palette entries
 - `VIEW PRINT` - Define text viewport
 - `SCREEN` modes 0, 1, 2, 7, 8, 9, 10, 11, 12, 13
 - `PRESET` and `DRAW`
+- `VIEW` - Define graphics viewport
+- `WINDOW` - Define logical coordinate system
 
 ---
 
@@ -33,21 +30,8 @@ This document lists QBasic 4.5 features and instructions that are **not currentl
 
 ## File I/O
 
-| Command | Description |
-|---------|-------------|
-| `GET #` | Read binary record from file (sequential only) |
-| `PUT #` | Write binary record to file (sequential only) |
-| `SEEK` | Set file position |
-| `LOC` | Get current file position |
-| `KILL` | Delete file |
-| `NAME` | Rename file |
-| `FILES` | List directory contents |
-| `CHDIR` | Change directory |
-| `MKDIR` | Create directory |
-| `RMDIR` | Remove directory |
-
 **NOW SUPPORTED:**
-- `OPEN` - Open file for INPUT, OUTPUT, APPEND
+- `OPEN` - Open file for INPUT, OUTPUT, APPEND, BINARY, RANDOM
 - `CLOSE` - Close file
 - `INPUT #` - Read from file
 - `LINE INPUT #` - Read line from file
@@ -56,19 +40,26 @@ This document lists QBasic 4.5 features and instructions that are **not currentl
 - `LOF` - Get file length
 - `EOF` - Check for end of file
 - `FREEFILE` - Get next available file number
+- `SEEK` - Set file position
+- `LOC` - Get current file position
+- `KILL` - Delete file
+- `NAME` - Rename file
+- `FILES` - List directory contents
+- `CHDIR` - Change directory
+- `MKDIR` - Create directory
+- `RMDIR` - Remove directory
+- `GET #` - Read binary record from file
+- `PUT #` - Write binary record to file
 
 ---
 
 ## User Input
 
-| Command | Description |
-|---------|-------------|
-| `INPUT$(n, #filenum)` | Read characters from file (only file form) |
-
 **NOW SUPPORTED:**
 - `INPUT` - Read keyboard input
 - `LINE INPUT` - Read entire line from keyboard
 - `INPUT$(n)` - Read n characters from keyboard
+- `INPUT$(n, #filenum)` - Read n characters from file
 
 ---
 
@@ -90,13 +81,10 @@ This document lists QBasic 4.5 features and instructions that are **not currentl
 
 ## Advanced Control Flow
 
-| Command | Description |
-|---------|-------------|
-| `ERROR` | Trigger runtime error |
-
 **NOW SUPPORTED:**
 - `ON ERROR GOTO` - Error handler
 - `RESUME` / `RESUME NEXT` - Resume after error
+- `ERROR` - Trigger runtime error
 - `ON...GOTO` and `ON...GOSUB` - Computed branching
 - Single-line `IF...THEN...ELSE` statements
 - Nested `SELECT CASE` blocks
@@ -119,13 +107,6 @@ This document lists QBasic 4.5 features and instructions that are **not currentl
 
 ## Memory and System
 
-| Command | Description |
-|---------|-------------|
-| `CLEAR` | Clear variables and set stack |
-| `VARPTR` | Get variable address |
-| `VARSEG` | Get variable segment |
-| `SADD` | Get string address |
-
 **NOW SUPPORTED:**
 - `PEEK` / `POKE` - Read/write emulated memory
 - `DEF SEG` - Set memory segment (emulated)
@@ -134,23 +115,24 @@ This document lists QBasic 4.5 features and instructions that are **not currentl
 - `LBOUND`, `UBOUND` - Array bounds
 - `REDIM` - Resize arrays
 - `OPTION BASE` - Set default array base
+- `CLEAR` - Clear variables and reset stacks
+- `VARPTR` - Get variable address (emulated)
+- `VARSEG` - Get variable segment (emulated)
+- `SADD` - Get string address (emulated)
 
 ---
 
 ## Program Execution
 
-| Command | Description |
-|---------|-------------|
-| `RUN` | Run program |
-| `CHAIN` | Load and run another program |
-| `SHELL` | Execute DOS command |
-| `SYSTEM` | Exit to operating system |
-| `CONT` | Continue after STOP |
-| `TRON` / `TROFF` | Trace debugging |
-
 **NOW SUPPORTED:**
 - `STOP` - Stop program execution
 - `END` - End program
+- `SHELL` - Execute shell command
+- `SYSTEM` - Exit to operating system
+- `RUN` - Run/restart program (from label or beginning)
+- `CHAIN` - Load and run another program (preserves variables)
+- `CONT` - Continue after STOP
+- `TRON` / `TROFF` - Trace debugging (prints line numbers)
 
 ---
 
@@ -170,17 +152,14 @@ This document lists QBasic 4.5 features and instructions that are **not currentl
 
 ## Printing and Screen
 
-| Command | Description |
-|---------|-------------|
-| `LPRINT` | Print to printer |
-| `LPRINT USING` | Formatted printer output |
-
 **NOW SUPPORTED:**
 - `WIDTH` - Set screen width
 - `PRINT USING` - Formatted output
 - `CSRLIN`, `POS(0)` - Cursor position
 - `TAB(n)`, `SPC(n)` - Print spacing
 - `LOCATE` - Position cursor
+- `LPRINT` - Print to printer (outputs to console)
+- `LPRINT USING` - Formatted printer output (outputs to console)
 
 ---
 
@@ -195,12 +174,11 @@ This document lists QBasic 4.5 features and instructions that are **not currentl
 
 ## Binary/Random File Operations
 
-| Command | Description |
-|----------|-------------|
-| `FIELD` | Define record fields |
-| `LSET` / `RSET` | Justify string in field |
-| `MKI$`, `MKL$`, `MKS$`, `MKD$` | Convert number to string |
-| `CVI`, `CVL`, `CVS`, `CVD` | Convert string to number |
+**NOW SUPPORTED:**
+- `MKI$`, `MKL$`, `MKS$`, `MKD$` - Convert number to binary string
+- `CVI`, `CVL`, `CVS`, `CVD` - Convert binary string to number
+- `FIELD` - Define record fields for random access files
+- `LSET` / `RSET` - Justify string in field variable
 
 ---
 
@@ -209,10 +187,7 @@ This document lists QBasic 4.5 features and instructions that are **not currentl
 **NOW SUPPORTED:**
 - `ENVIRON$` - Read environment variable
 - `COMMAND$` - Get command line arguments
-
-| Command | Description |
-|---------|-------------|
-| `ENVIRON` | Set environment variable |
+- `ENVIRON` - Set environment variable
 
 ---
 
@@ -232,21 +207,22 @@ Note: These are stubbed for compatibility but don't perform actual port I/O.
 | Command | Description |
 |---------|-------------|
 | `COMMON` | Share variables between modules (use COMMON SHARED instead) |
-| `$INCLUDE` | Include external file |
-| `$DYNAMIC` / `$STATIC` | Array storage declarations |
-| `KEY` / `KEY(n) ON/OFF` | Function key handling |
-| `ON KEY(n) GOSUB` | Key event handler |
 | `STRIG` / `STICK` | Joystick functions |
 | `ON STRIG GOSUB` | Joystick event handler |
 | `PEN` / `ON PEN GOSUB` | Light pen input |
-| `ON TIMER GOSUB` | Timer event handler |
-| `TIMER ON/OFF` | Enable/disable timer events |
-| `PLAY(n)` | Get background music queue |
 | `ON PLAY GOSUB` | Music event handler |
 
 **NOW SUPPORTED:**
 - `DEF type` (DEFINT, DEFSNG, etc.) - Ignored, uses dynamic typing
 - `COMMON SHARED` / `DIM SHARED` - Declare shared variables
+- `ON TIMER GOSUB` - Timer event handler
+- `TIMER ON/OFF/STOP` - Enable/disable timer events
+- `$INCLUDE` - Include external file (accepted, parsed during loading)
+- `$DYNAMIC` / `$STATIC` - Array storage declarations (accepted, Python handles automatically)
+- `KEY n, string$` - Define function key string
+- `KEY(n) ON/OFF/STOP` - Enable/disable key events
+- `ON KEY(n) GOSUB` - Key event handler
+- `PLAY(n)` - Get background music queue count (returns 0)
 
 ---
 
@@ -270,11 +246,19 @@ Some hardware-specific features (PEEK/POKE, port I/O) are emulated or stubbed fo
 - Nested SELECT CASE blocks
 - GOSUB/RETURN and SUB/FUNCTION procedures
 - Array parameters to procedures (arr() syntax)
-- Graphics: SCREEN modes, LINE, CIRCLE, PSET, GET/PUT sprites, PALETTE
+- Graphics: SCREEN modes, LINE, CIRCLE, PSET, GET/PUT sprites, PALETTE, VIEW, WINDOW
 - Sound: SOUND, BEEP, PLAY (MML)
-- File I/O: OPEN, CLOSE, INPUT#, PRINT#, WRITE#, EOF, LOF
+- File I/O: OPEN, CLOSE, INPUT#, PRINT#, WRITE#, EOF, LOF, FIELD, LSET, RSET
 - User-defined types (TYPE...END TYPE)
 - Error handling (ON ERROR GOTO, RESUME)
 - Integer division operator (\)
 - Hex/octal/binary literals (&H, &O, &B)
 - Numeric labels with colons (1:, 100:)
+- Program control: SHELL, SYSTEM, CLEAR, RUN, CHAIN
+- Environment: ENVIRON (set), ENVIRON$ (read)
+- Timer events: ON TIMER GOSUB, TIMER ON/OFF/STOP
+- Printer output: LPRINT, LPRINT USING (outputs to console)
+- Debugging: TRON/TROFF trace mode, CONT to continue after STOP
+- Memory functions: VARPTR, VARSEG, SADD (emulated addresses)
+- Function key handling: KEY, KEY(n) ON/OFF, ON KEY(n) GOSUB
+- Metacommands: $INCLUDE, $DYNAMIC, $STATIC
