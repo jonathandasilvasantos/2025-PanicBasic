@@ -100,13 +100,17 @@ _assign_re = re.compile(r'^(?:LET\s+)?([a-zA-Z_][a-zA-Z0-9_]*[\$%!#&]?(?:\s*\([^
 _assign_lhs_array_re = re.compile(r'([a-zA-Z_][a-zA-Z0-9_]*[\$%!#&]?)\s*\(([^)]+)\)')
 
 
+# LINE regex - use balanced parens matching for nested expressions like enemyX(i)
 _line_re = re.compile(
-    r"LINE\s*(?:\((.+?)\))?\s*-\s*\((.+?)\)\s*(?:,(.*))?$", re.IGNORECASE)
+    r"LINE\s*(?:\(((?:[^()]|\((?:[^()]|\([^()]*\))*\))*)\))?\s*-\s*\(((?:[^()]|\((?:[^()]|\([^()]*\))*\))*)\)\s*(?:,(.*))?$", re.IGNORECASE)
+# CIRCLE regex - capture coordinates with balanced parens, then rest of options
 _circle_re = re.compile(
-    r"CIRCLE\s*\(([^,]+),([^)]+)\)\s*,\s*([^,]+)\s*(?:,\s*([^,]*))?\s*(?:,\s*([^,]*))?\s*(?:,\s*([^,]*))?\s*(?:,\s*([^,]*))?\s*(?:,\s*(F|BF))?", re.IGNORECASE)
-_paint_re = re.compile(r"PAINT\s*\(([^,]+),([^)]+)\)\s*(?:,\s*([^,]+))?(?:,\s*([^,]+))?", re.IGNORECASE)
+    r"CIRCLE\s*\(((?:[^()]|\((?:[^()]|\([^()]*\))*\))*)\)\s*,\s*(.+)$", re.IGNORECASE)
+# PAINT regex - capture coordinates with balanced parens
+_paint_re = re.compile(r"PAINT\s*\(((?:[^()]|\((?:[^()]|\([^()]*\))*\))*)\)\s*(?:,\s*(.+))?$", re.IGNORECASE)
+# PSET regex - match PSET(...), optionally with color - use balanced parens matching
 _pset_re = re.compile(
-    r"PSET\s*\(\s*([^,]+)\s*,\s*([^)]+)\s*\)\s*(?:,\s*(.+))?", re.IGNORECASE)
+    r"PSET\s*\(\s*((?:[^()]|\((?:[^()]|\([^()]*\))*\))*)\s*\)\s*(?:,\s*(.+))?$", re.IGNORECASE)
 _locate_re = re.compile(r"LOCATE\s*(\d+|\S[^,]*?)?(?:,\s*(\d+|\S[^,]*?))?", re.IGNORECASE) # Allow expressions for row/col
 _print_re = re.compile(r"PRINT\s?(.*)", re.IGNORECASE)
 _if_re = re.compile(r"IF\s+(.+?)\s+THEN(.*)", re.IGNORECASE)
@@ -151,8 +155,9 @@ _on_gosub_re = re.compile(r"ON\s+(.+?)\s+GOSUB\s+(.+)", re.IGNORECASE)
 _beep_re = re.compile(r"BEEP", re.IGNORECASE)
 _sound_re = re.compile(r"SOUND\s+([^,]+)\s*,\s*(.+)", re.IGNORECASE)
 
-# PRESET - like PSET but uses background color by default
-_preset_re = re.compile(r"PRESET\s*\(\s*([^,]+)\s*,\s*([^)]+)\s*\)\s*(?:,\s*(.+))?", re.IGNORECASE)
+# PRESET - like PSET but uses background color by default - use balanced parens matching
+_preset_re = re.compile(
+    r"PRESET\s*\(\s*((?:[^()]|\((?:[^()]|\([^()]*\))*\))*)\s*\)\s*(?:,\s*(.+))?$", re.IGNORECASE)
 
 # ERASE - erase arrays
 _erase_re = re.compile(r"ERASE\s+(.+)", re.IGNORECASE)
@@ -2083,9 +2088,23 @@ class BasicInterpreter:
         if m_circle and self.surface:
             try:
                 # CIRCLE (x,y), radius [,color [,start, end [,aspect [,F]]]]
-                cx_e, cy_e, r_e = m_circle.group(1), m_circle.group(2), m_circle.group(3)
-                color_e, start_e, end_e, aspect_e = m_circle.group(4), m_circle.group(5), m_circle.group(6), m_circle.group(7)
-                fill_e = m_circle.group(8)  # "F" or "BF" for filled
+                coords_str = m_circle.group(1)
+                options_str = m_circle.group(2)
+
+                # Parse coordinates using _split_args for nested parens
+                coords = _split_args(coords_str)
+                if len(coords) < 2:
+                    print(f"Error in CIRCLE: expected 2 coordinates, got {len(coords)}"); self.running = False; return False
+                cx_e, cy_e = coords[0], coords[1]
+
+                # Parse options: radius, color, start, end, aspect, fill
+                opts = _split_args(options_str)
+                r_e = opts[0] if len(opts) > 0 else "0"
+                color_e = opts[1] if len(opts) > 1 else None
+                start_e = opts[2] if len(opts) > 2 else None
+                end_e = opts[3] if len(opts) > 3 else None
+                aspect_e = opts[4] if len(opts) > 4 else None
+                fill_e = opts[5] if len(opts) > 5 else None
 
                 center_x = int(self.eval_expr(cx_e.strip()))
                 center_y = int(self.eval_expr(cy_e.strip()))
@@ -2122,8 +2141,21 @@ class BasicInterpreter:
         m_paint = _paint_re.match(statement)
         if m_paint and self.surface:
              try:
-                px_e, py_e = m_paint.group(1), m_paint.group(2)
-                fill_color_e, border_color_e = m_paint.group(3), m_paint.group(4)
+                coords_str = m_paint.group(1)
+                options_str = m_paint.group(2)
+
+                # Parse coordinates using _split_args for nested parens
+                coords = _split_args(coords_str)
+                if len(coords) < 2:
+                    print(f"Error in PAINT: expected 2 coordinates, got {len(coords)}"); self.running = False; return False
+                px_e, py_e = coords[0], coords[1]
+
+                # Parse options: fill_color, border_color
+                fill_color_e, border_color_e = None, None
+                if options_str:
+                    opts = _split_args(options_str)
+                    fill_color_e = opts[0] if len(opts) > 0 else None
+                    border_color_e = opts[1] if len(opts) > 1 else None
 
                 start_x = int(self.eval_expr(px_e.strip()))
                 start_y = int(self.eval_expr(py_e.strip()))
@@ -2160,8 +2192,14 @@ class BasicInterpreter:
         m_pset = _pset_re.match(statement)
         if m_pset and self.surface:
             try:
-                px_e, py_e = m_pset.group(1), m_pset.group(2)
-                color_e = m_pset.group(3)
+                coords_str = m_pset.group(1)
+                color_e = m_pset.group(2)
+
+                # Split coordinates using _split_args to handle nested parentheses
+                coords = _split_args(coords_str)
+                if len(coords) < 2:
+                    print(f"Error in PSET: expected 2 coordinates, got {len(coords)}"); self.running = False; return False
+                px_e, py_e = coords[0], coords[1]
 
                 px = int(self.eval_expr(px_e.strip()))
                 py = int(self.eval_expr(py_e.strip()))
@@ -2184,8 +2222,14 @@ class BasicInterpreter:
         m_preset = _preset_re.match(statement)
         if m_preset and self.surface:
             try:
-                px_e, py_e = m_preset.group(1), m_preset.group(2)
-                color_e = m_preset.group(3)
+                coords_str = m_preset.group(1)
+                color_e = m_preset.group(2)
+
+                # Split coordinates using _split_args to handle nested parentheses
+                coords = _split_args(coords_str)
+                if len(coords) < 2:
+                    print(f"Error in PRESET: expected 2 coordinates, got {len(coords)}"); self.running = False; return False
+                px_e, py_e = coords[0], coords[1]
 
                 px = int(self.eval_expr(px_e.strip()))
                 py = int(self.eval_expr(py_e.strip()))
