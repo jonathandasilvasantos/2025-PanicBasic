@@ -3,9 +3,17 @@ import re
 import random
 import time
 import math
+import os
+import struct
+import array
+import glob
+import subprocess
+import shlex
+import sys
+from datetime import datetime
 from typing import List, Optional, Tuple, Dict, Any
 from pygame.locals import KEYDOWN, QUIT, VIDEORESIZE
-from collections import deque
+from collections import deque, OrderedDict
 
 # Try to import numpy for faster array operations
 try:
@@ -45,8 +53,54 @@ DEFAULT_SCREEN_HEIGHT = 200
 MAX_STEPS_PER_FRAME = 2000  # Increased from 500 for better performance
 PRINT_TAB_WIDTH = 14
 
+# --- LRU Cache Implementation ---
+class LRUCache:
+    """Simple LRU (Least Recently Used) cache using OrderedDict.
+
+    Provides bounded caching with automatic eviction of least recently used items
+    when the cache reaches its maximum size. Thread-safe for single-threaded use.
+
+    Args:
+        maxsize: Maximum number of items to store in the cache (default: 10000)
+    """
+
+    def __init__(self, maxsize: int = 10000):
+        self.maxsize = maxsize
+        self._cache: OrderedDict = OrderedDict()
+
+    def get(self, key, default=None):
+        """Get item from cache, moving it to end (most recently used)."""
+        if key in self._cache:
+            self._cache.move_to_end(key)
+            return self._cache[key]
+        return default
+
+    def __contains__(self, key) -> bool:
+        return key in self._cache
+
+    def __getitem__(self, key):
+        self._cache.move_to_end(key)
+        return self._cache[key]
+
+    def __setitem__(self, key, value):
+        if key in self._cache:
+            self._cache.move_to_end(key)
+        self._cache[key] = value
+        # Evict oldest items if over capacity
+        while len(self._cache) > self.maxsize:
+            self._cache.popitem(last=False)
+
+    def clear(self):
+        """Clear all items from the cache."""
+        self._cache.clear()
+
+    def __len__(self) -> int:
+        return len(self._cache)
+
+
 # --- Compiled Expression Cache ---
-_compiled_expr_cache: Dict[str, Any] = {}  # Cache for compiled code objects
+# Using LRU cache to prevent unbounded memory growth
+_compiled_expr_cache: LRUCache = LRUCache(maxsize=10000)  # Cache for compiled code objects
 
 # --- Precompiled Regex Patterns ---
 
@@ -380,7 +434,9 @@ _on_timer_re = re.compile(r"ON\s+TIMER\s*\(([^)]+)\)\s+GOSUB\s+([a-zA-Z0-9_]+)",
 _date_assign_re = re.compile(r"DATE\$\s*=\s*(.+)", re.IGNORECASE)
 _time_assign_re = re.compile(r"TIME\$\s*=\s*(.+)", re.IGNORECASE)
 
-_expr_cache: Dict[str, str] = {}
+# Expression caches using LRU to prevent unbounded memory growth
+_expr_cache: LRUCache = LRUCache(maxsize=10000)  # Cache for BASIC to Python expression conversion
+_identifier_cache: LRUCache = LRUCache(maxsize=5000)  # Cache for identifier name conversions
 _python_keywords = {'and', 'or', 'not', 'in', 'is', 'lambda', 'if', 'else', 'elif', 'while', 'for', 'try', 'except', 'finally', 'with', 'as', 'def', 'class', 'import', 'from', 'pass', 'break', 'continue', 'return', 'yield', 'global', 'nonlocal', 'assert', 'del', 'True', 'False', 'None'}
 # Python builtins used in generated code (for array indexing) - keep lowercase
 _python_builtins_used = {'int'}
@@ -418,19 +474,37 @@ _basic_function_names = {
 # --- Expression Conversion Logic ---
 
 def _basic_to_python_identifier(basic_name_str: str) -> str:
-    """Converts a BASIC identifier to a Python-compatible identifier for eval."""
-    name_upper = basic_name_str.upper()
-    if name_upper.endswith('$'):
-        return name_upper[:-1] + "_STR"
-    elif name_upper.endswith('%'):
-        return name_upper[:-1] + "_INT"
-    elif name_upper.endswith('#'):
-        return name_upper[:-1] + "_DBL"  # Double precision
-    elif name_upper.endswith('!'):
-        return name_upper[:-1] + "_SNG"  # Single precision
-    elif name_upper.endswith('&'):
-        return name_upper[:-1] + "_LNG"  # Long integer
-    return name_upper
+    """Converts a BASIC identifier to a Python-compatible identifier for eval.
+
+    Results are cached for performance since this function is called frequently
+    during expression evaluation. The cache is case-insensitive to avoid storing
+    redundant entries for 'Var', 'VAR', and 'var' which all produce the same result.
+    """
+    # Normalize to uppercase for case-insensitive caching
+    # This avoids storing separate cache entries for 'Var', 'VAR', 'var', etc.
+    normalized = basic_name_str.upper()
+
+    # Check cache first using normalized key
+    if normalized in _identifier_cache:
+        return _identifier_cache[normalized]
+
+    # Compute result based on type suffix
+    if normalized.endswith('$'):
+        result = normalized[:-1] + "_STR"
+    elif normalized.endswith('%'):
+        result = normalized[:-1] + "_INT"
+    elif normalized.endswith('#'):
+        result = normalized[:-1] + "_DBL"  # Double precision
+    elif normalized.endswith('!'):
+        result = normalized[:-1] + "_SNG"  # Single precision
+    elif normalized.endswith('&'):
+        result = normalized[:-1] + "_LNG"  # Long integer
+    else:
+        result = normalized
+
+    # Store in cache using normalized key
+    _identifier_cache[normalized] = result
+    return result
 
 def _convert_identifier_in_expr(match: re.Match) -> str:
     """
@@ -687,6 +761,10 @@ class BasicInterpreter:
             4: (170,0,0), 5: (170,0,170), 6: (170,85,0), 7: (170,170,170),
             8: (85,85,85), 9: (85,85,255), 10: (85,255,85), 11: (85,255,255),
             12: (255,85,85), 13: (255,85,255), 14: (255,255,85), 15: (255,255,255)
+        }
+        # Reverse lookup for O(1) color number lookup in point() function
+        self._reverse_colors: Dict[Tuple[int, int, int], int] = {
+            rgb: num for num, rgb in self.colors.items()
         }
         self.current_fg_color: int = 7
         self.current_bg_color: int = 0
@@ -997,14 +1075,12 @@ class BasicInterpreter:
         """DATE$ - Returns current date as MM-DD-YYYY (or custom date if set)."""
         if self.custom_date is not None:
             return self.custom_date
-        from datetime import datetime
         return datetime.now().strftime("%m-%d-%Y")
 
     def _basic_time(self) -> str:
         """TIME$ - Returns current time as HH:MM:SS (or custom time if set)."""
         if self.custom_time is not None:
             return self.custom_time
-        from datetime import datetime
         return datetime.now().strftime("%H:%M:%S")
 
     def _basic_csrlin(self) -> int:
@@ -1061,7 +1137,6 @@ class BasicInterpreter:
 
     def _basic_environ(self, var_name: str) -> str:
         """ENVIRON$(varname) - Returns the value of an environment variable."""
-        import os
         return os.environ.get(str(var_name), "")
 
     def _basic_input_dollar(self, *args) -> str:
@@ -1131,7 +1206,6 @@ class BasicInterpreter:
             fh = self.file_handles[fnum]
             if hasattr(fh, 'file_path'):
                 try:
-                    import os
                     return os.path.getsize(fh.file_path)
                 except:
                     pass
@@ -1177,48 +1251,40 @@ class BasicInterpreter:
 
     def _basic_mki(self, value: int) -> str:
         """MKI$(n) - Convert integer to 2-byte string."""
-        import struct
         return struct.pack('<h', int(value)).decode('latin-1')
 
     def _basic_mkl(self, value: int) -> str:
         """MKL$(n) - Convert long integer to 4-byte string."""
-        import struct
         return struct.pack('<i', int(value)).decode('latin-1')
 
     def _basic_mks(self, value: float) -> str:
         """MKS$(n) - Convert single-precision float to 4-byte string."""
-        import struct
         return struct.pack('<f', float(value)).decode('latin-1')
 
     def _basic_mkd(self, value: float) -> str:
         """MKD$(n) - Convert double-precision float to 8-byte string."""
-        import struct
         return struct.pack('<d', float(value)).decode('latin-1')
 
     def _basic_cvi(self, s: str) -> int:
         """CVI(s$) - Convert 2-byte string to integer."""
-        import struct
         if len(s) < 2:
             s = s + '\0' * (2 - len(s))
         return struct.unpack('<h', s[:2].encode('latin-1'))[0]
 
     def _basic_cvl(self, s: str) -> int:
         """CVL(s$) - Convert 4-byte string to long integer."""
-        import struct
         if len(s) < 4:
             s = s + '\0' * (4 - len(s))
         return struct.unpack('<i', s[:4].encode('latin-1'))[0]
 
     def _basic_cvs(self, s: str) -> float:
         """CVS(s$) - Convert 4-byte string to single-precision float."""
-        import struct
         if len(s) < 4:
             s = s + '\0' * (4 - len(s))
         return struct.unpack('<f', s[:4].encode('latin-1'))[0]
 
     def _basic_cvd(self, s: str) -> float:
         """CVD(s$) - Convert 8-byte string to double-precision float."""
-        import struct
         if len(s) < 8:
             s = s + '\0' * (8 - len(s))
         return struct.unpack('<d', s[:8].encode('latin-1'))[0]
@@ -1539,7 +1605,8 @@ class BasicInterpreter:
         self.for_stack.clear()
         self.gosub_stack.clear()
         _expr_cache.clear()
-        _memoized_arg_splits.clear() # Clear arg split cache
+        _memoized_arg_splits.clear()  # Clear arg split cache
+        _identifier_cache.clear()  # Clear identifier conversion cache
         self.if_level = 0
         self.if_skip_level = -1
         self.if_executed.clear()
@@ -1722,15 +1789,22 @@ class BasicInterpreter:
             self.last_key = chr(27)
 
     def point(self, x_expr, y_expr):
+        """Get the color number of a pixel at coordinates (x, y).
+
+        Uses a reverse color lookup dictionary for O(1) performance instead of
+        iterating through all colors.
+
+        Returns:
+            Color number (0-15) if the pixel color matches a palette color,
+            -1 if coordinates are out of bounds or color not in palette.
+        """
         px, py = int(x_expr), int(y_expr)
         if self.surface:
             if 0 <= px < self.screen_width and 0 <= py < self.screen_height:
                 pixel_tuple = self.surface.get_at((px, py))
                 pixel_rgb = pixel_tuple[:3]
-                for num, col_rgb in self.colors.items():
-                    if col_rgb == pixel_rgb:
-                        return num
-                return -1
+                # O(1) lookup using reverse color dictionary
+                return self._reverse_colors.get(pixel_rgb, -1)
             return -1
         return -1
 
@@ -1884,7 +1958,6 @@ class BasicInterpreter:
             except NameError as e:
                 # Extract the undefined variable name from the error message
                 # Format: "name 'VARNAME' is not defined"
-                import re
                 match = re.search(r"name '([^']+)' is not defined", str(e))
                 if match:
                     undefined_var = match.group(1)
@@ -1982,6 +2055,26 @@ class BasicInterpreter:
             scale_y = self.screen_height / self.window_height if self.window_height > 0 else 1
             self.pen_current_x = int(x * scale_x)
             self.pen_current_y = int(y * scale_y)
+
+    def _runtime_error(self, msg: str, pc: int) -> bool:
+        """Handle a runtime error - print message, stop execution, and return False.
+
+        If an ON ERROR GOTO handler is set, raises BasicRuntimeError instead of
+        stopping execution, allowing the handler to process the error.
+
+        Args:
+            msg: The error message (without 'Error:' prefix or PC suffix)
+            pc: The program counter (line number) where the error occurred
+
+        Returns:
+            Always returns False to indicate execution should stop
+        """
+        full_msg = f"Error: {msg} at PC {pc}"
+        if self.error_handler_label:
+            raise BasicRuntimeError(full_msg)
+        print(full_msg)
+        self.running = False
+        return False
 
     def _should_execute(self) -> bool:
         if self.if_skip_level != -1:
@@ -2383,15 +2476,16 @@ class BasicInterpreter:
              next_var = next_var_orig.upper() if next_var_orig else None
 
              if not self.for_stack:
-                 print(f"Error: NEXT without FOR at PC {current_pc_num}"); self.running = False; return False
-            
+                 return self._runtime_error("NEXT without FOR", current_pc_num)
+
              loop_info = self.for_stack[-1]
              if loop_info.get("placeholder"): # Should not happen if _should_execute is true
-                 print(f"Error: NEXT encountered placeholder FOR loop info at PC {current_pc_num}"); self.running = False; self.for_stack.pop(); return False
+                 self.for_stack.pop()
+                 return self._runtime_error("NEXT encountered placeholder FOR loop info", current_pc_num)
 
              active_for_var = loop_info["var"]
              if next_var and next_var != active_for_var:
-                 print(f"Error: NEXT variable '{next_var_orig}' does not match FOR variable '{active_for_var}' at PC {current_pc_num}"); self.running = False; return False
+                 return self._runtime_error(f"NEXT variable '{next_var_orig}' does not match FOR variable '{active_for_var}'", current_pc_num)
             
              current_val = self.variables.get(active_for_var, 0) # Default to 0 if var somehow missing
              new_val = current_val + loop_info["step"]
@@ -2414,10 +2508,11 @@ class BasicInterpreter:
         # EXIT FOR - break out of innermost FOR loop
         if _exit_for_re.fullmatch(statement):
             if not self.for_stack:
-                print(f"Error: EXIT FOR without FOR at PC {current_pc_num}"); self.running = False; return False
+                return self._runtime_error("EXIT FOR without FOR", current_pc_num)
             loop_info = self.for_stack[-1]
             if loop_info.get("placeholder"):
-                print(f"Error: EXIT FOR encountered placeholder FOR info at PC {current_pc_num}"); self.running = False; self.for_stack.pop(); return False
+                self.for_stack.pop()
+                return self._runtime_error("EXIT FOR encountered placeholder FOR info", current_pc_num)
             self.for_stack.pop()  # Remove the FOR loop from stack
             # Skip to the corresponding NEXT statement
             self._skip_to_next(current_pc_num)
@@ -2426,10 +2521,11 @@ class BasicInterpreter:
         # EXIT DO - break out of innermost DO loop
         if _exit_do_re.fullmatch(statement):
             if not self.loop_stack:
-                print(f"Error: EXIT DO without DO at PC {current_pc_num}"); self.running = False; return False
+                return self._runtime_error("EXIT DO without DO", current_pc_num)
             loop_info = self.loop_stack[-1]
             if loop_info.get("placeholder"):
-                print(f"Error: EXIT DO encountered placeholder DO info at PC {current_pc_num}"); self.running = False; self.loop_stack.pop(); return False
+                self.loop_stack.pop()
+                return self._runtime_error("EXIT DO encountered placeholder DO info", current_pc_num)
             self.loop_stack.pop()  # Remove the DO loop from stack
             # Skip to the corresponding LOOP statement
             self._skip_to_loop(current_pc_num)
@@ -4126,7 +4222,6 @@ class BasicInterpreter:
                 pygame.mixer.init(frequency=22050, size=-16, channels=1)
 
             # Create a simple sine wave beep (800 Hz, 0.2 seconds)
-            import array
             sample_rate = 22050
             frequency = 800
             duration = 0.2
@@ -4166,7 +4261,6 @@ class BasicInterpreter:
             if not pygame.mixer.get_init():
                 pygame.mixer.init(frequency=22050, size=-16, channels=1)
 
-            import array
             sample_rate = 22050
             n_samples = int(sample_rate * duration)
 
@@ -4651,8 +4745,6 @@ class BasicInterpreter:
             if not pygame.mixer.get_init():
                 pygame.mixer.init(frequency=22050, size=-16, channels=1)
 
-            import array
-
             # MML parsing state
             octave = 4
             default_length = 4  # Quarter note
@@ -4806,7 +4898,6 @@ class BasicInterpreter:
             if frequency <= 0 or duration <= 0:
                 return
 
-            import array
             sample_rate = 22050
             n_samples = int(sample_rate * duration)
             if n_samples <= 0:
@@ -5762,7 +5853,6 @@ class BasicInterpreter:
 
     def _handle_get_file(self, match, pc: int) -> bool:
         """Handle GET #filenum[, recordnum], variable - read binary data from file."""
-        import struct
         try:
             file_num = int(match.group(1))
             record_num = match.group(2)
@@ -5836,7 +5926,6 @@ class BasicInterpreter:
 
     def _handle_put_file(self, match, pc: int) -> bool:
         """Handle PUT #filenum[, recordnum], variable - write binary data to file."""
-        import struct
         try:
             file_num = int(match.group(1))
             record_num = match.group(2)
@@ -5886,7 +5975,6 @@ class BasicInterpreter:
 
     def _handle_kill(self, filename_expr: str, pc: int) -> bool:
         """Handle KILL filename - delete a file."""
-        import os
         try:
             # Evaluate filename
             if filename_expr.startswith('"') and filename_expr.endswith('"'):
@@ -5908,7 +5996,6 @@ class BasicInterpreter:
 
     def _handle_name(self, old_name_expr: str, new_name_expr: str, pc: int) -> bool:
         """Handle NAME oldname AS newname - rename a file."""
-        import os
         try:
             # Evaluate old filename
             if old_name_expr.startswith('"') and old_name_expr.endswith('"'):
@@ -5937,7 +6024,6 @@ class BasicInterpreter:
 
     def _handle_mkdir(self, dir_expr: str, pc: int) -> bool:
         """Handle MKDIR dirname - create a directory."""
-        import os
         try:
             # Evaluate directory name
             if dir_expr.startswith('"') and dir_expr.endswith('"'):
@@ -5959,7 +6045,6 @@ class BasicInterpreter:
 
     def _handle_rmdir(self, dir_expr: str, pc: int) -> bool:
         """Handle RMDIR dirname - remove a directory."""
-        import os
         try:
             # Evaluate directory name
             if dir_expr.startswith('"') and dir_expr.endswith('"'):
@@ -5985,7 +6070,6 @@ class BasicInterpreter:
 
     def _handle_chdir(self, dir_expr: str, pc: int) -> bool:
         """Handle CHDIR dirname - change current directory."""
-        import os
         try:
             # Evaluate directory name
             if dir_expr.startswith('"') and dir_expr.endswith('"'):
@@ -6007,8 +6091,6 @@ class BasicInterpreter:
 
     def _handle_files(self, pattern_expr: Optional[str], pc: int) -> bool:
         """Handle FILES [pattern] - list directory contents."""
-        import os
-        import glob
         try:
             # Evaluate pattern if provided
             if pattern_expr:
@@ -6096,8 +6178,6 @@ class BasicInterpreter:
     def _handle_shell(self, cmd_expr: Optional[str], pc: int) -> bool:
         """Handle SHELL statement - execute shell command.
         SHELL ["command"] - executes the command or opens an interactive shell."""
-        import subprocess
-        import shlex
         try:
             if cmd_expr and cmd_expr.strip():
                 cmd = str(self.eval_expr(cmd_expr.strip()))
@@ -6424,7 +6504,6 @@ class BasicInterpreter:
     def _handle_environ_set(self, expr: str, pc: int) -> bool:
         """Handle ENVIRON statement - set environment variable.
         ENVIRON "NAME=VALUE" or ENVIRON name$ where name$ contains "NAME=VALUE"."""
-        import os
         try:
             env_str = str(self.eval_expr(expr))
             if not self.running:
@@ -6882,7 +6961,6 @@ def run_interpreter(filename: str) -> None:
     pygame.quit()
 
 if __name__ == '__main__':
-    import sys
     if len(sys.argv) > 1:
         run_interpreter(sys.argv[1])
     else:

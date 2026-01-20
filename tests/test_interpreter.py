@@ -19,9 +19,9 @@ pygame.font.init()
 pygame.display.set_mode((800, 600))
 
 from interpreter import (
-    BasicInterpreter, convert_basic_expr, _protect_strings,
+    BasicInterpreter, BasicRuntimeError, LRUCache, convert_basic_expr, _protect_strings,
     _restore_strings, _basic_to_python_identifier,
-    _expr_cache, _compiled_expr_cache
+    _expr_cache, _compiled_expr_cache, _identifier_cache
 )
 
 
@@ -32,6 +32,7 @@ class TestExpressionConversion(unittest.TestCase):
         """Clear caches before each test."""
         _expr_cache.clear()
         _compiled_expr_cache.clear()
+        _identifier_cache.clear()
 
     def test_simple_variable(self):
         """Test simple variable conversion."""
@@ -156,8 +157,140 @@ class TestStringProtection(unittest.TestCase):
         self.assertEqual(strings[0], '"Score: 100"')
 
 
+class TestLRUCache(unittest.TestCase):
+    """Test LRU cache implementation."""
+
+    def test_basic_set_and_get(self):
+        """Test basic cache set and get operations."""
+        cache = LRUCache(maxsize=10)
+        cache["key1"] = "value1"
+        cache["key2"] = "value2"
+
+        self.assertEqual(cache["key1"], "value1")
+        self.assertEqual(cache["key2"], "value2")
+
+    def test_contains(self):
+        """Test __contains__ method."""
+        cache = LRUCache(maxsize=10)
+        cache["key1"] = "value1"
+
+        self.assertIn("key1", cache)
+        self.assertNotIn("key2", cache)
+
+    def test_get_with_default(self):
+        """Test get method with default value."""
+        cache = LRUCache(maxsize=10)
+        cache["key1"] = "value1"
+
+        self.assertEqual(cache.get("key1"), "value1")
+        self.assertIsNone(cache.get("nonexistent"))
+        self.assertEqual(cache.get("nonexistent", "default"), "default")
+
+    def test_eviction_when_full(self):
+        """Test that oldest items are evicted when cache is full."""
+        cache = LRUCache(maxsize=3)
+        cache["key1"] = "value1"
+        cache["key2"] = "value2"
+        cache["key3"] = "value3"
+
+        # Cache is full, add one more
+        cache["key4"] = "value4"
+
+        # key1 (oldest) should be evicted
+        self.assertNotIn("key1", cache)
+        self.assertIn("key2", cache)
+        self.assertIn("key3", cache)
+        self.assertIn("key4", cache)
+        self.assertEqual(len(cache), 3)
+
+    def test_lru_order_on_get(self):
+        """Test that accessing an item moves it to most recently used."""
+        cache = LRUCache(maxsize=3)
+        cache["key1"] = "value1"
+        cache["key2"] = "value2"
+        cache["key3"] = "value3"
+
+        # Access key1 to make it most recently used
+        _ = cache["key1"]
+
+        # Add a new item - key2 (now oldest) should be evicted
+        cache["key4"] = "value4"
+
+        self.assertIn("key1", cache)  # Still present (was accessed)
+        self.assertNotIn("key2", cache)  # Evicted (was oldest after key1 access)
+        self.assertIn("key3", cache)
+        self.assertIn("key4", cache)
+
+    def test_lru_order_on_set_existing(self):
+        """Test that updating an existing item moves it to most recently used."""
+        cache = LRUCache(maxsize=3)
+        cache["key1"] = "value1"
+        cache["key2"] = "value2"
+        cache["key3"] = "value3"
+
+        # Update key1 to make it most recently used
+        cache["key1"] = "updated_value1"
+
+        # Add a new item - key2 (now oldest) should be evicted
+        cache["key4"] = "value4"
+
+        self.assertIn("key1", cache)
+        self.assertEqual(cache["key1"], "updated_value1")
+        self.assertNotIn("key2", cache)
+
+    def test_clear(self):
+        """Test clear method."""
+        cache = LRUCache(maxsize=10)
+        cache["key1"] = "value1"
+        cache["key2"] = "value2"
+
+        cache.clear()
+
+        self.assertEqual(len(cache), 0)
+        self.assertNotIn("key1", cache)
+        self.assertNotIn("key2", cache)
+
+    def test_len(self):
+        """Test __len__ method."""
+        cache = LRUCache(maxsize=10)
+        self.assertEqual(len(cache), 0)
+
+        cache["key1"] = "value1"
+        self.assertEqual(len(cache), 1)
+
+        cache["key2"] = "value2"
+        self.assertEqual(len(cache), 2)
+
+    def test_expression_cache_eviction(self):
+        """Test that expression caches properly evict old entries."""
+        # Test with a small cache to verify eviction
+        small_cache = LRUCache(maxsize=5)
+
+        # Fill the cache
+        for i in range(5):
+            small_cache[f"expr{i}"] = f"result{i}"
+
+        self.assertEqual(len(small_cache), 5)
+
+        # Add more items, should evict oldest
+        for i in range(5, 10):
+            small_cache[f"expr{i}"] = f"result{i}"
+
+        self.assertEqual(len(small_cache), 5)
+        # First 5 should be evicted
+        for i in range(5):
+            self.assertNotIn(f"expr{i}", small_cache)
+        # Last 5 should remain
+        for i in range(5, 10):
+            self.assertIn(f"expr{i}", small_cache)
+
+
 class TestIdentifierConversion(unittest.TestCase):
     """Test BASIC identifier to Python identifier conversion."""
+
+    def setUp(self):
+        """Clear identifier cache before each test."""
+        _identifier_cache.clear()
 
     def test_simple_name(self):
         """Test simple variable name."""
@@ -174,6 +307,119 @@ class TestIdentifierConversion(unittest.TestCase):
         result = _basic_to_python_identifier("count%")
         self.assertEqual(result, "COUNT_INT")
 
+    def test_double_suffix(self):
+        """Test # suffix conversion (double precision)."""
+        result = _basic_to_python_identifier("value#")
+        self.assertEqual(result, "VALUE_DBL")
+
+    def test_single_suffix(self):
+        """Test ! suffix conversion (single precision)."""
+        result = _basic_to_python_identifier("rate!")
+        self.assertEqual(result, "RATE_SNG")
+
+    def test_long_suffix(self):
+        """Test & suffix conversion (long integer)."""
+        result = _basic_to_python_identifier("bignum&")
+        self.assertEqual(result, "BIGNUM_LNG")
+
+
+class TestIdentifierCaching(unittest.TestCase):
+    """Test identifier conversion caching behavior."""
+
+    def setUp(self):
+        """Clear identifier cache before each test."""
+        _identifier_cache.clear()
+
+    def test_cache_stores_result(self):
+        """Test that cache stores converted identifier."""
+        # Cache should be empty initially
+        self.assertEqual(len(_identifier_cache), 0)
+
+        # Call the function
+        result = _basic_to_python_identifier("myvar$")
+        self.assertEqual(result, "MYVAR_STR")
+
+        # Result should be cached under the normalized (uppercase) key
+        self.assertIn("MYVAR$", _identifier_cache)
+        self.assertEqual(_identifier_cache["MYVAR$"], "MYVAR_STR")
+
+    def test_cache_returns_cached_value(self):
+        """Test that cache hit returns same value."""
+        # First call
+        result1 = _basic_to_python_identifier("test%")
+        # Second call should return cached value
+        result2 = _basic_to_python_identifier("test%")
+
+        self.assertEqual(result1, result2)
+        self.assertEqual(result1, "TEST_INT")
+        # Should only be one entry in cache (stored under normalized key)
+        self.assertEqual(_identifier_cache.get("TEST%"), "TEST_INT")
+
+    def test_cache_handles_multiple_identifiers(self):
+        """Test cache with multiple different identifiers."""
+        identifiers = ["a$", "b%", "c#", "d!", "e&", "f"]
+        expected = ["A_STR", "B_INT", "C_DBL", "D_SNG", "E_LNG", "F"]
+
+        for ident, exp in zip(identifiers, expected):
+            result = _basic_to_python_identifier(ident)
+            self.assertEqual(result, exp)
+
+        # All should be cached
+        self.assertEqual(len(_identifier_cache), 6)
+
+    def test_cache_clear_removes_entries(self):
+        """Test that clearing cache removes entries."""
+        _basic_to_python_identifier("var1")
+        _basic_to_python_identifier("var2$")
+
+        self.assertEqual(len(_identifier_cache), 2)
+
+        _identifier_cache.clear()
+
+        self.assertEqual(len(_identifier_cache), 0)
+
+    def test_case_insensitive_cache(self):
+        """Test that cache is case-insensitive for efficiency."""
+        # Different case inputs should produce the same result
+        result1 = _basic_to_python_identifier("Var")
+        result2 = _basic_to_python_identifier("VAR")
+        result3 = _basic_to_python_identifier("var")
+
+        # All should produce same output (uppercase)
+        self.assertEqual(result1, "VAR")
+        self.assertEqual(result2, "VAR")
+        self.assertEqual(result3, "VAR")
+
+        # All case variants should share a single cache entry (normalized to uppercase)
+        # This avoids wasting memory with redundant cache entries
+        self.assertIn("VAR", _identifier_cache)
+        self.assertEqual(_identifier_cache["VAR"], "VAR")
+        # The non-normalized keys should NOT be in the cache
+        self.assertNotIn("Var", _identifier_cache)
+        self.assertNotIn("var", _identifier_cache)
+
+    def test_cache_efficiency_with_mixed_case(self):
+        """Test that mixed-case identifiers create minimal cache entries."""
+        # This tests the performance improvement of case-insensitive caching
+        _identifier_cache.clear()
+
+        # Call with many case variants of the same identifiers
+        identifiers = [
+            "score", "Score", "SCORE", "ScOrE",
+            "name$", "Name$", "NAME$", "NaMe$",
+            "count%", "Count%", "COUNT%"
+        ]
+
+        for ident in identifiers:
+            _basic_to_python_identifier(ident)
+
+        # Should only have 3 unique cache entries (one per unique normalized identifier)
+        # Not 11 entries (one per input variant)
+        self.assertEqual(len(_identifier_cache), 3)
+        self.assertIn("SCORE", _identifier_cache)
+        self.assertIn("NAME$", _identifier_cache)
+        self.assertIn("COUNT%", _identifier_cache)
+
 
 class TestInterpreterBasics(unittest.TestCase):
     """Test basic interpreter functionality."""
@@ -182,6 +428,7 @@ class TestInterpreterBasics(unittest.TestCase):
         """Create interpreter instance for testing."""
         _expr_cache.clear()
         _compiled_expr_cache.clear()
+        _identifier_cache.clear()
         self.font = pygame.font.Font(None, 16)
         self.interp = BasicInterpreter(self.font, 800, 600)
 
@@ -270,6 +517,7 @@ class TestCommandExecution(unittest.TestCase):
         """Create interpreter and reset."""
         _expr_cache.clear()
         _compiled_expr_cache.clear()
+        _identifier_cache.clear()
         self.font = pygame.font.Font(None, 16)
         self.interp = BasicInterpreter(self.font, 800, 600)
 
@@ -489,6 +737,7 @@ class TestGraphicsCommands(unittest.TestCase):
         """Create interpreter with surface."""
         _expr_cache.clear()
         _compiled_expr_cache.clear()
+        _identifier_cache.clear()
         self.font = pygame.font.Font(None, 16)
         self.interp = BasicInterpreter(self.font, 800, 600)
         self.interp.reset(["SCREEN 13"])
@@ -555,6 +804,63 @@ class TestGraphicsCommands(unittest.TestCase):
         self.interp.step()  # c = POINT
         self.assertEqual(self.interp.variables.get("C"), 4)
 
+    def test_point_all_standard_colors(self):
+        """Test POINT returns correct color numbers for all 16 standard colors."""
+        self.interp.reset(["SCREEN 13"])
+        self.interp.step()
+
+        # Test each of the 16 standard palette colors (0-15)
+        for color_num in range(16):
+            # Set a pixel with this color
+            x, y = 10 + color_num, 10
+            self.interp.reset(["SCREEN 13", f"PSET ({x}, {y}), {color_num}"])
+            self.interp.step()  # SCREEN
+            self.interp.step()  # PSET
+
+            # Verify POINT returns the correct color number
+            result = self.interp.point(x, y)
+            self.assertEqual(result, color_num,
+                f"POINT({x}, {y}) should return {color_num}, got {result}")
+
+    def test_point_returns_minus_one_for_nonstandard_color(self):
+        """Test POINT returns -1 for colors not in the standard palette."""
+        self.interp.reset(["SCREEN 13"])
+        self.interp.step()
+
+        # Manually set a pixel to a color not in the palette
+        # (128, 128, 128) is not a standard QBasic color
+        nonstandard_rgb = (128, 128, 128)
+        self.interp.surface.set_at((100, 100), nonstandard_rgb)
+
+        # POINT should return -1 for this non-palette color
+        result = self.interp.point(100, 100)
+        self.assertEqual(result, -1)
+
+    def test_point_out_of_bounds(self):
+        """Test POINT returns -1 for out-of-bounds coordinates."""
+        self.interp.reset(["SCREEN 13"])
+        self.interp.step()
+
+        # Test coordinates outside screen bounds
+        self.assertEqual(self.interp.point(-1, 50), -1)
+        self.assertEqual(self.interp.point(50, -1), -1)
+        self.assertEqual(self.interp.point(400, 50), -1)  # > 320 width
+        self.assertEqual(self.interp.point(50, 300), -1)  # > 200 height
+
+    def test_reverse_color_lookup_initialized(self):
+        """Test that the reverse color lookup dictionary is properly initialized."""
+        self.interp.reset(["SCREEN 13"])
+        self.interp.step()
+
+        # Verify reverse lookup dict exists and has all 16 colors
+        self.assertTrue(hasattr(self.interp, '_reverse_colors'))
+        self.assertEqual(len(self.interp._reverse_colors), 16)
+
+        # Verify reverse mapping is correct for all colors
+        for color_num, rgb in self.interp.colors.items():
+            self.assertIn(rgb, self.interp._reverse_colors)
+            self.assertEqual(self.interp._reverse_colors[rgb], color_num)
+
 
 class TestStringHandling(unittest.TestCase):
     """Test string operations in statements."""
@@ -563,6 +869,7 @@ class TestStringHandling(unittest.TestCase):
         """Create interpreter."""
         _expr_cache.clear()
         _compiled_expr_cache.clear()
+        _identifier_cache.clear()
         self.font = pygame.font.Font(None, 16)
         self.interp = BasicInterpreter(self.font, 800, 600)
 
@@ -625,6 +932,7 @@ class TestStatementSplitting(unittest.TestCase):
         """Create interpreter."""
         _expr_cache.clear()
         _compiled_expr_cache.clear()
+        _identifier_cache.clear()
         self.font = pygame.font.Font(None, 16)
         self.interp = BasicInterpreter(self.font, 800, 600)
 
@@ -654,6 +962,7 @@ class TestGameLoop(unittest.TestCase):
         """Create interpreter."""
         _expr_cache.clear()
         _compiled_expr_cache.clear()
+        _identifier_cache.clear()
         self.font = pygame.font.Font(None, 16)
         self.interp = BasicInterpreter(self.font, 800, 600)
 
@@ -718,6 +1027,7 @@ class TestRenderingPerformance(unittest.TestCase):
         """Create interpreter."""
         _expr_cache.clear()
         _compiled_expr_cache.clear()
+        _identifier_cache.clear()
         self.font = pygame.font.Font(None, 16)
         self.interp = BasicInterpreter(self.font, 800, 600)
 
@@ -751,6 +1061,7 @@ class TestFileSystemCommands(unittest.TestCase):
         """Create interpreter instance for testing."""
         _expr_cache.clear()
         _compiled_expr_cache.clear()
+        _identifier_cache.clear()
         self.font = pygame.font.Font(None, 16)
         self.interp = BasicInterpreter(self.font, 800, 600)
         # Create a temp directory for tests
@@ -818,6 +1129,7 @@ class TestFilePositioning(unittest.TestCase):
         """Create interpreter instance for testing."""
         _expr_cache.clear()
         _compiled_expr_cache.clear()
+        _identifier_cache.clear()
         self.font = pygame.font.Font(None, 16)
         self.interp = BasicInterpreter(self.font, 800, 600)
         # Create a temp directory for tests
@@ -878,6 +1190,7 @@ class TestPCOPY(unittest.TestCase):
         """Create interpreter instance for testing."""
         _expr_cache.clear()
         _compiled_expr_cache.clear()
+        _identifier_cache.clear()
         self.font = pygame.font.Font(None, 16)
         self.interp = BasicInterpreter(self.font, 800, 600)
 
@@ -919,6 +1232,7 @@ class TestBinaryConversion(unittest.TestCase):
         """Create interpreter instance for testing."""
         _expr_cache.clear()
         _compiled_expr_cache.clear()
+        _identifier_cache.clear()
         self.font = pygame.font.Font(None, 16)
         self.interp = BasicInterpreter(self.font, 800, 600)
 
@@ -950,6 +1264,7 @@ class TestErrorStatement(unittest.TestCase):
         """Create interpreter instance for testing."""
         _expr_cache.clear()
         _compiled_expr_cache.clear()
+        _identifier_cache.clear()
         self.font = pygame.font.Font(None, 16)
         self.interp = BasicInterpreter(self.font, 800, 600)
 
@@ -988,6 +1303,53 @@ class TestErrorStatement(unittest.TestCase):
         self.assertEqual(self.interp.variables.get("X"), 2)
 
 
+class TestRuntimeErrorHelper(unittest.TestCase):
+    """Test the _runtime_error helper method."""
+
+    def setUp(self):
+        """Create interpreter instance for testing."""
+        _expr_cache.clear()
+        _compiled_expr_cache.clear()
+        _identifier_cache.clear()
+        self.font = pygame.font.Font(None, 16)
+        self.interp = BasicInterpreter(self.font, 800, 600)
+
+    def test_runtime_error_stops_execution(self):
+        """Test that _runtime_error stops execution and returns False."""
+        self.interp.running = True
+        result = self.interp._runtime_error("Test error", 42)
+
+        self.assertFalse(result)
+        self.assertFalse(self.interp.running)
+
+    def test_runtime_error_with_handler_raises(self):
+        """Test that _runtime_error raises BasicRuntimeError when handler is set."""
+        self.interp.running = True
+        self.interp.error_handler_label = "error_handler"
+
+        with self.assertRaises(BasicRuntimeError) as context:
+            self.interp._runtime_error("Test error", 42)
+
+        self.assertIn("Test error", str(context.exception))
+        self.assertIn("PC 42", str(context.exception))
+
+    def test_runtime_error_in_program_flow(self):
+        """Test _runtime_error in actual program execution context."""
+        # Test that an error condition stops execution
+        self.interp.reset([
+            'FOR I = 1 TO 5',
+            'NEXT J',  # Wrong variable - should cause error
+            'x = 1'
+        ])
+        while self.interp.running and self.interp.pc < len(self.interp.program_lines):
+            self.interp.step()
+
+        # Execution should have stopped due to error
+        self.assertFalse(self.interp.running)
+        # x should not be set because execution stopped
+        self.assertNotIn("X", self.interp.variables)
+
+
 class TestClearStatement(unittest.TestCase):
     """Test CLEAR statement."""
 
@@ -995,6 +1357,7 @@ class TestClearStatement(unittest.TestCase):
         """Create interpreter instance for testing."""
         _expr_cache.clear()
         _compiled_expr_cache.clear()
+        _identifier_cache.clear()
         self.font = pygame.font.Font(None, 16)
         self.interp = BasicInterpreter(self.font, 800, 600)
 
@@ -1020,6 +1383,7 @@ class TestSystemStatement(unittest.TestCase):
         """Create interpreter instance for testing."""
         _expr_cache.clear()
         _compiled_expr_cache.clear()
+        _identifier_cache.clear()
         self.font = pygame.font.Font(None, 16)
         self.interp = BasicInterpreter(self.font, 800, 600)
 
@@ -1044,6 +1408,7 @@ class TestViewStatement(unittest.TestCase):
         """Create interpreter instance for testing."""
         _expr_cache.clear()
         _compiled_expr_cache.clear()
+        _identifier_cache.clear()
         self.font = pygame.font.Font(None, 16)
         self.interp = BasicInterpreter(self.font, 800, 600)
 
@@ -1084,6 +1449,7 @@ class TestWindowStatement(unittest.TestCase):
         """Create interpreter instance for testing."""
         _expr_cache.clear()
         _compiled_expr_cache.clear()
+        _identifier_cache.clear()
         self.font = pygame.font.Font(None, 16)
         self.interp = BasicInterpreter(self.font, 800, 600)
 
@@ -1123,6 +1489,7 @@ class TestFieldLsetRset(unittest.TestCase):
         """Create interpreter instance for testing."""
         _expr_cache.clear()
         _compiled_expr_cache.clear()
+        _identifier_cache.clear()
         self.font = pygame.font.Font(None, 16)
         self.interp = BasicInterpreter(self.font, 800, 600)
 
@@ -1160,6 +1527,7 @@ class TestEnvironStatement(unittest.TestCase):
         """Create interpreter instance for testing."""
         _expr_cache.clear()
         _compiled_expr_cache.clear()
+        _identifier_cache.clear()
         self.font = pygame.font.Font(None, 16)
         self.interp = BasicInterpreter(self.font, 800, 600)
 
@@ -1184,6 +1552,7 @@ class TestTimerEvents(unittest.TestCase):
         """Create interpreter instance for testing."""
         _expr_cache.clear()
         _compiled_expr_cache.clear()
+        _identifier_cache.clear()
         self.font = pygame.font.Font(None, 16)
         self.interp = BasicInterpreter(self.font, 800, 600)
 
@@ -1225,6 +1594,7 @@ class TestDateTimeAssignment(unittest.TestCase):
         """Create interpreter instance for testing."""
         _expr_cache.clear()
         _compiled_expr_cache.clear()
+        _identifier_cache.clear()
         self.font = pygame.font.Font(None, 16)
         self.interp = BasicInterpreter(self.font, 800, 600)
 
@@ -1264,6 +1634,7 @@ class TestCommonStatement(unittest.TestCase):
         """Create interpreter instance for testing."""
         _expr_cache.clear()
         _compiled_expr_cache.clear()
+        _identifier_cache.clear()
         self.font = pygame.font.Font(None, 16)
         self.interp = BasicInterpreter(self.font, 800, 600)
 
@@ -1310,6 +1681,7 @@ class TestTronTroff(unittest.TestCase):
         """Create interpreter instance for testing."""
         _expr_cache.clear()
         _compiled_expr_cache.clear()
+        _identifier_cache.clear()
         self.font = pygame.font.Font(None, 16)
         self.interp = BasicInterpreter(self.font, 800, 600)
 
@@ -1335,6 +1707,7 @@ class TestRunCommand(unittest.TestCase):
         """Create interpreter instance for testing."""
         _expr_cache.clear()
         _compiled_expr_cache.clear()
+        _identifier_cache.clear()
         self.font = pygame.font.Font(None, 16)
         self.interp = BasicInterpreter(self.font, 800, 600)
 
@@ -1360,6 +1733,7 @@ class TestContCommand(unittest.TestCase):
         """Create interpreter instance for testing."""
         _expr_cache.clear()
         _compiled_expr_cache.clear()
+        _identifier_cache.clear()
         self.font = pygame.font.Font(None, 16)
         self.interp = BasicInterpreter(self.font, 800, 600)
 
@@ -1379,6 +1753,7 @@ class TestMemoryFunctions(unittest.TestCase):
         """Create interpreter instance for testing."""
         _expr_cache.clear()
         _compiled_expr_cache.clear()
+        _identifier_cache.clear()
         self.font = pygame.font.Font(None, 16)
         self.interp = BasicInterpreter(self.font, 800, 600)
 
@@ -1418,6 +1793,7 @@ class TestKeyHandling(unittest.TestCase):
         """Create interpreter instance for testing."""
         _expr_cache.clear()
         _compiled_expr_cache.clear()
+        _identifier_cache.clear()
         self.font = pygame.font.Font(None, 16)
         self.interp = BasicInterpreter(self.font, 800, 600)
 
@@ -1457,6 +1833,7 @@ class TestPlayFunction(unittest.TestCase):
         """Create interpreter instance for testing."""
         _expr_cache.clear()
         _compiled_expr_cache.clear()
+        _identifier_cache.clear()
         self.font = pygame.font.Font(None, 16)
         self.interp = BasicInterpreter(self.font, 800, 600)
 
@@ -1501,6 +1878,7 @@ class TestJoystickFunctions(unittest.TestCase):
         """Create interpreter instance for testing."""
         _expr_cache.clear()
         _compiled_expr_cache.clear()
+        _identifier_cache.clear()
         self.font = pygame.font.Font(None, 16)
         self.interp = BasicInterpreter(self.font, 800, 600)
 
@@ -1576,6 +1954,7 @@ class TestPenFunctions(unittest.TestCase):
         """Create interpreter instance for testing."""
         _expr_cache.clear()
         _compiled_expr_cache.clear()
+        _identifier_cache.clear()
         self.font = pygame.font.Font(None, 16)
         self.interp = BasicInterpreter(self.font, 800, 600)
 
@@ -1639,6 +2018,7 @@ class TestMetacommands(unittest.TestCase):
         """Create interpreter instance for testing."""
         _expr_cache.clear()
         _compiled_expr_cache.clear()
+        _identifier_cache.clear()
         self.font = pygame.font.Font(None, 16)
         self.interp = BasicInterpreter(self.font, 800, 600)
 
@@ -1662,6 +2042,7 @@ class TestHardwareIO(unittest.TestCase):
         """Create interpreter instance for testing."""
         _expr_cache.clear()
         _compiled_expr_cache.clear()
+        _identifier_cache.clear()
         self.font = pygame.font.Font(None, 16)
         self.interp = BasicInterpreter(self.font, 800, 600)
 
