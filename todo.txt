@@ -1,0 +1,35 @@
+# PASIC Todo List
+
+## Known Issues (from third-party game testing)
+
+### gorillas.bas / nibbles.bas
+- [ ] "EOF reached while skipping WHILE block" - parsing issue with conditional blocks
+
+### futureblocks.bas
+- [ ] "Out of DATA" error - DATA/READ mismatch
+
+### pong20.bas
+- [ ] TYPE definition not recognized (FLICKER type)
+
+### game2_main.bas
+- [ ] File path handling for relative paths
+
+## Potential Improvements
+
+- [ ] Better error messages with line numbers from original source
+- [ ] OPEN for INPUT should handle missing files gracefully
+- [ ] Support for more SCREEN modes
+- [ ] VIEW and WINDOW commands for graphics viewport
+- [ ] PCOPY for video page copying
+
+## Completed Recently
+
+- [x] Single-line IF...THEN...ELSE statements
+- [x] Numeric labels with colons (1:)
+- [x] Nested SELECT CASE handling
+- [x] Array-as-parameter syntax (arr())
+- [x] Function calls with/without type suffix
+- [x] Complex expressions in LINE coordinates
+- [x] PRINT expression parsing with nested parentheses
+- [x] FOR/NEXT/SWAP with type suffixes (%, !, #, &)
+- [x] OPEN with variable file handles

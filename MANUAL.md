@@ -83,6 +83,10 @@ scores(5) = 100          ' Array assignment
 IF x > 10 THEN y = 1
 IF score > 100 THEN PRINT "Winner!" : bonus = 50
 
+' Single-line IF with ELSE
+IF x > 10 THEN y = 1 ELSE y = 0
+IF r = 4 THEN r = 1 ELSE r = r + 1
+
 ' Multi-line IF block
 IF x = 1 THEN
     result = 10
@@ -172,6 +176,66 @@ GOSUB drawPlayer
 drawPlayer:
     PSET (x, y), 15
     RETURN
+```
+
+### SUB...END SUB
+
+```basic
+' Define a subroutine
+SUB DrawBox (x1, y1, x2, y2, c)
+    LINE (x1, y1)-(x2, y2), c, B
+END SUB
+
+' Call the subroutine
+CALL DrawBox(10, 10, 50, 50, 15)
+DrawBox 10, 10, 50, 50, 15         ' CALL keyword is optional
+
+' Passing arrays to subroutines
+SUB ProcessArray (arr() AS INTEGER, size AS INTEGER)
+    FOR i = 0 TO size
+        arr(i) = arr(i) * 2
+    NEXT i
+END SUB
+
+DIM myArray(10) AS INTEGER
+CALL ProcessArray(myArray(), 10)   ' Use () to pass entire array
+```
+
+### FUNCTION...END FUNCTION
+
+```basic
+' Define a function that returns a value
+FUNCTION Square% (n AS INTEGER)
+    Square = n * n
+END FUNCTION
+
+' Call the function
+result = Square(5)                 ' result = 25
+
+' Function with type suffix (% for integer)
+FUNCTION Max% (a AS INTEGER, b AS INTEGER)
+    IF a > b THEN Max = a ELSE Max = b
+END FUNCTION
+
+' Can call with or without type suffix
+x = Max%(10, 20)                   ' With suffix
+x = Max(10, 20)                    ' Without suffix (also works)
+```
+
+### DECLARE
+
+```basic
+' Forward declaration of procedures (optional but recommended)
+DECLARE SUB DrawBox (x1, y1, x2, y2, c)
+DECLARE FUNCTION Square% (n AS INTEGER)
+
+' Allows calling procedures before their definition
+result = Square(5)
+
+' ... later in code ...
+FUNCTION Square% (n AS INTEGER)
+    Square = n * n
+END FUNCTION
 ```
 
 ### END
@@ -645,6 +709,13 @@ Labels can be numeric (QBasic line numbers) or named:
 start:
     PRINT "Start"
     GOTO start
+
+' Numeric labels with colons also work
+1:
+FOR i = 1 TO 10
+    PRINT i
+NEXT i
+GOTO 1
 ```
 
 ---

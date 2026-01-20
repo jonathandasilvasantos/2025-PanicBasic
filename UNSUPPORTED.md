@@ -83,6 +83,8 @@ This document lists QBasic 4.5 features and instructions that are **not currentl
 - `SHARED` - Share variables with main program
 - `STATIC` - Declare static local variables
 - `DEF FN` - Inline functions
+- Array parameters `arr() AS TYPE` - Pass arrays to procedures
+- Function calls with/without type suffix (e.g., `Max%` or `Max`)
 
 ---
 
@@ -96,6 +98,8 @@ This document lists QBasic 4.5 features and instructions that are **not currentl
 - `ON ERROR GOTO` - Error handler
 - `RESUME` / `RESUME NEXT` - Resume after error
 - `ON...GOTO` and `ON...GOSUB` - Computed branching
+- Single-line `IF...THEN...ELSE` statements
+- Nested `SELECT CASE` blocks
 
 ---
 
@@ -262,7 +266,10 @@ Some hardware-specific features (PEEK/POKE, port I/O) are emulated or stubbed fo
 
 ### Fully Supported Features (Highlights)
 - All standard control flow (IF/THEN/ELSE, FOR/NEXT, DO/LOOP, WHILE/WEND, SELECT CASE)
+- Single-line IF...THEN...ELSE statements
+- Nested SELECT CASE blocks
 - GOSUB/RETURN and SUB/FUNCTION procedures
+- Array parameters to procedures (arr() syntax)
 - Graphics: SCREEN modes, LINE, CIRCLE, PSET, GET/PUT sprites, PALETTE
 - Sound: SOUND, BEEP, PLAY (MML)
 - File I/O: OPEN, CLOSE, INPUT#, PRINT#, WRITE#, EOF, LOF
@@ -270,3 +277,4 @@ Some hardware-specific features (PEEK/POKE, port I/O) are emulated or stubbed fo
 - Error handling (ON ERROR GOTO, RESUME)
 - Integer division operator (\)
 - Hex/octal/binary literals (&H, &O, &B)
+- Numeric labels with colons (1:, 100:)
