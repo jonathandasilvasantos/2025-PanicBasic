@@ -214,6 +214,24 @@ _key_list_re = re.compile(r"KEY\s+(ON|OFF|LIST)", re.IGNORECASE)
 # ON KEY(n) GOSUB
 _on_key_re = re.compile(r"ON\s+KEY\s*\((\d+)\)\s+GOSUB\s+([a-zA-Z0-9_]+)", re.IGNORECASE)
 
+# ON STRIG(n) GOSUB - Joystick button event handler
+_on_strig_re = re.compile(r"ON\s+STRIG\s*\((\d+)\)\s+GOSUB\s+([a-zA-Z0-9_]+)", re.IGNORECASE)
+
+# STRIG(n) ON/OFF/STOP - Enable/disable joystick button events
+_strig_on_off_re = re.compile(r"STRIG\s*\((\d+)\)\s+(ON|OFF|STOP)", re.IGNORECASE)
+
+# ON PEN GOSUB - Light pen event handler
+_on_pen_re = re.compile(r"ON\s+PEN\s+GOSUB\s+([a-zA-Z0-9_]+)", re.IGNORECASE)
+
+# PEN ON/OFF/STOP - Enable/disable light pen events
+_pen_on_off_re = re.compile(r"PEN\s+(ON|OFF|STOP)", re.IGNORECASE)
+
+# ON PLAY GOSUB - Music event handler (stub for compatibility)
+_on_play_gosub_re = re.compile(r"ON\s+PLAY\s*\((\d+)\)\s+GOSUB\s+([a-zA-Z0-9_]+)", re.IGNORECASE)
+
+# PLAY ON/OFF/STOP - Enable/disable music events (stub for compatibility)
+_play_on_off_re = re.compile(r"PLAY\s+(ON|OFF|STOP)", re.IGNORECASE)
+
 # DEFINT/DEFSNG/DEFDBL/DEFLNG/DEFSTR - Default type declarations (ignored)
 _deftype_re = re.compile(r"DEF(INT|SNG|DBL|LNG|STR)\s+[A-Za-z](?:\s*-\s*[A-Za-z])?", re.IGNORECASE)
 
@@ -246,6 +264,9 @@ _poke_re = re.compile(r"POKE\s+([^,]+)\s*,\s*(.+)", re.IGNORECASE)
 
 # COMMON SHARED - Global variable declaration
 _common_shared_re = re.compile(r"COMMON\s+SHARED\s+(.+)", re.IGNORECASE)
+
+# COMMON - Share variables between CHAINed programs (must not match COMMON SHARED)
+_common_re = re.compile(r"COMMON\s+(?!SHARED\s)(.+)", re.IGNORECASE)
 
 # DIM SHARED - Shared array declaration
 _dim_shared_re = re.compile(r"DIM\s+SHARED\s+(.+)", re.IGNORECASE)
@@ -355,6 +376,10 @@ _environ_set_re = re.compile(r"ENVIRON\s+(.+)", re.IGNORECASE)
 # ON TIMER GOSUB - timer event handler
 _on_timer_re = re.compile(r"ON\s+TIMER\s*\(([^)]+)\)\s+GOSUB\s+([a-zA-Z0-9_]+)", re.IGNORECASE)
 
+# DATE$/TIME$ assignment
+_date_assign_re = re.compile(r"DATE\$\s*=\s*(.+)", re.IGNORECASE)
+_time_assign_re = re.compile(r"TIME\$\s*=\s*(.+)", re.IGNORECASE)
+
 _expr_cache: Dict[str, str] = {}
 _python_keywords = {'and', 'or', 'not', 'in', 'is', 'lambda', 'if', 'else', 'elif', 'while', 'for', 'try', 'except', 'finally', 'with', 'as', 'def', 'class', 'import', 'from', 'pass', 'break', 'continue', 'return', 'yield', 'global', 'nonlocal', 'assert', 'del', 'True', 'False', 'None'}
 # Python builtins used in generated code (for array indexing) - keep lowercase
@@ -374,6 +399,10 @@ _basic_function_names = {
     'LBOUND', 'UBOUND',
     # Environment/Input functions
     'ENVIRON', 'INPUT', 'COMMAND',
+    # Joystick functions
+    'STICK', 'STRIG',
+    # Light pen function (emulated with mouse)
+    'PEN',
     # Memory/System functions
     'FRE', 'PEEK', 'INP', 'FREEFILE', 'LOF', 'EOF', 'LOC',
     # Binary conversion functions
@@ -761,6 +790,39 @@ class BasicInterpreter:
         self.timer_enabled: bool = False  # TIMER ON/OFF state
         self.timer_last_trigger: float = 0  # Last trigger time
 
+        # Custom DATE$/TIME$ - when set, these override system date/time
+        self.custom_date: Optional[str] = None  # DATE$ = value (MM-DD-YYYY format)
+        self.custom_time: Optional[str] = None  # TIME$ = value (HH:MM:SS format)
+
+        # COMMON variables - variables to preserve across CHAIN
+        self.common_variables: set = set()  # Set of variable names declared with COMMON
+
+        # Joystick support
+        self.joysticks: List[Any] = []  # List of pygame.Joystick objects
+        self.strig_pressed: Dict[int, bool] = {}  # Track "pressed since last check" state
+        self._init_joysticks()
+
+        # ON STRIG GOSUB - joystick button event handlers
+        self.strig_handlers: Dict[int, str] = {}  # button_num (0-7) -> label
+        self.strig_enabled: Dict[int, bool] = {}  # STRIG(n) ON/OFF state
+        self.strig_pending: Dict[int, bool] = {}  # Track pending button events
+
+        # Light pen support (emulated with mouse)
+        self.pen_handler: Optional[str] = None  # ON PEN GOSUB label
+        self.pen_enabled: bool = False  # PEN ON/OFF state
+        self.pen_pending: bool = False  # Pending pen activation event
+        self.pen_activated_x: int = 0  # X where pen was activated
+        self.pen_activated_y: int = 0  # Y where pen was activated
+        self.pen_current_x: int = 0  # Current pen X
+        self.pen_current_y: int = 0  # Current pen Y
+        self.pen_down: bool = False  # Is pen currently down (mouse button held)
+        self.pen_pressed: bool = False  # Was pen activated since last PEN(0)?
+
+        # ON PLAY GOSUB - music event handler (stub for compatibility)
+        self.play_handler: Optional[str] = None  # ON PLAY GOSUB label
+        self.play_enabled: bool = False  # PLAY ON/OFF state
+        self.play_threshold: int = 0  # Note count threshold for handler call
+
         # Environment for eval() - functions available to BASIC expressions
         self.eval_env_funcs = {
             # Integer division that truncates toward zero (QBasic behavior)
@@ -836,6 +898,11 @@ class BasicInterpreter:
             "SADD": self._basic_sadd,  # Get string address
             # Music function
             "PLAY": self._basic_play_func,  # Get background music queue count
+            # Joystick functions
+            "STICK": self._basic_stick,  # Get joystick position (0-255)
+            "STRIG": self._basic_strig,  # Get joystick button status (-1 or 0)
+            # Light pen function (emulated with mouse)
+            "PEN": self._basic_pen,  # Get light pen information
         }
 
     def _basic_val(self, s_val: str) -> Any:
@@ -922,12 +989,16 @@ class BasicInterpreter:
         return char * count
 
     def _basic_date(self) -> str:
-        """DATE$ - Returns current date as MM-DD-YYYY."""
+        """DATE$ - Returns current date as MM-DD-YYYY (or custom date if set)."""
+        if self.custom_date is not None:
+            return self.custom_date
         from datetime import datetime
         return datetime.now().strftime("%m-%d-%Y")
 
     def _basic_time(self) -> str:
-        """TIME$ - Returns current time as HH:MM:SS."""
+        """TIME$ - Returns current time as HH:MM:SS (or custom time if set)."""
+        if self.custom_time is not None:
+            return self.custom_time
         from datetime import datetime
         return datetime.now().strftime("%H:%M:%S")
 
@@ -1176,6 +1247,124 @@ class BasicInterpreter:
         Since we don't have background music queue, always returns 0."""
         # In QBasic, PLAY(n) returns the number of notes in the background
         # music buffer. We don't implement background music, so return 0.
+        return 0
+
+    def _init_joysticks(self) -> None:
+        """Initialize joystick support."""
+        try:
+            pygame.joystick.init()
+            for i in range(pygame.joystick.get_count()):
+                js = pygame.joystick.Joystick(i)
+                js.init()
+                self.joysticks.append(js)
+        except Exception:
+            pass  # No joystick support available
+
+    def _basic_stick(self, n: int) -> int:
+        """STICK(n) - Get joystick position.
+        STICK(0) - x coordinate of joystick A (0-255, center ~127)
+        STICK(1) - y coordinate of joystick A (0-255, center ~127)
+        STICK(2) - x coordinate of joystick B (0-255, center ~127)
+        STICK(3) - y coordinate of joystick B (0-255, center ~127)
+        """
+        n = int(n)
+        joystick_num = n // 2  # 0,1 -> joystick 0; 2,3 -> joystick 1
+        axis = n % 2  # 0,2 -> x axis; 1,3 -> y axis
+
+        if joystick_num < len(self.joysticks):
+            js = self.joysticks[joystick_num]
+            try:
+                if axis < js.get_numaxes():
+                    # pygame axes are -1.0 to 1.0, convert to 0-255
+                    value = js.get_axis(axis)
+                    return int((value + 1.0) * 127.5)
+            except Exception:
+                pass
+        return 127  # Center position when no joystick
+
+    def _basic_strig(self, n: int) -> int:
+        """STRIG(n) - Get joystick button status.
+        STRIG(0) - -1 if button A1 pressed since last check, 0 otherwise
+        STRIG(1) - -1 if button A1 currently down, 0 otherwise
+        STRIG(2) - -1 if button A2 pressed since last check, 0 otherwise
+        STRIG(3) - -1 if button A2 currently down, 0 otherwise
+        STRIG(4) - -1 if button B1 pressed since last check, 0 otherwise
+        STRIG(5) - -1 if button B1 currently down, 0 otherwise
+        STRIG(6) - -1 if button B2 pressed since last check, 0 otherwise
+        STRIG(7) - -1 if button B2 currently down, 0 otherwise
+        """
+        n = int(n)
+        # Map STRIG numbers to joystick and button
+        # 0,1 -> joystick 0, button 0
+        # 2,3 -> joystick 0, button 1
+        # 4,5 -> joystick 1, button 0
+        # 6,7 -> joystick 1, button 1
+        joystick_num = n // 4
+        button_num = (n // 2) % 2
+        is_current = n % 2 == 1  # Odd numbers check current state
+
+        if joystick_num < len(self.joysticks):
+            js = self.joysticks[joystick_num]
+            try:
+                if button_num < js.get_numbuttons():
+                    if is_current:
+                        # Return current button state
+                        return -1 if js.get_button(button_num) else 0
+                    else:
+                        # Return "pressed since last check" - clear flag after reading
+                        key = (joystick_num, button_num)
+                        if key in self.strig_pressed and self.strig_pressed[key]:
+                            self.strig_pressed[key] = False
+                            return -1
+                        return 0
+            except Exception:
+                pass
+        return 0  # No button press
+
+    def _basic_pen(self, n: int) -> int:
+        """PEN(n) - Get light pen information (emulated with mouse).
+        PEN(0) - Returns -1 if pen was activated since last PEN(0), 0 otherwise
+        PEN(1) - Returns x coordinate where pen was activated
+        PEN(2) - Returns y coordinate where pen was activated
+        PEN(3) - Returns -1 if pen is currently down, 0 otherwise
+        PEN(4) - Returns current x coordinate
+        PEN(5) - Returns current y coordinate
+        PEN(6) - Returns row where pen was activated (text row)
+        PEN(7) - Returns column where pen was activated (text column)
+        PEN(8) - Returns current row
+        PEN(9) - Returns current column
+        """
+        n = int(n)
+        font_h = self.font.get_height() if self.font else 8
+        font_w = 8  # Approximate character width
+
+        if n == 0:
+            # Return -1 if pen was activated since last PEN(0), clear flag
+            result = -1 if self.pen_pressed else 0
+            self.pen_pressed = False
+            return result
+        elif n == 1:
+            return self.pen_activated_x
+        elif n == 2:
+            return self.pen_activated_y
+        elif n == 3:
+            return -1 if self.pen_down else 0
+        elif n == 4:
+            return self.pen_current_x
+        elif n == 5:
+            return self.pen_current_y
+        elif n == 6:
+            # Text row where activated (1-based)
+            return (self.pen_activated_y // font_h) + 1
+        elif n == 7:
+            # Text column where activated (1-based)
+            return (self.pen_activated_x // font_w) + 1
+        elif n == 8:
+            # Current text row (1-based)
+            return (self.pen_current_y // font_h) + 1
+        elif n == 9:
+            # Current text column (1-based)
+            return (self.pen_current_x // font_w) + 1
         return 0
 
     def _call_user_function(self, func_name: str, args: List[Any]) -> Any:
@@ -1635,6 +1824,42 @@ class BasicInterpreter:
              self.window_width, self.window_height = event.w, event.h
              self._cached_scaled_surface = None # Force redraw of scaled surface
              self.mark_dirty() # Mark main surface as needing redraw (though content hasn't changed)
+        elif event.type == pygame.JOYBUTTONDOWN:
+            # Track joystick button presses for STRIG "pressed since last check"
+            joystick_id = event.joy
+            button = event.button
+            self.strig_pressed[(joystick_id, button)] = True
+            # Also mark pending for ON STRIG GOSUB event handlers
+            # Map (joystick, button) to STRIG number
+            # STRIG 0/1 = joy0 button0, STRIG 2/3 = joy0 button1
+            # STRIG 4/5 = joy1 button0, STRIG 6/7 = joy1 button1
+            strig_num = joystick_id * 4 + button * 2
+            if 0 <= strig_num <= 7:
+                self.strig_pending[strig_num] = True
+        elif event.type == pygame.MOUSEBUTTONDOWN:
+            # Emulate light pen with mouse
+            if event.button == 1:  # Left mouse button
+                # Scale mouse position to screen coordinates
+                x, y = event.pos
+                scale_x = self.screen_width / self.window_width if self.window_width > 0 else 1
+                scale_y = self.screen_height / self.window_height if self.window_height > 0 else 1
+                self.pen_activated_x = int(x * scale_x)
+                self.pen_activated_y = int(y * scale_y)
+                self.pen_current_x = self.pen_activated_x
+                self.pen_current_y = self.pen_activated_y
+                self.pen_down = True
+                self.pen_pressed = True
+                self.pen_pending = True
+        elif event.type == pygame.MOUSEBUTTONUP:
+            if event.button == 1:  # Left mouse button
+                self.pen_down = False
+        elif event.type == pygame.MOUSEMOTION:
+            # Update current pen position
+            x, y = event.pos
+            scale_x = self.screen_width / self.window_width if self.window_width > 0 else 1
+            scale_y = self.screen_height / self.window_height if self.window_height > 0 else 1
+            self.pen_current_x = int(x * scale_x)
+            self.pen_current_y = int(y * scale_y)
 
     def _should_execute(self) -> bool:
         if self.if_skip_level != -1:
@@ -2087,6 +2312,24 @@ class BasicInterpreter:
             # Skip to the corresponding LOOP statement
             self._skip_to_loop(current_pc_num)
             return True  # PC changed
+
+        # --- DATE$ assignment (must come before general assignment) ---
+        m_date_assign = _date_assign_re.fullmatch(statement)
+        if m_date_assign:
+            date_val = self.eval_expr(m_date_assign.group(1).strip())
+            if not self.running: return False
+            # Store the custom date string
+            self.custom_date = str(date_val)
+            return False
+
+        # --- TIME$ assignment (must come before general assignment) ---
+        m_time_assign = _time_assign_re.fullmatch(statement)
+        if m_time_assign:
+            time_val = self.eval_expr(m_time_assign.group(1).strip())
+            if not self.running: return False
+            # Store the custom time string
+            self.custom_time = str(time_val)
+            return False
 
         m_assign = _assign_re.fullmatch(statement)
         if m_assign:
@@ -2840,6 +3083,67 @@ class BasicInterpreter:
                 self.key_handlers[key_num] = label
             return False
 
+        # --- ON STRIG(n) GOSUB statement ---
+        m_on_strig = _on_strig_re.fullmatch(statement)
+        if m_on_strig:
+            strig_num = int(m_on_strig.group(1))
+            label = m_on_strig.group(2).upper()
+            if 0 <= strig_num <= 7:
+                self.strig_handlers[strig_num] = label
+            return False
+
+        # --- STRIG(n) ON/OFF/STOP statement ---
+        m_strig_on_off = _strig_on_off_re.fullmatch(statement)
+        if m_strig_on_off:
+            strig_num = int(m_strig_on_off.group(1))
+            mode = m_strig_on_off.group(2).upper()
+            if 0 <= strig_num <= 7:
+                if mode == "ON":
+                    self.strig_enabled[strig_num] = True
+                elif mode == "OFF":
+                    self.strig_enabled[strig_num] = False
+                # STOP suspends but remembers events (we treat as OFF for simplicity)
+            return False
+
+        # --- ON PEN GOSUB statement ---
+        m_on_pen = _on_pen_re.fullmatch(statement)
+        if m_on_pen:
+            label = m_on_pen.group(1).upper()
+            self.pen_handler = label
+            return False
+
+        # --- PEN ON/OFF/STOP statement ---
+        m_pen_on_off = _pen_on_off_re.fullmatch(statement)
+        if m_pen_on_off:
+            mode = m_pen_on_off.group(1).upper()
+            if mode == "ON":
+                self.pen_enabled = True
+            elif mode == "OFF":
+                self.pen_enabled = False
+            # STOP suspends but remembers events (we treat as OFF for simplicity)
+            return False
+
+        # --- ON PLAY GOSUB statement (stub for compatibility) ---
+        m_on_play_gosub = _on_play_gosub_re.fullmatch(statement)
+        if m_on_play_gosub:
+            threshold = int(m_on_play_gosub.group(1))
+            label = m_on_play_gosub.group(2).upper()
+            self.play_threshold = threshold
+            self.play_handler = label
+            return False
+
+        # --- PLAY ON/OFF/STOP statement (stub for compatibility) ---
+        m_play_on_off = _play_on_off_re.fullmatch(statement)
+        if m_play_on_off:
+            mode = m_play_on_off.group(1).upper()
+            if mode == "ON":
+                self.play_enabled = True
+            elif mode == "OFF":
+                self.play_enabled = False
+            # STOP suspends but remembers events (we treat as OFF)
+            # Note: Since we don't have background music, these are no-ops
+            return False
+
         # --- ON...GOSUB statement ---
         m_on_gosub = _on_gosub_re.fullmatch(statement)
         if m_on_gosub:
@@ -3023,11 +3327,26 @@ class BasicInterpreter:
             try:
                 with open(filename, 'r') as f:
                     new_program = f.read().splitlines()
-                # Keep COMMON SHARED variables (simplified - keep all)
-                saved_vars = dict(self.variables)
+                # Save COMMON variables (only those declared with COMMON)
+                saved_vars = {}
+                saved_common = set(self.common_variables)
+                if self.common_variables:
+                    # Only preserve explicitly declared COMMON variables
+                    for var_name in self.common_variables:
+                        if var_name in self.variables:
+                            saved_vars[var_name] = self.variables[var_name]
+                        # Also check with type suffixes
+                        for suffix in ['$', '%', '#', '!', '&']:
+                            full_name = var_name + suffix
+                            if full_name in self.variables:
+                                saved_vars[full_name] = self.variables[full_name]
+                else:
+                    # If no COMMON declared, preserve all (backward compatibility)
+                    saved_vars = dict(self.variables)
                 self.reset(new_program)
-                # Restore variables (CHAIN preserves COMMON variables)
+                # Restore COMMON variables and common_variables set
                 self.variables.update(saved_vars)
+                self.common_variables = saved_common
                 return True
             except FileNotFoundError:
                 print(f"Error: CHAIN file '{filename}' not found at PC {current_pc_num}")
@@ -3174,6 +3493,25 @@ class BasicInterpreter:
         m_common_shared = _common_shared_re.fullmatch(statement)
         if m_common_shared:
             # Variables listed are already global in our implementation
+            # Also add them to common_variables for CHAIN preservation
+            var_list = m_common_shared.group(1)
+            for var_spec in var_list.split(','):
+                var_name = var_spec.strip().split()[0].upper()  # Get name, ignore AS type
+                if '(' in var_name:
+                    var_name = var_name.split('(')[0]  # Remove array indices
+                self.common_variables.add(var_name)
+            return False
+
+        # --- COMMON statement (without SHARED) - for CHAIN preservation ---
+        m_common = _common_re.fullmatch(statement)
+        if m_common:
+            # Add variables to the common_variables set for CHAIN preservation
+            var_list = m_common.group(1)
+            for var_spec in var_list.split(','):
+                var_name = var_spec.strip().split()[0].upper()  # Get name, ignore AS type
+                if '(' in var_name:
+                    var_name = var_name.split('(')[0]  # Remove array indices
+                self.common_variables.add(var_name)
             return False
 
         # --- DIM SHARED statement ---
@@ -6279,6 +6617,26 @@ class BasicInterpreter:
             return # Still delaying
 
         self.delay_until = 0 # Clear delay
+
+        # Check for pending STRIG (joystick button) events
+        for strig_num in list(self.strig_pending.keys()):
+            if self.strig_pending.get(strig_num) and self.strig_enabled.get(strig_num):
+                if strig_num in self.strig_handlers:
+                    label = self.strig_handlers[strig_num]
+                    self.strig_pending[strig_num] = False  # Clear pending flag
+                    # Push return address and GOSUB to handler
+                    self.gosub_stack.append(self.pc)
+                    if label in self.labels:
+                        self.pc = self.labels[label]
+
+        # Check for pending PEN (light pen/mouse) events
+        if self.pen_pending and self.pen_enabled and self.pen_handler:
+            label = self.pen_handler
+            self.pen_pending = False  # Clear pending flag
+            # Push return address and GOSUB to handler
+            self.gosub_stack.append(self.pc)
+            if label in self.labels:
+                self.pc = self.labels[label]
 
         # Execute a certain number of BASIC program lines or until a natural pause (like DELAY)
         steps_this_frame = 0

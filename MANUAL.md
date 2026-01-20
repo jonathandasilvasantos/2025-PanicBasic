@@ -611,8 +611,30 @@ RUN label                             ' Restart from specified label
 
 ```basic
 CHAIN "other.bas"                     ' Load and run another BASIC program
-' Variables are preserved across CHAIN calls
+' Variables declared with COMMON are preserved across CHAIN calls
 ```
+
+### COMMON
+
+```basic
+' Declare variables to share between CHAINed programs
+COMMON x, y, z                        ' Simple variables
+COMMON name$, count%                  ' Variables with type suffixes
+COMMON value AS INTEGER               ' With type declaration
+COMMON SHARED a, b                    ' Also shared with SUBs/FUNCTIONs
+
+' Example: main.bas
+COMMON score, lives
+score = 100
+lives = 3
+CHAIN "level2.bas"
+
+' Example: level2.bas
+COMMON score, lives                   ' Must declare COMMON in both files
+PRINT "Score:"; score                 ' Will print 100
+```
+
+Note: Variables declared with COMMON are preserved when using CHAIN. Both the calling program and the CHAINed program must declare the same COMMON variables.
 
 ### CONT (Continue After STOP)
 
@@ -652,6 +674,36 @@ saddr = SADD(s$)                      ' Get address of string data
 ' Note: These return emulated addresses, not actual memory locations
 ' Useful for compatibility with programs that use these functions
 ```
+
+---
+
+## Hardware I/O (Emulated)
+
+### INP / OUT
+
+```basic
+' Write to I/O port (emulated)
+OUT &H3C8, 0                          ' Write 0 to port 0x3C8
+
+' Read from I/O port (emulated)
+value = INP(&H3C9)                    ' Read from port 0x3C9
+
+' Values written with OUT can be read back with INP
+OUT 100, 255                          ' Write 255 to port 100
+x = INP(100)                          ' x = 255
+```
+
+Note: Port I/O is emulated for compatibility. Values written with OUT are stored and can be read back with INP. This allows programs that use port I/O for internal state to function correctly.
+
+### WAIT
+
+```basic
+' Wait for port condition (emulated as no-op)
+WAIT &H3DA, 8                         ' Wait until bit 3 is set
+WAIT &H3DA, 8, 8                      ' Wait until bit 3 is clear
+```
+
+Note: WAIT is accepted for compatibility but does nothing since actual port I/O is not available.
 
 ---
 
@@ -726,6 +778,158 @@ KEY LIST                              ' List all function key definitions
 notes = PLAY(0)                       ' Get count of notes in background queue
 ' Returns 0 since background music queue is not implemented
 ' Useful for checking if background music is still playing
+```
+
+### ON PLAY GOSUB / PLAY ON/OFF
+
+```basic
+' Set up background music event handler
+ON PLAY(5) GOSUB musicHandler         ' Call when queue drops below 5 notes
+PLAY ON                               ' Enable the event trap
+
+' Enable/disable music events
+PLAY ON                               ' Enable music events
+PLAY OFF                              ' Disable music events
+PLAY STOP                             ' Suspend events (same as OFF)
+
+musicHandler:
+    PLAY "CDEFGAB"                    ' Add more notes to queue
+    RETURN
+```
+
+Note: These statements are accepted for compatibility but the handler never triggers since background music playback is not implemented. PLAY(n) always returns 0.
+
+---
+
+## Joystick Functions
+
+### STICK
+
+```basic
+' Get joystick position (0-255, center=127)
+x = STICK(0)                          ' X coordinate of joystick A
+y = STICK(1)                          ' Y coordinate of joystick A
+x2 = STICK(2)                         ' X coordinate of joystick B
+y2 = STICK(3)                         ' Y coordinate of joystick B
+
+' Example: Simple joystick control
+DO
+    x = STICK(0)
+    y = STICK(1)
+    IF x < 64 THEN dx = -1
+    IF x > 192 THEN dx = 1
+    IF y < 64 THEN dy = -1
+    IF y > 192 THEN dy = 1
+    _DELAY 0.016
+LOOP
+```
+
+Note: Returns center position (127) when no joystick is connected.
+
+### STRIG
+
+```basic
+' Get joystick button status (-1 if pressed, 0 otherwise)
+' Even numbers: "pressed since last STRIG call" (cleared after read)
+' Odd numbers: current button state
+
+' Joystick A, Button 1:
+b1pressed = STRIG(0)                  ' -1 if pressed since last check
+b1down = STRIG(1)                     ' -1 if currently down
+
+' Joystick A, Button 2:
+b2pressed = STRIG(2)                  ' -1 if pressed since last check
+b2down = STRIG(3)                     ' -1 if currently down
+
+' Joystick B, Button 1:
+b3pressed = STRIG(4)                  ' -1 if pressed since last check
+b3down = STRIG(5)                     ' -1 if currently down
+
+' Joystick B, Button 2:
+b4pressed = STRIG(6)                  ' -1 if pressed since last check
+b4down = STRIG(7)                     ' -1 if currently down
+
+' Example: Check for fire button
+IF STRIG(0) = -1 THEN PRINT "Fire!"
+```
+
+Note: Returns 0 when no joystick is connected.
+
+### ON STRIG GOSUB / STRIG ON/OFF
+
+```basic
+' Set up joystick button event handler
+ON STRIG(0) GOSUB fireHandler         ' Call fireHandler when button A1 pressed
+STRIG(0) ON                           ' Enable the event trap
+
+' Enable/disable joystick events
+STRIG(0) ON                           ' Enable STRIG(0) events
+STRIG(0) OFF                          ' Disable STRIG(0) events
+STRIG(0) STOP                         ' Suspend events (same as OFF)
+
+' Main program loop
+DO
+    ' Program logic
+    _DELAY 0.016
+LOOP
+
+fireHandler:
+    PRINT "Fire!"
+    RETURN
+```
+
+Note: Button event numbers correspond to STRIG numbers (0, 2, 4, 6 for the four buttons).
+
+---
+
+## Light Pen Functions (Mouse Emulated)
+
+### PEN
+
+```basic
+' Get light pen information (emulated with mouse click/movement)
+p = PEN(0)                            ' -1 if pen activated since last PEN(0), 0 otherwise
+x = PEN(1)                            ' X coordinate where pen was activated
+y = PEN(2)                            ' Y coordinate where pen was activated
+d = PEN(3)                            ' -1 if pen currently down, 0 otherwise
+cx = PEN(4)                           ' Current X coordinate
+cy = PEN(5)                           ' Current Y coordinate
+row = PEN(6)                          ' Text row where activated (1-based)
+col = PEN(7)                          ' Text column where activated (1-based)
+crow = PEN(8)                         ' Current text row (1-based)
+ccol = PEN(9)                         ' Current text column (1-based)
+
+' Example: Get click position
+DO
+    IF PEN(0) = -1 THEN
+        PRINT "Clicked at"; PEN(1); ","; PEN(2)
+    END IF
+    _DELAY 0.016
+LOOP
+```
+
+Note: Light pen is emulated using the mouse. Left click = pen activation, mouse position = pen position.
+
+### ON PEN GOSUB / PEN ON/OFF
+
+```basic
+' Set up light pen event handler
+ON PEN GOSUB clickHandler             ' Call clickHandler when mouse clicked
+PEN ON                                ' Enable the event trap
+
+' Enable/disable pen events
+PEN ON                                ' Enable pen events
+PEN OFF                               ' Disable pen events
+PEN STOP                              ' Suspend events (same as OFF)
+
+' Main program loop
+DO
+    _DELAY 0.016
+LOOP
+
+clickHandler:
+    PRINT "Clicked at"; PEN(1); ","; PEN(2)
+    RETURN
 ```
 
 ---
@@ -997,6 +1201,24 @@ Note: WINDOW maps logical coordinates to physical screen coordinates within the 
 | `POINT(x, y)` | Get pixel color at position | `c = POINT(100, 50)` |
 | `ENVIRON$(name$)` | Get environment variable | `p$ = ENVIRON$("PATH")` |
 | `COMMAND$` | Get command line arguments | `args$ = COMMAND$` |
+
+### DATE$ / TIME$ Assignment
+
+```basic
+' Set custom date (overrides system date for program use)
+DATE$ = "12-25-2025"                  ' Set to December 25, 2025
+PRINT DATE$                           ' Prints "12-25-2025"
+
+' Set custom time (overrides system time for program use)
+TIME$ = "14:30:00"                    ' Set to 2:30 PM
+PRINT TIME$                           ' Prints "14:30:00"
+
+' Use expressions
+myDate$ = "01-01-2020"
+DATE$ = myDate$
+```
+
+Note: These assignments store custom values that override the system date/time for program use. They do not modify the actual system clock.
 
 ### Cursor/Screen Functions
 
