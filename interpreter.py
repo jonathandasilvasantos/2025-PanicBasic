@@ -80,23 +80,23 @@ class LazyPattern:
             self._compiled = re.compile(self._pattern, self._flags)
         return self._compiled
 
-    def match(self, string: str, *args, **kwargs):
+    def match(self, string: str, *args, **kwargs) -> Optional[re.Match]:
         """Match the pattern against a string."""
         return self._compile().match(string, *args, **kwargs)
 
-    def search(self, string: str, *args, **kwargs):
+    def search(self, string: str, *args, **kwargs) -> Optional[re.Match]:
         """Search for the pattern in a string."""
         return self._compile().search(string, *args, **kwargs)
 
-    def findall(self, string: str, *args, **kwargs):
+    def findall(self, string: str, *args, **kwargs) -> List[Any]:
         """Find all occurrences of the pattern in a string."""
         return self._compile().findall(string, *args, **kwargs)
 
-    def sub(self, repl, string: str, *args, **kwargs):
+    def sub(self, repl: Any, string: str, *args, **kwargs) -> str:
         """Substitute pattern matches in a string."""
         return self._compile().sub(repl, string, *args, **kwargs)
 
-    def fullmatch(self, string: str, *args, **kwargs):
+    def fullmatch(self, string: str, *args, **kwargs) -> Optional[re.Match]:
         """Full match the pattern against a string."""
         return self._compile().fullmatch(string, *args, **kwargs)
 
@@ -121,21 +121,21 @@ class LRUCache:
         self.maxsize = maxsize
         self._cache: OrderedDict = OrderedDict()
 
-    def get(self, key, default=None):
+    def get(self, key: Any, default: Any = None) -> Any:
         """Get item from cache, moving it to end (most recently used)."""
         if key in self._cache:
             self._cache.move_to_end(key)
             return self._cache[key]
         return default
 
-    def __contains__(self, key) -> bool:
+    def __contains__(self, key: Any) -> bool:
         return key in self._cache
 
-    def __getitem__(self, key):
+    def __getitem__(self, key: Any) -> Any:
         self._cache.move_to_end(key)
         return self._cache[key]
 
-    def __setitem__(self, key, value):
+    def __setitem__(self, key: Any, value: Any) -> None:
         if key in self._cache:
             self._cache.move_to_end(key)
         self._cache[key] = value
@@ -143,7 +143,7 @@ class LRUCache:
         while len(self._cache) > self.maxsize:
             self._cache.popitem(last=False)
 
-    def clear(self):
+    def clear(self) -> None:
         """Clear all items from the cache."""
         self._cache.clear()
 
@@ -1806,7 +1806,8 @@ class BasicInterpreter:
     def basic_color(self, c: int) -> Tuple[int, int, int]:
         return self.colors.get(c % 16, self.colors[15]) # Default to white if color out of range
 
-    def inkey(self):
+    def inkey(self) -> str:
+        """Return the last key pressed, clearing it from buffer."""
         k = self.last_key
         self.last_key = ""
         return k
@@ -1842,11 +1843,15 @@ class BasicInterpreter:
         elif keys[pygame.K_ESCAPE]:
             self.last_key = chr(27)
 
-    def point(self, x_expr, y_expr):
+    def point(self, x_expr: Any, y_expr: Any) -> int:
         """Get the color number of a pixel at coordinates (x, y).
 
         Uses a reverse color lookup dictionary for O(1) performance instead of
         iterating through all colors.
+
+        Args:
+            x_expr: X coordinate (will be converted to int).
+            y_expr: Y coordinate (will be converted to int).
 
         Returns:
             Color number (0-15) if the pixel color matches a palette color,
@@ -1925,7 +1930,16 @@ class BasicInterpreter:
                     if span_start is not None:
                         stack.append((span_start, ny))
 
-    def eval_expr(self, expr_str: str):
+    def eval_expr(self, expr_str: str) -> Any:
+        """Evaluate a BASIC expression and return its result.
+
+        Args:
+            expr_str: The BASIC expression to evaluate.
+
+        Returns:
+            The result of evaluating the expression. May be int, float, str,
+            or other types depending on the expression.
+        """
         if not expr_str.strip():
             return ""
 
