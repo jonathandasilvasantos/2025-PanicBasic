@@ -1108,6 +1108,45 @@ class TestRenderingPerformance(unittest.TestCase):
         # Should be cached
         self.assertIn("x + 5", _expr_cache)
 
+    def test_eval_locals_fingerprint_optimization(self):
+        """Test that eval_locals uses fingerprint to avoid unnecessary rebuilds."""
+        self.interp.reset(["x = 10", "y = 20"])
+
+        # Run some statements to set up variables
+        self.interp.step()  # x = 10
+        self.interp.step()  # y = 20
+
+        # First eval should set the fingerprint
+        self.interp.eval_expr("x + y")
+        initial_fingerprint = self.interp._eval_locals_fingerprint
+        self.assertIsNotNone(initial_fingerprint)
+
+        # Eval again with same variables - fingerprint should stay the same
+        self.interp.eval_expr("x * 2")
+        self.assertEqual(initial_fingerprint, self.interp._eval_locals_fingerprint)
+
+        # Add a new variable - fingerprint should change
+        self.interp.variables["Z"] = 30
+        self.interp.eval_expr("x + z")
+        new_fingerprint = self.interp._eval_locals_fingerprint
+        self.assertNotEqual(initial_fingerprint, new_fingerprint)
+
+    def test_eval_locals_updated_on_value_change(self):
+        """Test that eval_locals values are updated when variables change."""
+        self.interp.reset(["x = 10"])
+        self.interp.step()
+
+        # Evaluate expression
+        result1 = self.interp.eval_expr("x")
+        self.assertEqual(result1, 10)
+
+        # Change variable value
+        self.interp.variables["X"] = 50
+
+        # Should get updated value
+        result2 = self.interp.eval_expr("x")
+        self.assertEqual(result2, 50)
+
 
 class TestFileSystemCommands(unittest.TestCase):
     """Test file system commands (KILL, NAME, MKDIR, RMDIR, CHDIR, FILES)."""

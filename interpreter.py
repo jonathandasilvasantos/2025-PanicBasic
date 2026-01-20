@@ -737,6 +737,9 @@ class BasicInterpreter:
         self.pc: int = 0
         self.variables: Dict[str, Any] = {}
         self.constants: Dict[str, Any] = {}
+        # Eval locals optimization - track state to avoid unnecessary rebuilds
+        self._eval_locals: Dict[str, Any] = {}
+        self._eval_locals_fingerprint: Optional[tuple] = None  # (var_keys, const_keys, fn_keys, proc_keys)
         self.loop_stack: List[Dict[str, Any]] = []
         self.for_stack: List[Dict[str, Any]] = []
         self.gosub_stack: List[int] = []
@@ -1605,6 +1608,9 @@ class BasicInterpreter:
         _expr_cache.clear()
         _memoized_arg_splits.clear()  # Clear arg split cache
         _identifier_cache.clear()  # Clear identifier conversion cache
+        # Reset eval locals optimization state
+        self._eval_locals.clear()
+        self._eval_locals_fingerprint = None
         self.if_level = 0
         self.if_skip_level = -1
         self.if_executed.clear()
@@ -1911,40 +1917,53 @@ class BasicInterpreter:
                 self.running = False
                 return 0
 
-        # Prepare environment for eval - reuse cached locals dict
-        if not hasattr(self, '_eval_locals'):
-            self._eval_locals = {}
+        # Prepare environment for eval - use fingerprint to avoid unnecessary rebuilds
+        # Compute current fingerprint based on dict keys (cheap operation)
+        current_fingerprint = (
+            frozenset(self.variables.keys()),
+            frozenset(self.constants.keys()),
+            frozenset(self.user_functions.keys()),
+            frozenset(k for k, v in self.procedures.items() if v['type'] == 'FUNCTION')
+        )
 
         eval_locals = self._eval_locals
-        eval_locals.clear()
 
-        # Map constants and variables using their Python-mangled names
-        for name, value in self.constants.items():
-            eval_locals[_basic_to_python_identifier(name)] = value
-        for name, value in self.variables.items():
-            eval_locals[_basic_to_python_identifier(name)] = value
+        # Only rebuild if fingerprint changed (new variables/constants/functions added)
+        if self._eval_locals_fingerprint != current_fingerprint:
+            eval_locals.clear()
 
-        # Add user-defined FN functions to eval locals
-        for fn_name in self.user_functions:
-            # Convert function name to Python-compatible format (e.g., GREET$ -> GREET_STR)
-            py_fn_name = _basic_to_python_identifier(fn_name)
-            fn_key = f"FN_{py_fn_name}"
-            # Create a closure to capture the current fn_name
-            def make_fn_caller(name):
-                return lambda *args: self._call_user_function(name, list(args))
-            eval_locals[fn_key] = make_fn_caller(fn_name)
+            # Map constants and variables using their Python-mangled names
+            for name, value in self.constants.items():
+                eval_locals[_basic_to_python_identifier(name)] = value
+            for name, value in self.variables.items():
+                eval_locals[_basic_to_python_identifier(name)] = value
 
-        # Add FUNCTION procedures to eval locals so they can be called in expressions
-        for proc_name, proc in self.procedures.items():
-            if proc['type'] == 'FUNCTION':
-                py_name = _basic_to_python_identifier(proc_name)
-                def make_proc_caller(name):
-                    return lambda *args: self._call_function_procedure(name, args)
-                eval_locals[py_name] = make_proc_caller(proc_name)
-                # Also add under base name (without suffix) for calls like CanDown vs CanDown%
-                base_name = proc_name.rstrip('$%!#&')
-                if base_name != proc_name:
-                    eval_locals[base_name] = make_proc_caller(proc_name)
+            # Add user-defined FN functions to eval locals
+            for fn_name in self.user_functions:
+                py_fn_name = _basic_to_python_identifier(fn_name)
+                fn_key = f"FN_{py_fn_name}"
+                def make_fn_caller(name):
+                    return lambda *args: self._call_user_function(name, list(args))
+                eval_locals[fn_key] = make_fn_caller(fn_name)
+
+            # Add FUNCTION procedures to eval locals
+            for proc_name, proc in self.procedures.items():
+                if proc['type'] == 'FUNCTION':
+                    py_name = _basic_to_python_identifier(proc_name)
+                    def make_proc_caller(name):
+                        return lambda *args: self._call_function_procedure(name, args)
+                    eval_locals[py_name] = make_proc_caller(proc_name)
+                    base_name = proc_name.rstrip('$%!#&')
+                    if base_name != proc_name:
+                        eval_locals[base_name] = make_proc_caller(proc_name)
+
+            self._eval_locals_fingerprint = current_fingerprint
+        else:
+            # Fingerprint same - just update values (keys haven't changed)
+            for name, value in self.constants.items():
+                eval_locals[_basic_to_python_identifier(name)] = value
+            for name, value in self.variables.items():
+                eval_locals[_basic_to_python_identifier(name)] = value
 
         # QBasic treats undefined numeric variables as 0 and undefined string variables as ""
         # Retry evaluation up to 10 times, adding undefined variables as we encounter them
