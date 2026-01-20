@@ -181,6 +181,24 @@ A full **Angry Birds clone** with:
 python main.py --run examples/angry_and_furious_birds.bas
 ```
 
+### Iron Slug (Featured)
+
+![Iron Slug](docs/images/iron_slug.png)
+
+A **Metal Slug tribute** run-and-gun action game:
+- Horizontal scrolling shooter with multi-directional aiming
+- Multiple enemy types: soldiers, tanks, helicopters, turrets, jetpack troops
+- Platform jumping and vertical gameplay
+- Rescue POWs for bonus points and power-ups
+- Multiple weapons: Pistol, Heavy MG, Rocket Launcher
+- Boss battles at the end of each zone
+- 5 zones with increasing difficulty
+- Sound effects and music (toggle with M key)
+
+```bash
+python main.py --run examples/iron_slug.bas
+```
+
 ### Other Examples
 
 | Game | Description | Command |
@@ -205,10 +223,12 @@ pasic/
 │   ├── index.html
 │   └── images/
 │       ├── angry_and_furious_birds.png
-│       └── big_monkey.png
+│       ├── big_monkey.png
+│       └── iron_slug.png
 └── examples/         # Sample BASIC programs
     ├── big_monkey.bas
     ├── angry_and_furious_birds.bas
+    ├── iron_slug.bas
     ├── pong.bas
     ├── star.bas
     ├── car.bas

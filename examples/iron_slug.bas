@@ -27,13 +27,13 @@ CONST PLAYERSPEED = 3
 CONST BULLETSPEED = 10
 CONST ENEMYSPEED = 1.2
 
-' ---- Game Limits ----
-CONST MAXBULLETS = 30
-CONST MAXENEMIES = 20
-CONST MAXEXPLOSIONS = 8
-CONST MAXPARTICLES = 20
-CONST MAXPLATFORMS = 25
-CONST MAXCRATES = 8
+' ---- Game Limits (reduced for performance) ----
+CONST MAXBULLETS = 20
+CONST MAXENEMIES = 15
+CONST MAXEXPLOSIONS = 5
+CONST MAXPARTICLES = 10
+CONST MAXPLATFORMS = 15
+CONST MAXCRATES = 5
 CONST LEVELWIDTH = 2400
 
 ' ---- Player Variables ----
@@ -726,67 +726,20 @@ InitLevel:
 RETURN
 
 SetupPlatforms:
-  ' Create multi-level platforms throughout level
+  ' Create platforms (simplified for performance)
   platIdx = 0
 
-  ' Level 1 platforms (low - easy jumps from ground)
-  FOR px = 200 TO LEVELWIDTH - 300 STEP 150
+  ' Main platforms at different heights
+  FOR px = 300 TO LEVELWIDTH - 400 STEP 250
     IF platIdx < MAXPLATFORMS THEN
-      IF RND < 0.8 THEN
-        PlatActive(platIdx) = 1
-        PlatX(platIdx) = px + RND * 60
-        PlatY(platIdx) = GROUNDY - 35 - RND * 15
-        PlatW(platIdx) = 45 + RND * 35
-        PlatType(platIdx) = INT(RND * 3) + 1
-        platIdx = platIdx + 1
-      END IF
+      PlatActive(platIdx) = 1
+      PlatX(platIdx) = px + INT(RND * 60)
+      PlatY(platIdx) = GROUNDY - 35 - INT(RND * 50)
+      PlatW(platIdx) = 50 + INT(RND * 30)
+      PlatType(platIdx) = INT(RND * 3) + 1
+      platIdx = platIdx + 1
     END IF
   NEXT px
-
-  ' Level 2 platforms (medium height)
-  FOR px = 250 TO LEVELWIDTH - 350 STEP 180
-    IF platIdx < MAXPLATFORMS THEN
-      IF RND < 0.7 THEN
-        PlatActive(platIdx) = 1
-        PlatX(platIdx) = px + RND * 70
-        PlatY(platIdx) = GROUNDY - 70 - RND * 20
-        PlatW(platIdx) = 40 + RND * 40
-        PlatType(platIdx) = INT(RND * 3) + 1
-        platIdx = platIdx + 1
-      END IF
-    END IF
-  NEXT px
-
-  ' Level 3 platforms (high - for skilled players)
-  FOR px = 350 TO LEVELWIDTH - 400 STEP 250
-    IF platIdx < MAXPLATFORMS THEN
-      IF RND < 0.5 THEN
-        PlatActive(platIdx) = 1
-        PlatX(platIdx) = px + RND * 80
-        PlatY(platIdx) = GROUNDY - 100 - RND * 25
-        PlatW(platIdx) = 50 + RND * 50
-        PlatType(platIdx) = 1
-        platIdx = platIdx + 1
-      END IF
-    END IF
-  NEXT px
-
-  ' Staircase sections (clusters of platforms)
-  FOR section = 0 TO 3
-    baseX = 500 + section * 500
-    IF baseX < LEVELWIDTH - 200 THEN
-      FOR step = 0 TO 2
-        IF platIdx < MAXPLATFORMS THEN
-          PlatActive(platIdx) = 1
-          PlatX(platIdx) = baseX + step * 45
-          PlatY(platIdx) = GROUNDY - 30 - step * 30
-          PlatW(platIdx) = 40
-          PlatType(platIdx) = 2
-          platIdx = platIdx + 1
-        END IF
-      NEXT step
-    END IF
-  NEXT section
 RETURN
 
 SetupCrates:
@@ -877,64 +830,35 @@ RETURN
 ' ============================================
 
 DrawBackground:
-  ' Pure black sky - deep night
+  ' Clear screen with black (single operation)
   CLS
-  LINE (0, 0)-(SCREENW, SCREENH), 0, BF
 
-  ' Bright stars on pure black - high contrast
-  COLOR 15
-  FOR st = 0 TO 15
-    starX = (st * 23) MOD SCREENW
-    starY = 5 + (st * 7) MOD 50
-    PSET (starX, starY), 15
-  NEXT st
+  ' Simplified stars - just a few PSETs (no loops)
+  PSET (23, 12), 15
+  PSET (69, 26), 15
+  PSET (115, 5), 15
+  PSET (161, 40), 7
+  PSET (207, 19), 15
+  PSET (253, 33), 7
+  PSET (299, 8), 15
+  PSET (41, 45), 7
+  PSET (180, 28), 15
 
-  ' Dim stars
-  COLOR 7
-  FOR st = 0 TO 10
-    starX = (st * 31 + 10) MOD SCREENW
-    starY = 8 + (st * 11) MOD 45
-    PSET (starX, starY), 7
-  NEXT st
-
-  ' Large bright moon - main light source
-  moonX = 270 - CameraX * 0.02
-  IF moonX > -40 AND moonX < SCREENW + 40 THEN
-    ' Moon glow (outer)
-    COLOR 8
-    CIRCLE (moonX, 30), 28, 8
-    ' Moon body
-    COLOR 15
-    CIRCLE (moonX, 30), 22, 15
-    PAINT (moonX, 30), 15, 15
-    ' Moon surface detail
-    COLOR 7
-    CIRCLE (moonX - 8, 25), 5, 7
-    CIRCLE (moonX + 6, 33), 4, 7
-    CIRCLE (moonX - 3, 35), 3, 7
+  ' Simplified moon - just filled rectangle (no PAINT)
+  moonX = 270 - INT(CameraX * 0.02)
+  IF moonX > -30 AND moonX < SCREENW + 30 THEN
+    LINE (moonX - 18, 12)-(moonX + 18, 48), 15, BF
   END IF
 
-  ' Distant horizon line - subtle
-  COLOR 8
+  ' Horizon line
   LINE (0, 80)-(SCREENW, 80), 8
 RETURN
 
 DrawGround:
-  ' Ground area - dark but visible
-  COLOR 8
+  ' Ground area - single filled rectangle
   LINE (0, GROUNDY)-(SCREENW, SCREENH), 8, BF
-
-  ' Top ground edge - bright for contrast
-  COLOR 7
-  LINE (0, GROUNDY)-(SCREENW, GROUNDY), 7
-  LINE (0, GROUNDY + 1)-(SCREENW, GROUNDY + 1), 7
-
-  ' Ground texture pattern
-  COLOR 6
-  FOR gx = 0 TO SCREENW STEP 30
-    scrollGx = INT(CameraX) MOD 30
-    LINE (gx - scrollGx, GROUNDY + 5)-(gx - scrollGx + 15, GROUNDY + 5), 6
-  NEXT gx
+  ' Top ground edge
+  LINE (0, GROUNDY)-(SCREENW, GROUNDY + 1), 7, BF
 RETURN
 
 DrawPlatforms:
@@ -942,29 +866,15 @@ DrawPlatforms:
     IF PlatActive(pi) = 1 THEN
       platSX = PlatX(pi) - CameraX
       IF platSX > -PlatW(pi) AND platSX < SCREENW + 10 THEN
-        ' Platform based on type
+        ' All platforms use simple filled rectangle + top line
         IF PlatType(pi) = 1 THEN
-          ' Metal platform
-          COLOR 7
           LINE (platSX, PlatY(pi))-(platSX + PlatW(pi), PlatY(pi) + 6), 7, BF
-          COLOR 15
           LINE (platSX, PlatY(pi))-(platSX + PlatW(pi), PlatY(pi)), 15
-          ' Rivets
-          COLOR 8
-          FOR rv = platSX + 5 TO platSX + PlatW(pi) - 5 STEP 12
-            PSET (rv, PlatY(pi) + 3), 8
-          NEXT rv
         ELSEIF PlatType(pi) = 2 THEN
-          ' Wooden platform
-          COLOR 6
           LINE (platSX, PlatY(pi))-(platSX + PlatW(pi), PlatY(pi) + 5), 6, BF
-          COLOR 14
           LINE (platSX, PlatY(pi))-(platSX + PlatW(pi), PlatY(pi)), 14
         ELSE
-          ' Concrete platform
-          COLOR 8
           LINE (platSX, PlatY(pi))-(platSX + PlatW(pi), PlatY(pi) + 8), 8, BF
-          COLOR 7
           LINE (platSX, PlatY(pi))-(platSX + PlatW(pi), PlatY(pi)), 7
         END IF
       END IF
@@ -1087,56 +997,36 @@ DrawPlayer:
     IF PlayerHitTimer MOD 4 < 2 THEN RETURN
   END IF
 
-  ' Body (bright green military - high contrast)
-  COLOR 10
+  ' Body (bright green - single rectangle)
   LINE (px - 5, py - 12)-(px + 5, py), 10, BF
-  ' Body outline for definition
-  COLOR 2
-  LINE (px - 5, py - 12)-(px + 5, py), 2, B
 
-  ' Head (bright skin)
-  COLOR 14
-  CIRCLE (px, py - 17), 5, 14
-  PAINT (px, py - 17), 14, 14
+  ' Head (rectangle instead of circle+paint)
+  LINE (px - 4, py - 21)-(px + 4, py - 13), 14, BF
 
-  ' Helmet (bright green)
-  COLOR 10
+  ' Helmet
   LINE (px - 6, py - 23)-(px + 6, py - 18), 10, BF
-  COLOR 2
-  LINE (px - 6, py - 23)-(px + 6, py - 18), 2, B
 
-  ' Gun (silver/bright)
-  COLOR 7
+  ' Gun
   IF PlayerDir > 0 THEN
     LINE (px + 5, py - 8)-(px + 15, py - 6), 7
     LINE (px + 13, py - 10)-(px + 17, py - 4), 7, BF
-    ' Muzzle flash when shooting
+    ' Muzzle flash (simple rectangle)
     IF PlayerShooting > 0 THEN
-      COLOR 14
-      CIRCLE (px + 19, py - 7), 5, 14
-      COLOR 15
-      CIRCLE (px + 19, py - 7), 3, 15
-      PAINT (px + 19, py - 7), 15, 15
+      LINE (px + 16, py - 10)-(px + 24, py - 4), 14, BF
     END IF
   ELSE
     LINE (px - 5, py - 8)-(px - 15, py - 6), 7
     LINE (px - 17, py - 10)-(px - 13, py - 4), 7, BF
     IF PlayerShooting > 0 THEN
-      COLOR 14
-      CIRCLE (px - 19, py - 7), 5, 14
-      COLOR 15
-      CIRCLE (px - 19, py - 7), 3, 15
-      PAINT (px - 19, py - 7), 15, 15
+      LINE (px - 24, py - 10)-(px - 16, py - 4), 14, BF
     END IF
   END IF
 
-  ' Legs - animated when moving (bright green)
-  COLOR 10
+  ' Legs - animated
   PlayerFrame = PlayerFrame + 1
   IF PlayerFrame > 20 THEN PlayerFrame = 0
 
   IF PlayerOnGround = 0 THEN
-    ' Jumping pose
     LINE (px - 4, py)-(px - 7, py + 5), 10
     LINE (px + 4, py)-(px + 7, py + 5), 10
   ELSEIF PlayerFrame < 10 THEN
@@ -1147,7 +1037,6 @@ DrawPlayer:
     LINE (px + 3, py)-(px + 5, py + 8), 10
   END IF
 
-  ' Decrease shooting flash
   IF PlayerShooting > 0 THEN PlayerShooting = PlayerShooting - 1
 RETURN
 
@@ -1157,25 +1046,13 @@ DrawBullets:
       bx = INT(BulletX(i) - CameraX)
       by = INT(BulletY(i))
       IF bx >= -10 AND bx < SCREENW + 10 AND by >= -10 AND by < SCREENH + 10 THEN
-        ' Different colors for player vs enemy bullets
         IF BulletOwner(i) = 0 THEN
-          ' Player bullet - yellow/white
-          COLOR 14
-          ' Draw trail based on velocity direction
-          trailX = bx - BulletVelX(i)
-          trailY = by - BulletVelY(i)
-          LINE (trailX, trailY)-(bx, by), 14
-          ' Bullet head
-          COLOR 15
+          ' Player bullet - simple line + pixel
+          LINE (bx - 3, by)-(bx + 3, by), 14
           PSET (bx, by), 15
-          CIRCLE (bx, by), 2, 15
         ELSE
-          ' Enemy bullet - red
-          COLOR 4
-          trailX = bx - BulletVelX(i) * 0.5
-          trailY = by - BulletVelY(i) * 0.5
-          LINE (trailX, trailY)-(bx, by), 4
-          COLOR 12
+          ' Enemy bullet - simple line + pixel
+          LINE (bx - 2, by)-(bx + 2, by), 4
           PSET (bx, by), 12
         END IF
       END IF
@@ -1194,151 +1071,64 @@ DrawEnemies:
         IF EnemyFrame(i) > 20 THEN EnemyFrame(i) = 0
 
         IF EnemyType(i) = 1 THEN
-          ' Soldier enemy - RED uniform (enemy color!)
-          ' Body (red - enemy)
-          COLOR 4
+          ' Soldier - simplified (rectangles only)
           LINE (ex - 4, ey - 10)-(ex + 4, ey), 4, BF
-          COLOR 12
-          LINE (ex - 4, ey - 10)-(ex + 4, ey), 12, B
-
-          ' Head (bright)
-          COLOR 14
-          CIRCLE (ex, ey - 14), 4, 14
-          PAINT (ex, ey - 14), 14, 14
-
-          ' Helmet (red)
-          COLOR 4
+          LINE (ex - 4, ey - 17)-(ex + 4, ey - 11), 14, BF
           LINE (ex - 5, ey - 18)-(ex + 5, ey - 14), 4, BF
-          COLOR 12
-          LINE (ex - 5, ey - 18)-(ex + 5, ey - 14), 12, B
-
-          ' Gun pointing at player (silver)
-          COLOR 7
           IF EnemyDir(i) > 0 THEN
             LINE (ex + 4, ey - 6)-(ex + 12, ey - 5), 7
           ELSE
-            LINE (ex - 4, ey - 6)-(ex - 12, ey - 5), 7
+            LINE (ex - 12, ey - 5)-(ex - 4, ey - 6), 7
           END IF
-
-          ' Legs (red)
-          COLOR 4
-          IF EnemyFrame(i) < 10 THEN
-            LINE (ex - 2, ey)-(ex - 4, ey + 6), 4
-            LINE (ex + 2, ey)-(ex + 5, ey + 6), 4
-          ELSE
-            LINE (ex - 2, ey)-(ex - 5, ey + 6), 4
-            LINE (ex + 2, ey)-(ex + 4, ey + 6), 4
-          END IF
+          LINE (ex - 2, ey)-(ex - 4, ey + 6), 4
+          LINE (ex + 2, ey)-(ex + 4, ey + 6), 4
 
         ELSEIF EnemyType(i) = 2 THEN
-          ' Tank enemy - bright/visible
-          ' Body (silver/gray)
-          COLOR 7
+          ' Tank - simplified
           LINE (ex - 15, ey - 8)-(ex + 15, ey), 7, BF
-          COLOR 15
-          LINE (ex - 15, ey - 8)-(ex + 15, ey), 15, B
-          ' Turret
-          COLOR 7
           LINE (ex - 8, ey - 15)-(ex + 5, ey - 8), 7, BF
-          ' Cannon
-          COLOR 15
           IF EnemyDir(i) > 0 THEN
             LINE (ex + 5, ey - 13)-(ex + 25, ey - 10), 15, BF
           ELSE
             LINE (ex - 25, ey - 13)-(ex - 5, ey - 10), 15, BF
           END IF
-          ' Tracks (dark with outline)
-          COLOR 8
           LINE (ex - 18, ey)-(ex + 18, ey + 5), 8, BF
-          COLOR 7
-          LINE (ex - 18, ey)-(ex + 18, ey + 5), 7, B
 
         ELSEIF EnemyType(i) = 3 THEN
-          ' HELICOPTER - Metal Slug style!
-          ' Main body
-          COLOR 7
+          ' Helicopter - simplified (no COS calc)
           LINE (ex - 20, ey - 5)-(ex + 15, ey + 8), 7, BF
-          COLOR 15
-          LINE (ex - 20, ey - 5)-(ex + 15, ey + 8), 15, B
-          ' Cockpit (red glass)
-          COLOR 4
           LINE (ex + 5, ey - 3)-(ex + 13, ey + 5), 4, BF
-          COLOR 12
-          LINE (ex + 5, ey - 3)-(ex + 13, ey + 5), 12, B
-          ' Tail
-          COLOR 8
-          LINE (ex - 20, ey)-(ex - 35, ey - 3), 8, BF
-          LINE (ex - 35, ey - 8)-(ex - 30, ey), 8, BF
-          ' Main rotor (spinning)
-          COLOR 15
-          rotorAngle = EnemyFrame(i) * 20
-          rx1 = ex - 5 + COS(rotorAngle * 0.0174) * 25
-          rx2 = ex - 5 - COS(rotorAngle * 0.0174) * 25
-          LINE (rx1, ey - 10)-(rx2, ey - 10), 15
-          LINE (ex - 5, ey - 12)-(ex - 5, ey - 8), 7
-          ' Tail rotor
+          LINE (ex - 35, ey - 3)-(ex - 20, ey + 2), 8, BF
+          ' Simple rotor line
           IF EnemyFrame(i) MOD 4 < 2 THEN
-            LINE (ex - 35, ey - 10)-(ex - 35, ey - 4), 15
+            LINE (ex - 30, ey - 10)-(ex + 20, ey - 10), 15
           ELSE
-            LINE (ex - 37, ey - 7)-(ex - 33, ey - 7), 15
+            LINE (ex - 5, ey - 10)-(ex - 5, ey - 10), 15
           END IF
-          ' Gun underneath
-          COLOR 8
           LINE (ex, ey + 8)-(ex, ey + 14), 8
 
         ELSEIF EnemyType(i) = 4 THEN
-          ' TURRET - stationary gun emplacement
-          ' Base
-          COLOR 8
+          ' Turret - simplified
           LINE (ex - 12, ey - 5)-(ex + 12, ey + 5), 8, BF
-          COLOR 7
-          LINE (ex - 12, ey - 5)-(ex + 12, ey + 5), 7, B
-          ' Rotating gun
-          COLOR 7
           IF EnemyDir(i) > 0 THEN
-            LINE (ex, ey - 8)-(ex + 20, ey - 10), 7, BF
-            LINE (ex - 5, ey - 12)-(ex + 5, ey - 5), 7, BF
+            LINE (ex, ey - 10)-(ex + 20, ey - 8), 7, BF
           ELSE
             LINE (ex - 20, ey - 10)-(ex, ey - 8), 7, BF
-            LINE (ex - 5, ey - 12)-(ex + 5, ey - 5), 7, BF
           END IF
-          ' Warning light
+          LINE (ex - 5, ey - 12)-(ex + 5, ey - 5), 7, BF
           IF EnemyFrame(i) MOD 10 < 5 THEN
-            COLOR 4
-            CIRCLE (ex, ey - 15), 3, 4
+            LINE (ex - 2, ey - 17)-(ex + 2, ey - 13), 4, BF
           END IF
 
         ELSEIF EnemyType(i) = 5 THEN
-          ' JETPACK SOLDIER - flying infantry
-          ' Jetpack
-          COLOR 8
+          ' Jetpack soldier - simplified
           LINE (ex - 6, ey - 8)-(ex - 2, ey + 2), 8, BF
-          ' Jetpack flame
           IF EnemyFrame(i) MOD 6 < 3 THEN
-            COLOR 14
             LINE (ex - 5, ey + 2)-(ex - 3, ey + 8), 14
-            COLOR 4
-            LINE (ex - 5, ey + 5)-(ex - 3, ey + 10), 4
-          ELSE
-            COLOR 14
-            LINE (ex - 5, ey + 2)-(ex - 3, ey + 6), 14
-            COLOR 4
-            LINE (ex - 5, ey + 4)-(ex - 3, ey + 8), 4
           END IF
-          ' Body (red)
-          COLOR 4
           LINE (ex - 3, ey - 10)-(ex + 4, ey), 4, BF
-          ' Head
-          COLOR 14
-          CIRCLE (ex, ey - 14), 4, 14
-          PAINT (ex, ey - 14), 14, 14
-          ' Helmet with visor
-          COLOR 8
+          LINE (ex - 4, ey - 17)-(ex + 4, ey - 11), 14, BF
           LINE (ex - 5, ey - 18)-(ex + 5, ey - 14), 8, BF
-          COLOR 11
-          LINE (ex - 3, ey - 16)-(ex + 3, ey - 14), 11
-          ' Gun
-          COLOR 7
           IF EnemyDir(i) > 0 THEN
             LINE (ex + 4, ey - 6)-(ex + 12, ey - 5), 7
           ELSE
@@ -1349,7 +1139,6 @@ DrawEnemies:
     END IF
   NEXT i
 
-  ' Draw Boss if active
   IF BossActive = 1 THEN
     GOSUB DrawBoss
   END IF
@@ -1364,63 +1153,27 @@ DrawBoss:
   BossFrame = BossFrame + 1
   IF BossFrame > 30 THEN BossFrame = 0
 
-  ' Giant mech/tank boss - HIGH CONTRAST
-  ' Main body (bright silver)
-  COLOR 7
+  ' Main body
   LINE (bx - 40, by - 30)-(bx + 40, by + 10), 7, BF
-  COLOR 15
-  LINE (bx - 40, by - 30)-(bx + 40, by + 10), 15, B
-
-  ' Cockpit (red - evil!)
-  COLOR 4
+  ' Cockpit
   LINE (bx - 20, by - 45)-(bx + 20, by - 30), 4, BF
-  COLOR 12
-  LINE (bx - 20, by - 45)-(bx + 20, by - 30), 12, B
-  ' Cockpit glass (cyan glow)
-  COLOR 11
   LINE (bx - 15, by - 42)-(bx + 15, by - 33), 11, BF
-  COLOR 15
-  LINE (bx - 15, by - 42)-(bx + 15, by - 33), 15, B
-
-  ' Arms/Cannons (bright)
-  COLOR 7
-  LINE (bx - 40, by - 20)-(bx - 60, by - 15), 7, BF
+  ' Arms/Cannons
+  LINE (bx - 60, by - 20)-(bx - 40, by - 15), 7, BF
   LINE (bx + 40, by - 20)-(bx + 60, by - 15), 7, BF
-  COLOR 15
-  LINE (bx - 40, by - 20)-(bx - 60, by - 15), 15, B
-  LINE (bx + 40, by - 20)-(bx + 60, by - 15), 15, B
-
-  ' Cannon tips (flashing red/yellow)
+  ' Cannon tips (flashing)
   IF BossFrame < 15 THEN
-    COLOR 14
-    CIRCLE (bx - 65, by - 17), 6, 14
-    CIRCLE (bx + 65, by - 17), 6, 14
-    COLOR 4
-    CIRCLE (bx - 65, by - 17), 4, 4
-    CIRCLE (bx + 65, by - 17), 4, 4
+    LINE (bx - 70, by - 22)-(bx - 60, by - 12), 14, BF
+    LINE (bx + 60, by - 22)-(bx + 70, by - 12), 14, BF
   END IF
-
-  ' Legs (silver)
-  COLOR 7
-  LINE (bx - 30, by + 10)-(bx - 35, by + 30), 7, BF
+  ' Legs
+  LINE (bx - 35, by + 10)-(bx - 30, by + 30), 7, BF
   LINE (bx + 30, by + 10)-(bx + 35, by + 30), 7, BF
-  COLOR 15
-  LINE (bx - 30, by + 10)-(bx - 35, by + 30), 15, B
-  LINE (bx + 30, by + 10)-(bx + 35, by + 30), 15, B
-
   ' Feet
-  COLOR 7
   LINE (bx - 45, by + 30)-(bx - 25, by + 35), 7, BF
   LINE (bx + 25, by + 30)-(bx + 45, by + 35), 7, BF
-  COLOR 15
-  LINE (bx - 45, by + 30)-(bx - 25, by + 35), 15, B
-  LINE (bx + 25, by + 30)-(bx + 45, by + 35), 15, B
-
-  ' Health bar (red on black)
-  COLOR 0
-  LINE (bx - 41, by - 56)-(bx + 41, by - 49), 0, BF
-  COLOR 4
-  LINE (bx - 40, by - 55)-(bx + 40, by - 50), 4, B
+  ' Health bar
+  LINE (bx - 40, by - 55)-(bx + 40, by - 50), 0, BF
   healthWidth = (BossHealth / (20 + Level * 10)) * 78
   IF healthWidth > 0 THEN
     LINE (bx - 39, by - 54)-(bx - 39 + healthWidth, by - 51), 4, BF
@@ -1434,23 +1187,14 @@ DrawExplosions:
       ey = INT(ExpY(i))
 
       IF ex >= -30 AND ex < SCREENW + 30 THEN
-        ' Expanding explosion
+        ' Explosion using rectangles instead of circles
         radius = ExpFrame(i) * 2
         IF ExpFrame(i) < 5 THEN
-          COLOR 15
-          CIRCLE (ex, ey), radius, 15
-          COLOR 14
-          CIRCLE (ex, ey), radius - 2, 14
+          LINE (ex - radius, ey - radius)-(ex + radius, ey + radius), 15, BF
         ELSEIF ExpFrame(i) < 10 THEN
-          COLOR 14
-          CIRCLE (ex, ey), radius, 14
-          COLOR 4
-          CIRCLE (ex, ey), radius - 3, 4
+          LINE (ex - radius, ey - radius)-(ex + radius, ey + radius), 14, BF
         ELSE
-          COLOR 4
-          CIRCLE (ex, ey), radius, 4
-          COLOR 8
-          CIRCLE (ex, ey), radius - 2, 8
+          LINE (ex - radius, ey - radius)-(ex + radius, ey + radius), 4, BF
         END IF
 
         ExpFrame(i) = ExpFrame(i) + 1
@@ -1483,16 +1227,10 @@ DrawHUD:
     PRINT "R"
   END IF
 
-  ' Lives - mini soldiers
-  COLOR 10
+  ' Lives - simple rectangles
   FOR i = 1 TO PlayerLives
     lx = 270 + (i * 10)
-    ly = 15
-    ' Mini soldier icon
-    LINE (lx - 2, ly - 3)-(lx + 2, ly + 1), 10, BF
-    COLOR 14
-    CIRCLE (lx, ly - 5), 2, 14
-    COLOR 10
+    LINE (lx - 2, 9)-(lx + 2, 16), 10, BF
   NEXT i
 
   ' Progress bar (distance to level end)
