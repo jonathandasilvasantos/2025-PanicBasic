@@ -346,8 +346,8 @@ _play_on_off_re = LazyPattern(r"PLAY\s+(ON|OFF|STOP)", re.IGNORECASE)
 # DEFINT/DEFSNG/DEFDBL/DEFLNG/DEFSTR - Default type declarations (ignored)
 _deftype_re = re.compile(r"DEF(INT|SNG|DBL|LNG|STR)\s+[A-Za-z](?:\s*-\s*[A-Za-z])?", re.IGNORECASE)
 
-# PALETTE - Color palette
-_palette_re = re.compile(r"PALETTE(?:\s+USING\s+(.+)|\s+(\d+)\s*,\s*(.+))?", re.IGNORECASE)
+# PALETTE - Color palette (first arg can be a variable or expression, not just a digit)
+_palette_re = re.compile(r"PALETTE(?:\s+USING\s+(.+)|\s+([^,]+)\s*,\s*(.+))?", re.IGNORECASE)
 
 # PCOPY - Copy video pages (lazy - rarely used)
 _pcopy_re = LazyPattern(r"PCOPY\s+(\d+)\s*,\s*(\d+)", re.IGNORECASE)
