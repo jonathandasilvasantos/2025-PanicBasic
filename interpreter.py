@@ -862,6 +862,9 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
         # INPUT$ key buffer for multi-character reads
         self._input_dollar_buffer: str = ""
 
+        # Simulated key input buffer for testing (FIFO queue)
+        self._simulated_key_buffer: List[str] = []
+
         # Command line arguments (set externally)
         self.command_line_args: str = ""
 
@@ -2417,10 +2420,54 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
         return self.colors.get(c % 16, self.colors[15])
 
     def inkey(self) -> str:
-        """Return the last key pressed, clearing it from buffer."""
+        """Return the last key pressed, clearing it from buffer.
+
+        Checks simulated key buffer first (for testing), then last_key.
+        """
+        # Check simulated buffer first (for headless testing)
+        if self._simulated_key_buffer:
+            return self._simulated_key_buffer.pop(0)
         k = self.last_key
         self.last_key = ""
         return k
+
+    def inject_key(self, key: str) -> None:
+        """Inject a single key into the simulated input buffer for testing.
+
+        Args:
+            key: The key to inject. Can be:
+                - Single character: "a", " ", "1"
+                - Special keys: chr(13) for Enter, chr(27) for Escape
+                - Extended keys: chr(0) + "H" for Up, chr(0) + "P" for Down,
+                                 chr(0) + "K" for Left, chr(0) + "M" for Right
+        """
+        self._simulated_key_buffer.append(key)
+
+    def inject_keys(self, keys: List[str]) -> None:
+        """Inject multiple keys into the simulated input buffer for testing.
+
+        Args:
+            keys: List of keys to inject (processed in order).
+        """
+        self._simulated_key_buffer.extend(keys)
+
+    def inject_string(self, text: str, press_enter: bool = True) -> None:
+        """Inject a string as a sequence of key presses for testing.
+
+        Useful for simulating typed input like "45" followed by Enter.
+
+        Args:
+            text: The text to type (each character becomes a key press).
+            press_enter: If True, append Enter key at the end.
+        """
+        for char in text:
+            self._simulated_key_buffer.append(char)
+        if press_enter:
+            self._simulated_key_buffer.append(chr(13))
+
+    def clear_simulated_keys(self) -> None:
+        """Clear any pending simulated keys."""
+        self._simulated_key_buffer.clear()
 
     def update_held_keys(self) -> None:
         """Update last_key based on currently held keys for continuous input in games."""
@@ -6240,8 +6287,11 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
         Processes pending events (joystick, pen), handles delays, and executes
         BASIC code up to steps_per_frame limit or until a natural pause occurs.
         """
-        # Don't execute BASIC code while waiting for INPUT
+        # When waiting for INPUT, process simulated keys if available (for testing)
         if self.input_mode:
+            if self._simulated_key_buffer:
+                key = self._simulated_key_buffer.pop(0)
+                self._process_input_key(key)
             return
 
         current_ticks = pygame.time.get_ticks()
