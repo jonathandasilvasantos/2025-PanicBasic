@@ -3,9 +3,26 @@ import re
 import random
 import time
 import math
+import os
+import struct
+import array
+import glob
+import subprocess
+import shlex
+import sys
+from datetime import datetime
 from typing import List, Optional, Tuple, Dict, Any
 from pygame.locals import KEYDOWN, QUIT, VIDEORESIZE
-from collections import deque
+from collections import deque, OrderedDict
+from constants import (
+    FONT_SIZE, INITIAL_WINDOW_WIDTH, INITIAL_WINDOW_HEIGHT,
+    DEFAULT_SCREEN_WIDTH, DEFAULT_SCREEN_HEIGHT, MAX_STEPS_PER_FRAME,
+    PRINT_TAB_WIDTH, EXPR_CACHE_MAX_SIZE, COMPILED_CACHE_MAX_SIZE,
+    IDENTIFIER_CACHE_MAX_SIZE, SCREEN_MODES, DEFAULT_COLORS,
+    DEFAULT_FG_COLOR, DEFAULT_BG_COLOR, DEFAULT_ARRAY_SIZE
+)
+from commands.audio import AudioCommandsMixin
+from commands.graphics import GraphicsCommandsMixin
 
 # Try to import numpy for faster array operations
 try:
@@ -36,17 +53,109 @@ class BasicEvalLocals(dict):
         # All other undefined variables default to 0
         return 0
 
-# --- Constants ---
-FONT_SIZE = 16
-INITIAL_WIDTH = 800
-INITIAL_HEIGHT = 600
-DEFAULT_SCREEN_WIDTH = 320
-DEFAULT_SCREEN_HEIGHT = 200
-MAX_STEPS_PER_FRAME = 2000  # Increased from 500 for better performance
-PRINT_TAB_WIDTH = 14
+# Constants are now imported from constants.py module
+# Aliases for backward compatibility
+INITIAL_WIDTH = INITIAL_WINDOW_WIDTH
+INITIAL_HEIGHT = INITIAL_WINDOW_HEIGHT
+
+# --- Lazy Regex Pattern Implementation ---
+class LazyPattern:
+    """Lazily compiled regex pattern.
+
+    Compiles the regex pattern only on first use, reducing startup time for
+    infrequently-used command patterns. The compiled pattern is cached for
+    subsequent uses.
+
+    Args:
+        pattern: The regex pattern string to compile
+        flags: Optional regex flags (e.g., re.IGNORECASE)
+    """
+
+    def __init__(self, pattern: str, flags: int = 0):
+        self._pattern = pattern
+        self._flags = flags
+        self._compiled: Optional[re.Pattern] = None
+
+    def _compile(self) -> re.Pattern:
+        """Compile the pattern if not already compiled."""
+        if self._compiled is None:
+            self._compiled = re.compile(self._pattern, self._flags)
+        return self._compiled
+
+    def match(self, string: str, *args, **kwargs) -> Optional[re.Match]:
+        """Match the pattern against a string."""
+        return self._compile().match(string, *args, **kwargs)
+
+    def search(self, string: str, *args, **kwargs) -> Optional[re.Match]:
+        """Search for the pattern in a string."""
+        return self._compile().search(string, *args, **kwargs)
+
+    def findall(self, string: str, *args, **kwargs) -> List[Any]:
+        """Find all occurrences of the pattern in a string."""
+        return self._compile().findall(string, *args, **kwargs)
+
+    def sub(self, repl: Any, string: str, *args, **kwargs) -> str:
+        """Substitute pattern matches in a string."""
+        return self._compile().sub(repl, string, *args, **kwargs)
+
+    def fullmatch(self, string: str, *args, **kwargs) -> Optional[re.Match]:
+        """Full match the pattern against a string."""
+        return self._compile().fullmatch(string, *args, **kwargs)
+
+    @property
+    def is_compiled(self) -> bool:
+        """Check if the pattern has been compiled."""
+        return self._compiled is not None
+
+
+# --- LRU Cache Implementation ---
+class LRUCache:
+    """Simple LRU (Least Recently Used) cache using OrderedDict.
+
+    Provides bounded caching with automatic eviction of least recently used items
+    when the cache reaches its maximum size. Thread-safe for single-threaded use.
+
+    Args:
+        maxsize: Maximum number of items to store in the cache (default: 10000)
+    """
+
+    def __init__(self, maxsize: int = 10000):
+        self.maxsize = maxsize
+        self._cache: OrderedDict = OrderedDict()
+
+    def get(self, key: Any, default: Any = None) -> Any:
+        """Get item from cache, moving it to end (most recently used)."""
+        if key in self._cache:
+            self._cache.move_to_end(key)
+            return self._cache[key]
+        return default
+
+    def __contains__(self, key: Any) -> bool:
+        return key in self._cache
+
+    def __getitem__(self, key: Any) -> Any:
+        self._cache.move_to_end(key)
+        return self._cache[key]
+
+    def __setitem__(self, key: Any, value: Any) -> None:
+        if key in self._cache:
+            self._cache.move_to_end(key)
+        self._cache[key] = value
+        # Evict oldest items if over capacity
+        while len(self._cache) > self.maxsize:
+            self._cache.popitem(last=False)
+
+    def clear(self) -> None:
+        """Clear all items from the cache."""
+        self._cache.clear()
+
+    def __len__(self) -> int:
+        return len(self._cache)
+
 
 # --- Compiled Expression Cache ---
-_compiled_expr_cache: Dict[str, Any] = {}  # Cache for compiled code objects
+# Using LRU cache to prevent unbounded memory growth
+_compiled_expr_cache: LRUCache = LRUCache(maxsize=COMPILED_CACHE_MAX_SIZE)  # Cache for compiled code objects
 
 # --- Precompiled Regex Patterns ---
 
@@ -196,15 +305,15 @@ _run_re = re.compile(r"RUN(?:\s+(.+))?", re.IGNORECASE)
 # CONT - Continue after STOP
 _cont_re = re.compile(r"CONT", re.IGNORECASE)
 
-# CHAIN - Load and run another program
-_chain_re = re.compile(r"CHAIN\s+(.+)", re.IGNORECASE)
+# CHAIN - Load and run another program (lazy - rarely used)
+_chain_re = LazyPattern(r"CHAIN\s+(.+)", re.IGNORECASE)
 
-# $INCLUDE metacommand
-_include_re = re.compile(r"\$INCLUDE\s*:\s*['\"](.+?)['\"]", re.IGNORECASE)
+# $INCLUDE metacommand (lazy - rarely used)
+_include_re = LazyPattern(r"\$INCLUDE\s*:\s*['\"](.+?)['\"]", re.IGNORECASE)
 
-# $DYNAMIC/$STATIC metacommands
-_dynamic_re = re.compile(r"\$DYNAMIC", re.IGNORECASE)
-_static_re = re.compile(r"\$STATIC", re.IGNORECASE)
+# $DYNAMIC/$STATIC metacommands (lazy - rarely used)
+_dynamic_re = LazyPattern(r"\$DYNAMIC", re.IGNORECASE)
+_static_re = LazyPattern(r"\$STATIC", re.IGNORECASE)
 
 # KEY statement for function key handling
 _key_re = re.compile(r"KEY\s+(\d+)\s*,\s*(.+)", re.IGNORECASE)
@@ -214,23 +323,23 @@ _key_list_re = re.compile(r"KEY\s+(ON|OFF|LIST)", re.IGNORECASE)
 # ON KEY(n) GOSUB
 _on_key_re = re.compile(r"ON\s+KEY\s*\((\d+)\)\s+GOSUB\s+([a-zA-Z0-9_]+)", re.IGNORECASE)
 
-# ON STRIG(n) GOSUB - Joystick button event handler
-_on_strig_re = re.compile(r"ON\s+STRIG\s*\((\d+)\)\s+GOSUB\s+([a-zA-Z0-9_]+)", re.IGNORECASE)
+# ON STRIG(n) GOSUB - Joystick button event handler (lazy - rarely used)
+_on_strig_re = LazyPattern(r"ON\s+STRIG\s*\((\d+)\)\s+GOSUB\s+([a-zA-Z0-9_]+)", re.IGNORECASE)
 
-# STRIG(n) ON/OFF/STOP - Enable/disable joystick button events
-_strig_on_off_re = re.compile(r"STRIG\s*\((\d+)\)\s+(ON|OFF|STOP)", re.IGNORECASE)
+# STRIG(n) ON/OFF/STOP - Enable/disable joystick button events (lazy - rarely used)
+_strig_on_off_re = LazyPattern(r"STRIG\s*\((\d+)\)\s+(ON|OFF|STOP)", re.IGNORECASE)
 
-# ON PEN GOSUB - Light pen event handler
-_on_pen_re = re.compile(r"ON\s+PEN\s+GOSUB\s+([a-zA-Z0-9_]+)", re.IGNORECASE)
+# ON PEN GOSUB - Light pen event handler (lazy - rarely used)
+_on_pen_re = LazyPattern(r"ON\s+PEN\s+GOSUB\s+([a-zA-Z0-9_]+)", re.IGNORECASE)
 
-# PEN ON/OFF/STOP - Enable/disable light pen events
-_pen_on_off_re = re.compile(r"PEN\s+(ON|OFF|STOP)", re.IGNORECASE)
+# PEN ON/OFF/STOP - Enable/disable light pen events (lazy - rarely used)
+_pen_on_off_re = LazyPattern(r"PEN\s+(ON|OFF|STOP)", re.IGNORECASE)
 
-# ON PLAY GOSUB - Music event handler (stub for compatibility)
-_on_play_gosub_re = re.compile(r"ON\s+PLAY\s*\((\d+)\)\s+GOSUB\s+([a-zA-Z0-9_]+)", re.IGNORECASE)
+# ON PLAY GOSUB - Music event handler (lazy - rarely used, stub for compatibility)
+_on_play_gosub_re = LazyPattern(r"ON\s+PLAY\s*\((\d+)\)\s+GOSUB\s+([a-zA-Z0-9_]+)", re.IGNORECASE)
 
-# PLAY ON/OFF/STOP - Enable/disable music events (stub for compatibility)
-_play_on_off_re = re.compile(r"PLAY\s+(ON|OFF|STOP)", re.IGNORECASE)
+# PLAY ON/OFF/STOP - Enable/disable music events (lazy - rarely used, stub for compatibility)
+_play_on_off_re = LazyPattern(r"PLAY\s+(ON|OFF|STOP)", re.IGNORECASE)
 
 # DEFINT/DEFSNG/DEFDBL/DEFLNG/DEFSTR - Default type declarations (ignored)
 _deftype_re = re.compile(r"DEF(INT|SNG|DBL|LNG|STR)\s+[A-Za-z](?:\s*-\s*[A-Za-z])?", re.IGNORECASE)
@@ -238,35 +347,35 @@ _deftype_re = re.compile(r"DEF(INT|SNG|DBL|LNG|STR)\s+[A-Za-z](?:\s*-\s*[A-Za-z]
 # PALETTE - Color palette
 _palette_re = re.compile(r"PALETTE(?:\s+USING\s+(.+)|\s+(\d+)\s*,\s*(.+))?", re.IGNORECASE)
 
-# PCOPY - Copy video pages
-_pcopy_re = re.compile(r"PCOPY\s+(\d+)\s*,\s*(\d+)", re.IGNORECASE)
+# PCOPY - Copy video pages (lazy - rarely used)
+_pcopy_re = LazyPattern(r"PCOPY\s+(\d+)\s*,\s*(\d+)", re.IGNORECASE)
 
-# VIEW PRINT - Text viewport
-_view_print_re = re.compile(r"VIEW\s+PRINT(?:\s+(\d+)\s+TO\s+(\d+))?", re.IGNORECASE)
+# VIEW PRINT - Text viewport (lazy - rarely used)
+_view_print_re = LazyPattern(r"VIEW\s+PRINT(?:\s+(\d+)\s+TO\s+(\d+))?", re.IGNORECASE)
 
-# WIDTH - Screen/printer width
-_width_re = re.compile(r"WIDTH\s+(\d+)(?:\s*,\s*(\d+))?", re.IGNORECASE)
+# WIDTH - Screen/printer width (lazy - rarely used)
+_width_re = LazyPattern(r"WIDTH\s+(\d+)(?:\s*,\s*(\d+))?", re.IGNORECASE)
 
-# WAIT - Wait for port condition (emulated as no-op)
-_wait_re = re.compile(r"WAIT\s+([^,]+)\s*,\s*([^,]+)(?:\s*,\s*(.+))?", re.IGNORECASE)
+# WAIT - Wait for port condition (lazy - rarely used, emulated as no-op)
+_wait_re = LazyPattern(r"WAIT\s+([^,]+)\s*,\s*([^,]+)(?:\s*,\s*(.+))?", re.IGNORECASE)
 
-# TIMER ON/OFF - Enable/disable timer events (no-op, for compatibility)
-_timer_on_off_re = re.compile(r"TIMER\s+(ON|OFF|STOP)", re.IGNORECASE)
+# TIMER ON/OFF - Enable/disable timer events (lazy - rarely used, no-op for compatibility)
+_timer_on_off_re = LazyPattern(r"TIMER\s+(ON|OFF|STOP)", re.IGNORECASE)
 
-# OUT - Write to I/O port (emulated)
-_out_re = re.compile(r"OUT\s+([^,]+)\s*,\s*(.+)", re.IGNORECASE)
+# OUT - Write to I/O port (lazy - rarely used, emulated)
+_out_re = LazyPattern(r"OUT\s+([^,]+)\s*,\s*(.+)", re.IGNORECASE)
 
-# DEF SEG - Set memory segment (emulated)
-_def_seg_re = re.compile(r"DEF\s+SEG(?:\s*=\s*(.+))?", re.IGNORECASE)
+# DEF SEG - Set memory segment (lazy - rarely used, emulated)
+_def_seg_re = LazyPattern(r"DEF\s+SEG(?:\s*=\s*(.+))?", re.IGNORECASE)
 
-# POKE - Write to memory (emulated)
-_poke_re = re.compile(r"POKE\s+([^,]+)\s*,\s*(.+)", re.IGNORECASE)
+# POKE - Write to memory (lazy - rarely used, emulated)
+_poke_re = LazyPattern(r"POKE\s+([^,]+)\s*,\s*(.+)", re.IGNORECASE)
 
-# COMMON SHARED - Global variable declaration
-_common_shared_re = re.compile(r"COMMON\s+SHARED\s+(.+)", re.IGNORECASE)
+# COMMON SHARED - Global variable declaration (lazy - rarely used)
+_common_shared_re = LazyPattern(r"COMMON\s+SHARED\s+(.+)", re.IGNORECASE)
 
-# COMMON - Share variables between CHAINed programs (must not match COMMON SHARED)
-_common_re = re.compile(r"COMMON\s+(?!SHARED\s)(.+)", re.IGNORECASE)
+# COMMON - Share variables between CHAINed programs (lazy - rarely used, must not match COMMON SHARED)
+_common_re = LazyPattern(r"COMMON\s+(?!SHARED\s)(.+)", re.IGNORECASE)
 
 # DIM SHARED - Shared array declaration
 _dim_shared_re = re.compile(r"DIM\s+SHARED\s+(.+)", re.IGNORECASE)
@@ -353,34 +462,36 @@ _system_re = re.compile(r"SYSTEM(?:\s+(.+))?", re.IGNORECASE)
 # SHELL - execute shell command
 _shell_re = re.compile(r"SHELL(?:\s+(.+))?", re.IGNORECASE)
 
-# VIEW - define graphics viewport
-_view_re = re.compile(r"VIEW(?:\s*\(([^)]+)\)\s*-\s*\(([^)]+)\)(?:\s*,\s*(\d+))?(?:\s*,\s*(\d+))?)?", re.IGNORECASE)
+# VIEW - define graphics viewport (lazy - rarely used)
+_view_re = LazyPattern(r"VIEW(?:\s*\(([^)]+)\)\s*-\s*\(([^)]+)\)(?:\s*,\s*(\d+))?(?:\s*,\s*(\d+))?)?", re.IGNORECASE)
 
-# WINDOW - define logical coordinate system
-_window_re = re.compile(r"WINDOW(?:\s+SCREEN)?(?:\s*\(([^)]+)\)\s*-\s*\(([^)]+)\))?", re.IGNORECASE)
+# WINDOW - define logical coordinate system (lazy - rarely used)
+_window_re = LazyPattern(r"WINDOW(?:\s+SCREEN)?(?:\s*\(([^)]+)\)\s*-\s*\(([^)]+)\))?", re.IGNORECASE)
 
-# LPRINT - print to printer (console)
-_lprint_using_re = re.compile(r"LPRINT\s+USING\s+(.+?)\s*;\s*(.+)", re.IGNORECASE)
-_lprint_re = re.compile(r"LPRINT(?:\s+(.*))?", re.IGNORECASE)
+# LPRINT - print to printer (lazy - rarely used, console)
+_lprint_using_re = LazyPattern(r"LPRINT\s+USING\s+(.+?)\s*;\s*(.+)", re.IGNORECASE)
+_lprint_re = LazyPattern(r"LPRINT(?:\s+(.*))?", re.IGNORECASE)
 
-# FIELD - define random access record fields
-_field_re = re.compile(r"FIELD\s+#?(\d+)\s*,\s*(.+)", re.IGNORECASE)
+# FIELD - define random access record fields (lazy - rarely used)
+_field_re = LazyPattern(r"FIELD\s+#?(\d+)\s*,\s*(.+)", re.IGNORECASE)
 
-# LSET/RSET - justify string in field
-_lset_re = re.compile(r"LSET\s+([a-zA-Z_][a-zA-Z0-9_]*\$?)\s*=\s*(.+)", re.IGNORECASE)
-_rset_re = re.compile(r"RSET\s+([a-zA-Z_][a-zA-Z0-9_]*\$?)\s*=\s*(.+)", re.IGNORECASE)
+# LSET/RSET - justify string in field (lazy - rarely used)
+_lset_re = LazyPattern(r"LSET\s+([a-zA-Z_][a-zA-Z0-9_]*\$?)\s*=\s*(.+)", re.IGNORECASE)
+_rset_re = LazyPattern(r"RSET\s+([a-zA-Z_][a-zA-Z0-9_]*\$?)\s*=\s*(.+)", re.IGNORECASE)
 
-# ENVIRON - set environment variable
-_environ_set_re = re.compile(r"ENVIRON\s+(.+)", re.IGNORECASE)
+# ENVIRON - set environment variable (lazy - rarely used)
+_environ_set_re = LazyPattern(r"ENVIRON\s+(.+)", re.IGNORECASE)
 
-# ON TIMER GOSUB - timer event handler
-_on_timer_re = re.compile(r"ON\s+TIMER\s*\(([^)]+)\)\s+GOSUB\s+([a-zA-Z0-9_]+)", re.IGNORECASE)
+# ON TIMER GOSUB - timer event handler (lazy - rarely used)
+_on_timer_re = LazyPattern(r"ON\s+TIMER\s*\(([^)]+)\)\s+GOSUB\s+([a-zA-Z0-9_]+)", re.IGNORECASE)
 
 # DATE$/TIME$ assignment
 _date_assign_re = re.compile(r"DATE\$\s*=\s*(.+)", re.IGNORECASE)
 _time_assign_re = re.compile(r"TIME\$\s*=\s*(.+)", re.IGNORECASE)
 
-_expr_cache: Dict[str, str] = {}
+# Expression caches using LRU to prevent unbounded memory growth
+_expr_cache: LRUCache = LRUCache(maxsize=EXPR_CACHE_MAX_SIZE)  # Cache for BASIC to Python expression conversion
+_identifier_cache: LRUCache = LRUCache(maxsize=IDENTIFIER_CACHE_MAX_SIZE)  # Cache for identifier name conversions
 _python_keywords = {'and', 'or', 'not', 'in', 'is', 'lambda', 'if', 'else', 'elif', 'while', 'for', 'try', 'except', 'finally', 'with', 'as', 'def', 'class', 'import', 'from', 'pass', 'break', 'continue', 'return', 'yield', 'global', 'nonlocal', 'assert', 'del', 'True', 'False', 'None'}
 # Python builtins used in generated code (for array indexing) - keep lowercase
 _python_builtins_used = {'int'}
@@ -418,19 +529,37 @@ _basic_function_names = {
 # --- Expression Conversion Logic ---
 
 def _basic_to_python_identifier(basic_name_str: str) -> str:
-    """Converts a BASIC identifier to a Python-compatible identifier for eval."""
-    name_upper = basic_name_str.upper()
-    if name_upper.endswith('$'):
-        return name_upper[:-1] + "_STR"
-    elif name_upper.endswith('%'):
-        return name_upper[:-1] + "_INT"
-    elif name_upper.endswith('#'):
-        return name_upper[:-1] + "_DBL"  # Double precision
-    elif name_upper.endswith('!'):
-        return name_upper[:-1] + "_SNG"  # Single precision
-    elif name_upper.endswith('&'):
-        return name_upper[:-1] + "_LNG"  # Long integer
-    return name_upper
+    """Converts a BASIC identifier to a Python-compatible identifier for eval.
+
+    Results are cached for performance since this function is called frequently
+    during expression evaluation. The cache is case-insensitive to avoid storing
+    redundant entries for 'Var', 'VAR', and 'var' which all produce the same result.
+    """
+    # Normalize to uppercase for case-insensitive caching
+    # This avoids storing separate cache entries for 'Var', 'VAR', 'var', etc.
+    normalized = basic_name_str.upper()
+
+    # Check cache first using normalized key
+    if normalized in _identifier_cache:
+        return _identifier_cache[normalized]
+
+    # Compute result based on type suffix
+    if normalized.endswith('$'):
+        result = normalized[:-1] + "_STR"
+    elif normalized.endswith('%'):
+        result = normalized[:-1] + "_INT"
+    elif normalized.endswith('#'):
+        result = normalized[:-1] + "_DBL"  # Double precision
+    elif normalized.endswith('!'):
+        result = normalized[:-1] + "_SNG"  # Single precision
+    elif normalized.endswith('&'):
+        result = normalized[:-1] + "_LNG"  # Long integer
+    else:
+        result = normalized
+
+    # Store in cache using normalized key
+    _identifier_cache[normalized] = result
+    return result
 
 def _convert_identifier_in_expr(match: re.Match) -> str:
     """
@@ -651,7 +780,14 @@ def convert_basic_expr(expr: str, known_identifiers: Optional[set] = None) -> st
     _expr_cache[original_expr_for_cache] = expr
     return expr
 
-class BasicInterpreter:
+class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin):
+    """BASIC interpreter with pygame graphics support.
+
+    Inherits from:
+        AudioCommandsMixin: Provides BEEP, SOUND, PLAY commands
+        GraphicsCommandsMixin: Provides DRAW, GET/PUT graphics, flood fill
+    """
+
     def __init__(self, font: pygame.font.Font, width: int, height: int) -> None:
         self.font = font
         self.initial_width = width
@@ -660,6 +796,9 @@ class BasicInterpreter:
         self.pc: int = 0
         self.variables: Dict[str, Any] = {}
         self.constants: Dict[str, Any] = {}
+        # Eval locals optimization - track state to avoid unnecessary rebuilds
+        self._eval_locals: Dict[str, Any] = {}
+        self._eval_locals_fingerprint: Optional[tuple] = None  # (var_keys, const_keys, fn_keys, proc_keys)
         self.loop_stack: List[Dict[str, Any]] = []
         self.for_stack: List[Dict[str, Any]] = []
         self.gosub_stack: List[int] = []
@@ -682,14 +821,13 @@ class BasicInterpreter:
         self.active_page: int = 0  # Current drawing page
         self.visual_page: int = 0  # Current display page
         self.last_key: str = ""
-        self.colors: Dict[int, Tuple[int, int, int]] = {
-            0: (0,0,0), 1: (0,0,170), 2: (0,170,0), 3: (0,170,170),
-            4: (170,0,0), 5: (170,0,170), 6: (170,85,0), 7: (170,170,170),
-            8: (85,85,85), 9: (85,85,255), 10: (85,255,85), 11: (85,255,255),
-            12: (255,85,85), 13: (255,85,255), 14: (255,255,85), 15: (255,255,255)
+        self.colors: Dict[int, Tuple[int, int, int]] = dict(DEFAULT_COLORS)
+        # Reverse lookup for O(1) color number lookup in point() function
+        self._reverse_colors: Dict[Tuple[int, int, int], int] = {
+            rgb: num for num, rgb in self.colors.items()
         }
-        self.current_fg_color: int = 7
-        self.current_bg_color: int = 0
+        self.current_fg_color: int = DEFAULT_FG_COLOR
+        self.current_bg_color: int = DEFAULT_BG_COLOR
         self.lpr: Tuple[int, int] = (0, 0) # Last Point Referenced
         self.delay_until: int = 0
         self.labels: Dict[str, int] = {}
@@ -910,6 +1048,584 @@ class BasicInterpreter:
             "MULTIKEY": self._basic_keydown,  # Alias for KEYDOWN (compatibility)
         }
 
+        # Build command dispatch table for O(1) keyword lookup
+        self._command_dispatch = self._build_command_dispatch()
+
+    def _build_command_dispatch(self) -> Dict[str, Any]:
+        """Build and return the command dispatch table.
+
+        Maps first keywords of BASIC statements to their handler methods.
+        Each handler takes (statement, current_pc_num) and returns bool.
+
+        Returns:
+            Dictionary mapping uppercase keywords to handler methods.
+        """
+        return {
+            # Simple single-keyword commands
+            "BEEP": self._cmd_beep,
+            "STOP": self._cmd_stop,
+            "TRON": self._cmd_tron,
+            "TROFF": self._cmd_troff,
+            "CLS": self._cmd_cls,
+            "WEND": self._cmd_wend,
+            "RETURN": self._cmd_return,
+            # Commands with arguments
+            "GOTO": self._cmd_goto,
+            "GOSUB": self._cmd_gosub,
+            "SCREEN": self._cmd_screen,
+            "COLOR": self._cmd_color,
+            "LOCATE": self._cmd_locate,
+            "PRINT": self._cmd_print,
+            "PSET": self._cmd_pset,
+            "PRESET": self._cmd_preset,
+            "LINE": self._cmd_line,
+            "CIRCLE": self._cmd_circle,
+            "PAINT": self._cmd_paint,
+            "SOUND": self._cmd_sound,
+            "PLAY": self._cmd_play,
+            "DRAW": self._cmd_draw,
+            "ERASE": self._cmd_erase,
+            "SWAP": self._cmd_swap,
+            "RANDOMIZE": self._cmd_randomize,
+            "SLEEP": self._cmd_delay,
+            "_DELAY": self._cmd_delay,
+            "RUN": self._cmd_run,
+            "CONT": self._cmd_cont,
+            "CHAIN": self._cmd_chain,
+            "CLEAR": self._cmd_clear,
+            "SYSTEM": self._cmd_system,
+            "SHELL": self._cmd_shell,
+            # Control flow - complex handlers
+            "FOR": self._cmd_for,
+            "NEXT": self._cmd_next,
+            "DO": self._cmd_do,
+            "LOOP": self._cmd_loop,
+            "WHILE": self._cmd_while,
+            # File I/O
+            "OPEN": self._cmd_open,
+            "CLOSE": self._cmd_close,
+            "KILL": self._cmd_kill,
+            "NAME": self._cmd_name,
+            "MKDIR": self._cmd_mkdir,
+            "RMDIR": self._cmd_rmdir,
+            "CHDIR": self._cmd_chdir,
+            "FILES": self._cmd_files,
+            "SEEK": self._cmd_seek,
+            # Data
+            "DATA": self._cmd_data,
+            "READ": self._cmd_read,
+            "RESTORE": self._cmd_restore,
+            # Graphics viewport/window
+            "VIEW": self._cmd_view,
+            "WINDOW": self._cmd_window,
+            "PALETTE": self._cmd_palette,
+            "PCOPY": self._cmd_pcopy,
+            "WIDTH": self._cmd_width,
+            # Memory/hardware
+            "OUT": self._cmd_out,
+            "POKE": self._cmd_poke,
+            "WAIT": self._cmd_wait,
+            # Error handling
+            "ERROR": self._cmd_error,
+            "RESUME": self._cmd_resume,
+            # Procedures
+            "CALL": self._cmd_call,
+            "SUB": self._cmd_sub,
+            "FUNCTION": self._cmd_function,
+            "SHARED": self._cmd_shared,
+            # User-defined types
+            "TYPE": self._cmd_type,
+            # Field/record
+            "FIELD": self._cmd_field,
+            "LSET": self._cmd_lset,
+            "RSET": self._cmd_rset,
+            # Misc
+            "CONST": self._cmd_const,
+            "OPTION": self._cmd_option,
+            "REDIM": self._cmd_redim,
+            "LPRINT": self._cmd_lprint,
+            "ENVIRON": self._cmd_environ,
+            # Timer
+            "TIMER": self._cmd_timer,
+            # Key handling
+            "KEY": self._cmd_key,
+            # Declarations
+            "DECLARE": self._cmd_declare,
+            "DEFINT": self._cmd_deftype,
+            "DEFSNG": self._cmd_deftype,
+            "DEFDBL": self._cmd_deftype,
+            "DEFLNG": self._cmd_deftype,
+            "DEFSTR": self._cmd_deftype,
+            "COMMON": self._cmd_common,
+            # Metacommands
+            "$INCLUDE": self._cmd_include,
+            "$DYNAMIC": self._cmd_dynamic,
+            "$STATIC": self._cmd_static,
+            # Pen handling
+            "PEN": self._cmd_pen,
+            "STRIG": self._cmd_strig,
+        }
+
+    def _extract_first_keyword(self, statement: str) -> Optional[str]:
+        """Extract the first keyword from a BASIC statement.
+
+        Args:
+            statement: The BASIC statement to parse.
+
+        Returns:
+            The first keyword in uppercase, or None if not found.
+        """
+        # Handle metacommands starting with $
+        if statement.startswith('$'):
+            match = re.match(r'(\$[A-Za-z]+)', statement)
+            if match:
+                return match.group(1).upper()
+            return None
+
+        # Handle regular keywords
+        match = re.match(r'([A-Za-z_][A-Za-z0-9_]*)', statement)
+        if match:
+            return match.group(1).upper()
+        return None
+
+    def _dispatch_command(self, statement: str, current_pc_num: int) -> Optional[bool]:
+        """Try to dispatch a command using the dispatch table.
+
+        Args:
+            statement: The BASIC statement to execute.
+            current_pc_num: Current program counter line number.
+
+        Returns:
+            True/False if command was handled (True = jump/delay occurred),
+            None if command was not in dispatch table.
+        """
+        keyword = self._extract_first_keyword(statement)
+        if keyword and keyword in self._command_dispatch:
+            handler = self._command_dispatch[keyword]
+            return handler(statement, current_pc_num)
+        return None
+
+    # --- Command Handler Methods ---
+    # Each handler takes (statement, current_pc_num) and returns bool
+
+    def _cmd_beep(self, statement: str, pc: int) -> bool:
+        """Handle BEEP statement."""
+        if _beep_re.fullmatch(statement.upper()):
+            self._do_beep()
+        return False
+
+    def _cmd_stop(self, statement: str, pc: int) -> bool:
+        """Handle STOP statement."""
+        if _stop_re.fullmatch(statement.upper()):
+            self.stopped = True
+            self.running = False
+            print(f"STOP at PC {pc}")
+        return False
+
+    def _cmd_tron(self, statement: str, pc: int) -> bool:
+        """Handle TRON statement."""
+        if _tron_re.fullmatch(statement.upper()):
+            self.trace_mode = True
+        return False
+
+    def _cmd_troff(self, statement: str, pc: int) -> bool:
+        """Handle TROFF statement."""
+        if _troff_re.fullmatch(statement.upper()):
+            self.trace_mode = False
+        return False
+
+    def _cmd_cls(self, statement: str, pc: int) -> bool:
+        """Handle CLS statement."""
+        if _cls_re.fullmatch(statement.upper()):
+            if self.surface:
+                self.surface.fill(self.basic_color(self.current_bg_color))
+                self.mark_dirty()
+            self.text_cursor = (1, 1)
+        return False
+
+    def _cmd_return(self, statement: str, pc: int) -> bool:
+        """Handle RETURN statement."""
+        if _return_re.fullmatch(statement.upper()):
+            if self.gosub_stack:
+                self.pc = self.gosub_stack.pop()
+                return True
+            else:
+                self._runtime_error("RETURN without GOSUB", pc)
+        return False
+
+    def _cmd_goto(self, statement: str, pc: int) -> bool:
+        """Handle GOTO statement."""
+        m = _goto_re.match(statement)
+        if m:
+            return self._do_goto(m.group(1).upper())
+        return False
+
+    def _cmd_gosub(self, statement: str, pc: int) -> bool:
+        """Handle GOSUB statement."""
+        m = _gosub_re.match(statement)
+        if m:
+            return self._do_gosub(m.group(1).upper())
+        return False
+
+    def _cmd_screen(self, statement: str, pc: int) -> Optional[bool]:
+        """Handle SCREEN statement - delegated to original logic."""
+        return None  # Fall through to original implementation
+
+    def _cmd_color(self, statement: str, pc: int) -> Optional[bool]:
+        """Handle COLOR statement - delegated to original logic."""
+        return None  # Fall through to original implementation
+
+    def _cmd_locate(self, statement: str, pc: int) -> Optional[bool]:
+        """Handle LOCATE statement - delegated to original logic."""
+        return None  # Fall through to original implementation
+
+    def _cmd_sound(self, statement: str, pc: int) -> bool:
+        """Handle SOUND statement."""
+        m = _sound_re.fullmatch(statement)
+        if m:
+            self._do_sound(m.group(1).strip(), m.group(2).strip(), pc)
+        return False
+
+    def _cmd_erase(self, statement: str, pc: int) -> bool:
+        """Handle ERASE statement."""
+        m = _erase_re.fullmatch(statement)
+        if m:
+            self._do_erase(m.group(1).strip(), pc)
+        return False
+
+    def _cmd_swap(self, statement: str, pc: int) -> bool:
+        """Handle SWAP statement."""
+        m = _swap_re.fullmatch(statement)
+        if m:
+            self._do_swap(m.group(1).strip(), m.group(2).strip(), pc)
+        return False
+
+    def _cmd_randomize(self, statement: str, pc: int) -> bool:
+        """Handle RANDOMIZE statement."""
+        m = _randomize_re.fullmatch(statement)
+        if m:
+            seed_expr = m.group(1)
+            if seed_expr:
+                seed_val = self.eval_expr(seed_expr.strip())
+                random.seed(seed_val)
+            else:
+                random.seed()
+        return False
+
+    def _cmd_delay(self, statement: str, pc: int) -> bool:
+        """Handle SLEEP/_DELAY statement."""
+        m = _delay_re.fullmatch(statement)
+        if m:
+            delay_seconds = float(self.eval_expr(m.group(1).strip()))
+            self.delay_until = pygame.time.get_ticks() + int(delay_seconds * 1000)
+            return True
+        return False
+
+    def _cmd_run(self, statement: str, pc: int) -> bool:
+        """Handle RUN statement."""
+        m = _run_re.fullmatch(statement)
+        if m:
+            target = m.group(1)
+            if target:
+                target = target.strip()
+                if target.upper() in self.labels:
+                    self.pc = self.labels[target.upper()]
+                    self.variables.clear()
+                    self.gosub_stack.clear()
+                    self.for_stack.clear()
+                    self.loop_stack.clear()
+                    return True
+                try:
+                    line_num = int(target)
+                    if str(line_num) in self.labels:
+                        self.pc = self.labels[str(line_num)]
+                        self.variables.clear()
+                        self.gosub_stack.clear()
+                        self.for_stack.clear()
+                        self.loop_stack.clear()
+                        return True
+                except ValueError:
+                    pass
+            else:
+                self.pc = 0
+                self.variables.clear()
+                self.gosub_stack.clear()
+                self.for_stack.clear()
+                self.loop_stack.clear()
+                return True
+        return False
+
+    def _cmd_cont(self, statement: str, pc: int) -> bool:
+        """Handle CONT statement."""
+        if _cont_re.fullmatch(statement.upper()):
+            if self.stopped:
+                self.stopped = False
+                self.running = True
+        return False
+
+    def _cmd_declare(self, statement: str, pc: int) -> bool:
+        """Handle DECLARE statement (no-op, parsed at runtime)."""
+        if _declare_re.fullmatch(statement):
+            pass  # DECLARE is informational only
+        return False
+
+    def _cmd_deftype(self, statement: str, pc: int) -> bool:
+        """Handle DEFtype statements (no-op for compatibility)."""
+        if _deftype_re.fullmatch(statement):
+            pass  # Default type declarations are ignored
+        return False
+
+    def _cmd_dynamic(self, statement: str, pc: int) -> bool:
+        """Handle $DYNAMIC metacommand."""
+        if _dynamic_re.match(statement):
+            pass  # Accepted but no action needed
+        return False
+
+    def _cmd_static(self, statement: str, pc: int) -> bool:
+        """Handle $STATIC metacommand."""
+        if _static_re.match(statement):
+            pass  # Accepted but no action needed
+        return False
+
+    # --- Stub handlers (return None to fall through to original logic) ---
+    # These will be fully implemented incrementally
+
+    def _cmd_print(self, statement: str, pc: int) -> Optional[bool]:
+        """Handle PRINT statement - delegated to original logic for now."""
+        return None  # Fall through to original implementation
+
+    def _cmd_pset(self, statement: str, pc: int) -> Optional[bool]:
+        """Handle PSET statement - delegated to original logic for now."""
+        return None
+
+    def _cmd_preset(self, statement: str, pc: int) -> Optional[bool]:
+        """Handle PRESET statement - delegated to original logic for now."""
+        return None
+
+    def _cmd_line(self, statement: str, pc: int) -> Optional[bool]:
+        """Handle LINE statement - delegated to original logic for now."""
+        return None
+
+    def _cmd_circle(self, statement: str, pc: int) -> Optional[bool]:
+        """Handle CIRCLE statement - delegated to original logic for now."""
+        return None
+
+    def _cmd_paint(self, statement: str, pc: int) -> Optional[bool]:
+        """Handle PAINT statement - delegated to original logic for now."""
+        return None
+
+    def _cmd_play(self, statement: str, pc: int) -> Optional[bool]:
+        """Handle PLAY statement - delegated to original logic for now."""
+        return None
+
+    def _cmd_draw(self, statement: str, pc: int) -> Optional[bool]:
+        """Handle DRAW statement - delegated to original logic for now."""
+        return None
+
+    def _cmd_chain(self, statement: str, pc: int) -> Optional[bool]:
+        """Handle CHAIN statement - delegated to original logic for now."""
+        return None
+
+    def _cmd_clear(self, statement: str, pc: int) -> Optional[bool]:
+        """Handle CLEAR statement - delegated to original logic for now."""
+        return None
+
+    def _cmd_system(self, statement: str, pc: int) -> Optional[bool]:
+        """Handle SYSTEM statement - delegated to original logic for now."""
+        return None
+
+    def _cmd_shell(self, statement: str, pc: int) -> Optional[bool]:
+        """Handle SHELL statement - delegated to original logic for now."""
+        return None
+
+    def _cmd_for(self, statement: str, pc: int) -> Optional[bool]:
+        """Handle FOR statement - delegated to original logic for now."""
+        return None
+
+    def _cmd_next(self, statement: str, pc: int) -> Optional[bool]:
+        """Handle NEXT statement - delegated to original logic for now."""
+        return None
+
+    def _cmd_do(self, statement: str, pc: int) -> Optional[bool]:
+        """Handle DO statement - delegated to original logic for now."""
+        return None
+
+    def _cmd_loop(self, statement: str, pc: int) -> Optional[bool]:
+        """Handle LOOP statement - delegated to original logic for now."""
+        return None
+
+    def _cmd_while(self, statement: str, pc: int) -> Optional[bool]:
+        """Handle WHILE statement - delegated to original logic for now."""
+        return None
+
+    def _cmd_wend(self, statement: str, pc: int) -> Optional[bool]:
+        """Handle WEND statement - delegated to original logic for now."""
+        return None
+
+    def _cmd_open(self, statement: str, pc: int) -> Optional[bool]:
+        """Handle OPEN statement - delegated to original logic for now."""
+        return None
+
+    def _cmd_close(self, statement: str, pc: int) -> Optional[bool]:
+        """Handle CLOSE statement - delegated to original logic for now."""
+        return None
+
+    def _cmd_kill(self, statement: str, pc: int) -> Optional[bool]:
+        """Handle KILL statement - delegated to original logic for now."""
+        return None
+
+    def _cmd_name(self, statement: str, pc: int) -> Optional[bool]:
+        """Handle NAME statement - delegated to original logic for now."""
+        return None
+
+    def _cmd_mkdir(self, statement: str, pc: int) -> Optional[bool]:
+        """Handle MKDIR statement - delegated to original logic for now."""
+        return None
+
+    def _cmd_rmdir(self, statement: str, pc: int) -> Optional[bool]:
+        """Handle RMDIR statement - delegated to original logic for now."""
+        return None
+
+    def _cmd_chdir(self, statement: str, pc: int) -> Optional[bool]:
+        """Handle CHDIR statement - delegated to original logic for now."""
+        return None
+
+    def _cmd_files(self, statement: str, pc: int) -> Optional[bool]:
+        """Handle FILES statement - delegated to original logic for now."""
+        return None
+
+    def _cmd_seek(self, statement: str, pc: int) -> Optional[bool]:
+        """Handle SEEK statement - delegated to original logic for now."""
+        return None
+
+    def _cmd_data(self, statement: str, pc: int) -> Optional[bool]:
+        """Handle DATA statement - delegated to original logic for now."""
+        return None
+
+    def _cmd_read(self, statement: str, pc: int) -> Optional[bool]:
+        """Handle READ statement - delegated to original logic for now."""
+        return None
+
+    def _cmd_restore(self, statement: str, pc: int) -> Optional[bool]:
+        """Handle RESTORE statement - delegated to original logic for now."""
+        return None
+
+    def _cmd_view(self, statement: str, pc: int) -> Optional[bool]:
+        """Handle VIEW statement - delegated to original logic for now."""
+        return None
+
+    def _cmd_window(self, statement: str, pc: int) -> Optional[bool]:
+        """Handle WINDOW statement - delegated to original logic for now."""
+        return None
+
+    def _cmd_palette(self, statement: str, pc: int) -> Optional[bool]:
+        """Handle PALETTE statement - delegated to original logic for now."""
+        return None
+
+    def _cmd_pcopy(self, statement: str, pc: int) -> Optional[bool]:
+        """Handle PCOPY statement - delegated to original logic for now."""
+        return None
+
+    def _cmd_width(self, statement: str, pc: int) -> Optional[bool]:
+        """Handle WIDTH statement - delegated to original logic for now."""
+        return None
+
+    def _cmd_out(self, statement: str, pc: int) -> Optional[bool]:
+        """Handle OUT statement - delegated to original logic for now."""
+        return None
+
+    def _cmd_poke(self, statement: str, pc: int) -> Optional[bool]:
+        """Handle POKE statement - delegated to original logic for now."""
+        return None
+
+    def _cmd_wait(self, statement: str, pc: int) -> Optional[bool]:
+        """Handle WAIT statement - delegated to original logic for now."""
+        return None
+
+    def _cmd_error(self, statement: str, pc: int) -> Optional[bool]:
+        """Handle ERROR statement - delegated to original logic for now."""
+        return None
+
+    def _cmd_resume(self, statement: str, pc: int) -> Optional[bool]:
+        """Handle RESUME statement - delegated to original logic for now."""
+        return None
+
+    def _cmd_call(self, statement: str, pc: int) -> Optional[bool]:
+        """Handle CALL statement - delegated to original logic for now."""
+        return None
+
+    def _cmd_sub(self, statement: str, pc: int) -> Optional[bool]:
+        """Handle SUB statement - delegated to original logic for now."""
+        return None
+
+    def _cmd_function(self, statement: str, pc: int) -> Optional[bool]:
+        """Handle FUNCTION statement - delegated to original logic for now."""
+        return None
+
+    def _cmd_shared(self, statement: str, pc: int) -> Optional[bool]:
+        """Handle SHARED statement - delegated to original logic for now."""
+        return None
+
+    def _cmd_type(self, statement: str, pc: int) -> Optional[bool]:
+        """Handle TYPE statement - delegated to original logic for now."""
+        return None
+
+    def _cmd_field(self, statement: str, pc: int) -> Optional[bool]:
+        """Handle FIELD statement - delegated to original logic for now."""
+        return None
+
+    def _cmd_lset(self, statement: str, pc: int) -> Optional[bool]:
+        """Handle LSET statement - delegated to original logic for now."""
+        return None
+
+    def _cmd_rset(self, statement: str, pc: int) -> Optional[bool]:
+        """Handle RSET statement - delegated to original logic for now."""
+        return None
+
+    def _cmd_const(self, statement: str, pc: int) -> Optional[bool]:
+        """Handle CONST statement - delegated to original logic for now."""
+        return None
+
+    def _cmd_option(self, statement: str, pc: int) -> Optional[bool]:
+        """Handle OPTION statement - delegated to original logic for now."""
+        return None
+
+    def _cmd_redim(self, statement: str, pc: int) -> Optional[bool]:
+        """Handle REDIM statement - delegated to original logic for now."""
+        return None
+
+    def _cmd_lprint(self, statement: str, pc: int) -> Optional[bool]:
+        """Handle LPRINT statement - delegated to original logic for now."""
+        return None
+
+    def _cmd_environ(self, statement: str, pc: int) -> Optional[bool]:
+        """Handle ENVIRON statement - delegated to original logic for now."""
+        return None
+
+    def _cmd_timer(self, statement: str, pc: int) -> Optional[bool]:
+        """Handle TIMER statement - delegated to original logic for now."""
+        return None
+
+    def _cmd_key(self, statement: str, pc: int) -> Optional[bool]:
+        """Handle KEY statement - delegated to original logic for now."""
+        return None
+
+    def _cmd_common(self, statement: str, pc: int) -> Optional[bool]:
+        """Handle COMMON statement - delegated to original logic for now."""
+        return None
+
+    def _cmd_include(self, statement: str, pc: int) -> Optional[bool]:
+        """Handle $INCLUDE metacommand - delegated to original logic for now."""
+        return None
+
+    def _cmd_pen(self, statement: str, pc: int) -> Optional[bool]:
+        """Handle PEN statement - delegated to original logic for now."""
+        return None
+
+    def _cmd_strig(self, statement: str, pc: int) -> Optional[bool]:
+        """Handle STRIG statement - delegated to original logic for now."""
+        return None
+
     def _basic_val(self, s_val: str) -> Any:
         s_val = s_val.strip()
         try:
@@ -997,14 +1713,12 @@ class BasicInterpreter:
         """DATE$ - Returns current date as MM-DD-YYYY (or custom date if set)."""
         if self.custom_date is not None:
             return self.custom_date
-        from datetime import datetime
         return datetime.now().strftime("%m-%d-%Y")
 
     def _basic_time(self) -> str:
         """TIME$ - Returns current time as HH:MM:SS (or custom time if set)."""
         if self.custom_time is not None:
             return self.custom_time
-        from datetime import datetime
         return datetime.now().strftime("%H:%M:%S")
 
     def _basic_csrlin(self) -> int:
@@ -1061,7 +1775,6 @@ class BasicInterpreter:
 
     def _basic_environ(self, var_name: str) -> str:
         """ENVIRON$(varname) - Returns the value of an environment variable."""
-        import os
         return os.environ.get(str(var_name), "")
 
     def _basic_input_dollar(self, *args) -> str:
@@ -1131,7 +1844,6 @@ class BasicInterpreter:
             fh = self.file_handles[fnum]
             if hasattr(fh, 'file_path'):
                 try:
-                    import os
                     return os.path.getsize(fh.file_path)
                 except:
                     pass
@@ -1177,48 +1889,40 @@ class BasicInterpreter:
 
     def _basic_mki(self, value: int) -> str:
         """MKI$(n) - Convert integer to 2-byte string."""
-        import struct
         return struct.pack('<h', int(value)).decode('latin-1')
 
     def _basic_mkl(self, value: int) -> str:
         """MKL$(n) - Convert long integer to 4-byte string."""
-        import struct
         return struct.pack('<i', int(value)).decode('latin-1')
 
     def _basic_mks(self, value: float) -> str:
         """MKS$(n) - Convert single-precision float to 4-byte string."""
-        import struct
         return struct.pack('<f', float(value)).decode('latin-1')
 
     def _basic_mkd(self, value: float) -> str:
         """MKD$(n) - Convert double-precision float to 8-byte string."""
-        import struct
         return struct.pack('<d', float(value)).decode('latin-1')
 
     def _basic_cvi(self, s: str) -> int:
         """CVI(s$) - Convert 2-byte string to integer."""
-        import struct
         if len(s) < 2:
             s = s + '\0' * (2 - len(s))
         return struct.unpack('<h', s[:2].encode('latin-1'))[0]
 
     def _basic_cvl(self, s: str) -> int:
         """CVL(s$) - Convert 4-byte string to long integer."""
-        import struct
         if len(s) < 4:
             s = s + '\0' * (4 - len(s))
         return struct.unpack('<i', s[:4].encode('latin-1'))[0]
 
     def _basic_cvs(self, s: str) -> float:
         """CVS(s$) - Convert 4-byte string to single-precision float."""
-        import struct
         if len(s) < 4:
             s = s + '\0' * (4 - len(s))
         return struct.unpack('<f', s[:4].encode('latin-1'))[0]
 
     def _basic_cvd(self, s: str) -> float:
         """CVD(s$) - Convert 8-byte string to double-precision float."""
-        import struct
         if len(s) < 8:
             s = s + '\0' * (8 - len(s))
         return struct.unpack('<d', s[:8].encode('latin-1'))[0]
@@ -1528,9 +2232,16 @@ class BasicInterpreter:
                     # Keep as string if not a valid number
                     self.data_values.append(val)
 
-    def mark_dirty(self) -> None: self._dirty = True
+    def mark_dirty(self) -> None:
+        """Mark the rendering surface as dirty and requiring redraw."""
+        self._dirty = True
 
     def reset(self, program_lines: List[str]) -> None:
+        """Reset interpreter state and load a new program.
+
+        Args:
+            program_lines: List of BASIC program lines to execute.
+        """
         self.program_lines = []
         self.labels.clear()
         self.variables.clear()
@@ -1539,7 +2250,11 @@ class BasicInterpreter:
         self.for_stack.clear()
         self.gosub_stack.clear()
         _expr_cache.clear()
-        _memoized_arg_splits.clear() # Clear arg split cache
+        _memoized_arg_splits.clear()  # Clear arg split cache
+        _identifier_cache.clear()  # Clear identifier conversion cache
+        # Reset eval locals optimization state
+        self._eval_locals.clear()
+        self._eval_locals_fingerprint = None
         self.if_level = 0
         self.if_skip_level = -1
         self.if_executed.clear()
@@ -1683,9 +2398,19 @@ class BasicInterpreter:
         self.mark_dirty()
 
     def basic_color(self, c: int) -> Tuple[int, int, int]:
-        return self.colors.get(c % 16, self.colors[15]) # Default to white if color out of range
+        """Convert a BASIC color number to an RGB tuple.
 
-    def inkey(self):
+        Args:
+            c: BASIC color number (0-15). Values outside this range wrap around.
+
+        Returns:
+            RGB tuple (r, g, b) for the color. Returns white (255, 255, 255)
+            if color not found in palette.
+        """
+        return self.colors.get(c % 16, self.colors[15])
+
+    def inkey(self) -> str:
+        """Return the last key pressed, clearing it from buffer."""
         k = self.last_key
         self.last_key = ""
         return k
@@ -1721,83 +2446,42 @@ class BasicInterpreter:
         elif keys[pygame.K_ESCAPE]:
             self.last_key = chr(27)
 
-    def point(self, x_expr, y_expr):
+    def point(self, x_expr: Any, y_expr: Any) -> int:
+        """Get the color number of a pixel at coordinates (x, y).
+
+        Uses a reverse color lookup dictionary for O(1) performance instead of
+        iterating through all colors.
+
+        Args:
+            x_expr: X coordinate (will be converted to int).
+            y_expr: Y coordinate (will be converted to int).
+
+        Returns:
+            Color number (0-15) if the pixel color matches a palette color,
+            -1 if coordinates are out of bounds or color not in palette.
+        """
         px, py = int(x_expr), int(y_expr)
         if self.surface:
             if 0 <= px < self.screen_width and 0 <= py < self.screen_height:
                 pixel_tuple = self.surface.get_at((px, py))
                 pixel_rgb = pixel_tuple[:3]
-                for num, col_rgb in self.colors.items():
-                    if col_rgb == pixel_rgb:
-                        return num
-                return -1
+                # O(1) lookup using reverse color dictionary
+                return self._reverse_colors.get(pixel_rgb, -1)
             return -1
         return -1
 
-    def _scanline_fill(self, x: int, y: int, fill_color: Tuple, border_color: Tuple, target_color: Tuple) -> None:
-        """Optimized scanline flood fill algorithm."""
-        if not self.surface:
-            return
+    # _scanline_fill is now provided by GraphicsCommandsMixin
 
-        w, h = self.screen_width, self.screen_height
-        get_at = self.surface.get_at
-        set_at = self.surface.set_at
+    def eval_expr(self, expr_str: str) -> Any:
+        """Evaluate a BASIC expression and return its result.
 
-        # Use deque for faster pops from left
-        stack = deque([(x, y)])
-        filled = set()
+        Args:
+            expr_str: The BASIC expression to evaluate.
 
-        while stack:
-            cx, cy = stack.pop()
-
-            if (cx, cy) in filled:
-                continue
-
-            # Find leftmost point
-            lx = cx
-            while lx > 0:
-                col = get_at((lx - 1, cy))[:3]
-                if col == border_color or col == fill_color:
-                    break
-                lx -= 1
-
-            # Find rightmost point
-            rx = cx
-            while rx < w - 1:
-                col = get_at((rx + 1, cy))[:3]
-                if col == border_color or col == fill_color:
-                    break
-                rx += 1
-
-            # Fill the scanline using pygame.draw.line for speed
-            pygame.draw.line(self.surface, fill_color, (lx, cy), (rx, cy))
-
-            # Mark as filled
-            for px in range(lx, rx + 1):
-                filled.add((px, cy))
-
-            # Check scanlines above and below
-            for ny in [cy - 1, cy + 1]:
-                if 0 <= ny < h:
-                    span_start = None
-                    for px in range(lx, rx + 1):
-                        if (px, ny) not in filled:
-                            col = get_at((px, ny))[:3]
-                            if col != border_color and col != fill_color:
-                                if span_start is None:
-                                    span_start = px
-                            else:
-                                if span_start is not None:
-                                    stack.append((span_start, ny))
-                                    span_start = None
-                        else:
-                            if span_start is not None:
-                                stack.append((span_start, ny))
-                                span_start = None
-                    if span_start is not None:
-                        stack.append((span_start, ny))
-
-    def eval_expr(self, expr_str: str):
+        Returns:
+            The result of evaluating the expression. May be int, float, str,
+            or other types depending on the expression.
+        """
         if not expr_str.strip():
             return ""
 
@@ -1839,40 +2523,53 @@ class BasicInterpreter:
                 self.running = False
                 return 0
 
-        # Prepare environment for eval - reuse cached locals dict
-        if not hasattr(self, '_eval_locals'):
-            self._eval_locals = {}
+        # Prepare environment for eval - use fingerprint to avoid unnecessary rebuilds
+        # Compute current fingerprint based on dict keys (cheap operation)
+        current_fingerprint = (
+            frozenset(self.variables.keys()),
+            frozenset(self.constants.keys()),
+            frozenset(self.user_functions.keys()),
+            frozenset(k for k, v in self.procedures.items() if v['type'] == 'FUNCTION')
+        )
 
         eval_locals = self._eval_locals
-        eval_locals.clear()
 
-        # Map constants and variables using their Python-mangled names
-        for name, value in self.constants.items():
-            eval_locals[_basic_to_python_identifier(name)] = value
-        for name, value in self.variables.items():
-            eval_locals[_basic_to_python_identifier(name)] = value
+        # Only rebuild if fingerprint changed (new variables/constants/functions added)
+        if self._eval_locals_fingerprint != current_fingerprint:
+            eval_locals.clear()
 
-        # Add user-defined FN functions to eval locals
-        for fn_name in self.user_functions:
-            # Convert function name to Python-compatible format (e.g., GREET$ -> GREET_STR)
-            py_fn_name = _basic_to_python_identifier(fn_name)
-            fn_key = f"FN_{py_fn_name}"
-            # Create a closure to capture the current fn_name
-            def make_fn_caller(name):
-                return lambda *args: self._call_user_function(name, list(args))
-            eval_locals[fn_key] = make_fn_caller(fn_name)
+            # Map constants and variables using their Python-mangled names
+            for name, value in self.constants.items():
+                eval_locals[_basic_to_python_identifier(name)] = value
+            for name, value in self.variables.items():
+                eval_locals[_basic_to_python_identifier(name)] = value
 
-        # Add FUNCTION procedures to eval locals so they can be called in expressions
-        for proc_name, proc in self.procedures.items():
-            if proc['type'] == 'FUNCTION':
-                py_name = _basic_to_python_identifier(proc_name)
-                def make_proc_caller(name):
-                    return lambda *args: self._call_function_procedure(name, args)
-                eval_locals[py_name] = make_proc_caller(proc_name)
-                # Also add under base name (without suffix) for calls like CanDown vs CanDown%
-                base_name = proc_name.rstrip('$%!#&')
-                if base_name != proc_name:
-                    eval_locals[base_name] = make_proc_caller(proc_name)
+            # Add user-defined FN functions to eval locals
+            for fn_name in self.user_functions:
+                py_fn_name = _basic_to_python_identifier(fn_name)
+                fn_key = f"FN_{py_fn_name}"
+                def make_fn_caller(name):
+                    return lambda *args: self._call_user_function(name, list(args))
+                eval_locals[fn_key] = make_fn_caller(fn_name)
+
+            # Add FUNCTION procedures to eval locals
+            for proc_name, proc in self.procedures.items():
+                if proc['type'] == 'FUNCTION':
+                    py_name = _basic_to_python_identifier(proc_name)
+                    def make_proc_caller(name):
+                        return lambda *args: self._call_function_procedure(name, args)
+                    eval_locals[py_name] = make_proc_caller(proc_name)
+                    base_name = proc_name.rstrip('$%!#&')
+                    if base_name != proc_name:
+                        eval_locals[base_name] = make_proc_caller(proc_name)
+
+            self._eval_locals_fingerprint = current_fingerprint
+        else:
+            # Fingerprint same - just update values (keys haven't changed)
+            for name, value in self.constants.items():
+                eval_locals[_basic_to_python_identifier(name)] = value
+            for name, value in self.variables.items():
+                eval_locals[_basic_to_python_identifier(name)] = value
 
         # QBasic treats undefined numeric variables as 0 and undefined string variables as ""
         # Retry evaluation up to 10 times, adding undefined variables as we encounter them
@@ -1884,7 +2581,6 @@ class BasicInterpreter:
             except NameError as e:
                 # Extract the undefined variable name from the error message
                 # Format: "name 'VARNAME' is not defined"
-                import re
                 match = re.search(r"name '([^']+)' is not defined", str(e))
                 if match:
                     undefined_var = match.group(1)
@@ -1912,6 +2608,11 @@ class BasicInterpreter:
 
 
     def handle_event(self, event: pygame.event.Event) -> None:
+        """Handle a pygame event (keyboard input, etc.).
+
+        Args:
+            event: The pygame event to process.
+        """
         if event.type == KEYDOWN:
             # Handle INPUT mode - route key presses to input handler
             if self.input_mode:
@@ -1982,6 +2683,26 @@ class BasicInterpreter:
             scale_y = self.screen_height / self.window_height if self.window_height > 0 else 1
             self.pen_current_x = int(x * scale_x)
             self.pen_current_y = int(y * scale_y)
+
+    def _runtime_error(self, msg: str, pc: int) -> bool:
+        """Handle a runtime error - print message, stop execution, and return False.
+
+        If an ON ERROR GOTO handler is set, raises BasicRuntimeError instead of
+        stopping execution, allowing the handler to process the error.
+
+        Args:
+            msg: The error message (without 'Error:' prefix or PC suffix)
+            pc: The program counter (line number) where the error occurred
+
+        Returns:
+            Always returns False to indicate execution should stop
+        """
+        full_msg = f"Error: {msg} at PC {pc}"
+        if self.error_handler_label:
+            raise BasicRuntimeError(full_msg)
+        print(full_msg)
+        self.running = False
+        return False
 
     def _should_execute(self) -> bool:
         if self.if_skip_level != -1:
@@ -2196,27 +2917,21 @@ class BasicInterpreter:
                 # self.mark_dirty()
             return False
 
+        # --- Try dispatch table for simple commands (O(1) keyword lookup) ---
+        # This comes after IF/SELECT skip checks to avoid executing in skipped blocks
+        dispatch_result = self._dispatch_command(statement, current_pc_num)
+        if dispatch_result is not None:
+            return dispatch_result
+
         m_screen = _screen_re.fullmatch(statement) # Use fullmatch for commands like SCREEN
         if m_screen:
             mode = int(self.eval_expr(m_screen.group(1).strip()))  # Evaluate expression for mode
             if not self.running: return False
-            # QBasic screen modes
-            screen_modes = {
-                0: (640, 400),   # Text mode 80x25 (simulated)
-                1: (320, 200),   # CGA 4-color
-                2: (640, 200),   # CGA 2-color
-                7: (320, 200),   # EGA 16-color
-                8: (640, 200),   # EGA 16-color
-                9: (640, 350),   # EGA 16-color
-                10: (640, 350),  # EGA mono
-                11: (640, 480),  # VGA 2-color
-                12: (640, 480),  # VGA 16-color
-                13: (320, 200),  # VGA 256-color
-            }
-            if mode in screen_modes:
-                self.screen_width, self.screen_height = screen_modes[mode]
+            # QBasic screen modes - use SCREEN_MODES from constants module
+            if mode in SCREEN_MODES:
+                self.screen_width, self.screen_height = SCREEN_MODES[mode]
             else:
-                self.screen_width, self.screen_height = 320, 200  # Default
+                self.screen_width, self.screen_height = DEFAULT_SCREEN_WIDTH, DEFAULT_SCREEN_HEIGHT
 
             # Update view print bottom for text modes
             if self.font:
@@ -2383,15 +3098,16 @@ class BasicInterpreter:
              next_var = next_var_orig.upper() if next_var_orig else None
 
              if not self.for_stack:
-                 print(f"Error: NEXT without FOR at PC {current_pc_num}"); self.running = False; return False
-            
+                 return self._runtime_error("NEXT without FOR", current_pc_num)
+
              loop_info = self.for_stack[-1]
              if loop_info.get("placeholder"): # Should not happen if _should_execute is true
-                 print(f"Error: NEXT encountered placeholder FOR loop info at PC {current_pc_num}"); self.running = False; self.for_stack.pop(); return False
+                 self.for_stack.pop()
+                 return self._runtime_error("NEXT encountered placeholder FOR loop info", current_pc_num)
 
              active_for_var = loop_info["var"]
              if next_var and next_var != active_for_var:
-                 print(f"Error: NEXT variable '{next_var_orig}' does not match FOR variable '{active_for_var}' at PC {current_pc_num}"); self.running = False; return False
+                 return self._runtime_error(f"NEXT variable '{next_var_orig}' does not match FOR variable '{active_for_var}'", current_pc_num)
             
              current_val = self.variables.get(active_for_var, 0) # Default to 0 if var somehow missing
              new_val = current_val + loop_info["step"]
@@ -2414,10 +3130,11 @@ class BasicInterpreter:
         # EXIT FOR - break out of innermost FOR loop
         if _exit_for_re.fullmatch(statement):
             if not self.for_stack:
-                print(f"Error: EXIT FOR without FOR at PC {current_pc_num}"); self.running = False; return False
+                return self._runtime_error("EXIT FOR without FOR", current_pc_num)
             loop_info = self.for_stack[-1]
             if loop_info.get("placeholder"):
-                print(f"Error: EXIT FOR encountered placeholder FOR info at PC {current_pc_num}"); self.running = False; self.for_stack.pop(); return False
+                self.for_stack.pop()
+                return self._runtime_error("EXIT FOR encountered placeholder FOR info", current_pc_num)
             self.for_stack.pop()  # Remove the FOR loop from stack
             # Skip to the corresponding NEXT statement
             self._skip_to_next(current_pc_num)
@@ -2426,10 +3143,11 @@ class BasicInterpreter:
         # EXIT DO - break out of innermost DO loop
         if _exit_do_re.fullmatch(statement):
             if not self.loop_stack:
-                print(f"Error: EXIT DO without DO at PC {current_pc_num}"); self.running = False; return False
+                return self._runtime_error("EXIT DO without DO", current_pc_num)
             loop_info = self.loop_stack[-1]
             if loop_info.get("placeholder"):
-                print(f"Error: EXIT DO encountered placeholder DO info at PC {current_pc_num}"); self.running = False; self.loop_stack.pop(); return False
+                self.loop_stack.pop()
+                return self._runtime_error("EXIT DO encountered placeholder DO info", current_pc_num)
             self.loop_stack.pop()  # Remove the DO loop from stack
             # Skip to the corresponding LOOP statement
             self._skip_to_loop(current_pc_num)
@@ -4118,69 +4836,7 @@ class BasicInterpreter:
 
         return True
 
-    def _do_beep(self) -> None:
-        """Execute BEEP command - plays a short beep sound."""
-        try:
-            # Generate a simple beep using pygame
-            if not pygame.mixer.get_init():
-                pygame.mixer.init(frequency=22050, size=-16, channels=1)
-
-            # Create a simple sine wave beep (800 Hz, 0.2 seconds)
-            import array
-            sample_rate = 22050
-            frequency = 800
-            duration = 0.2
-            n_samples = int(sample_rate * duration)
-
-            # Generate sine wave
-            samples = array.array('h', [0] * n_samples)
-            for i in range(n_samples):
-                t = i / sample_rate
-                samples[i] = int(32767 * 0.5 * math.sin(2 * math.pi * frequency * t))
-
-            # Create and play sound
-            sound = pygame.mixer.Sound(buffer=samples)
-            sound.play()
-        except Exception:
-            pass  # Silently fail if audio not available
-
-    def _do_sound(self, freq_expr: str, duration_expr: str, pc: int) -> None:
-        """Execute SOUND command - generates tone with specified frequency and duration.
-        SOUND frequency, duration (duration in clock ticks, 18.2 ticks per second)"""
-        try:
-            frequency = float(self.eval_expr(freq_expr))
-            duration_ticks = float(self.eval_expr(duration_expr))
-            if not self.running:
-                return
-
-            # Convert duration from clock ticks to seconds (18.2 ticks per second in QBasic)
-            duration = duration_ticks / 18.2
-
-            # Limit duration to reasonable value
-            duration = min(duration, 10.0)
-
-            # Frequency must be between 37 and 32767 Hz in QBasic
-            if frequency < 37 or frequency > 32767:
-                return
-
-            if not pygame.mixer.get_init():
-                pygame.mixer.init(frequency=22050, size=-16, channels=1)
-
-            import array
-            sample_rate = 22050
-            n_samples = int(sample_rate * duration)
-
-            # Generate sine wave
-            samples = array.array('h', [0] * n_samples)
-            for i in range(n_samples):
-                t = i / sample_rate
-                samples[i] = int(32767 * 0.5 * math.sin(2 * math.pi * frequency * t))
-
-            # Create and play sound
-            sound = pygame.mixer.Sound(buffer=samples)
-            sound.play()
-        except Exception as e:
-            print(f"Error in SOUND statement at PC {pc}: {e}")
+    # _do_beep and _do_sound are now provided by AudioCommandsMixin
 
     def _do_erase(self, array_list: str, pc: int) -> None:
         """Execute ERASE command - erases (clears) specified arrays."""
@@ -4627,486 +5283,8 @@ class BasicInterpreter:
 
         return True
 
-    def _do_play(self, mml_expr: str, pc: int) -> None:
-        """Execute PLAY command - Music Macro Language.
-        MML commands:
-        A-G: Notes (with optional # or + for sharp, - for flat)
-        O: Set octave (0-6, default 4)
-        L: Set default note length (1-64, 1=whole, 4=quarter, etc.)
-        T: Set tempo in quarter notes per minute (32-255, default 120)
-        N: Play note by number (0-84, 0=rest)
-        P/R: Pause/Rest (1-64)
-        >: Increase octave
-        <: Decrease octave
-        MN: Music Normal (7/8 note length)
-        ML: Music Legato (full note length)
-        MS: Music Staccato (3/4 note length)
-        """
-        try:
-            # Evaluate the MML string expression
-            mml_string = str(self.eval_expr(mml_expr))
-            if not self.running:
-                return
-
-            if not pygame.mixer.get_init():
-                pygame.mixer.init(frequency=22050, size=-16, channels=1)
-
-            import array
-
-            # MML parsing state
-            octave = 4
-            default_length = 4  # Quarter note
-            tempo = 120  # Quarter notes per minute
-            articulation = 7 / 8  # MN by default
-
-            # Note frequencies for octave 0 (C0 to B0)
-            note_base_freqs = {
-                'C': 16.35, 'D': 18.35, 'E': 20.60, 'F': 21.83,
-                'G': 24.50, 'A': 27.50, 'B': 30.87
-            }
-
-            i = 0
-            mml_upper = mml_string.upper()
-
-            while i < len(mml_upper):
-                ch = mml_upper[i]
-                i += 1
-
-                # Note commands A-G
-                if ch in 'ABCDEFG':
-                    note = ch
-                    # Check for sharp/flat
-                    modifier = 0
-                    if i < len(mml_upper) and mml_upper[i] in '#+':
-                        modifier = 1
-                        i += 1
-                    elif i < len(mml_upper) and mml_upper[i] == '-':
-                        modifier = -1
-                        i += 1
-
-                    # Check for length
-                    length = default_length
-                    num_str = ""
-                    while i < len(mml_upper) and mml_upper[i].isdigit():
-                        num_str += mml_upper[i]
-                        i += 1
-                    if num_str:
-                        length = int(num_str)
-
-                    # Check for dot (adds half the note length)
-                    dot_mult = 1.0
-                    while i < len(mml_upper) and mml_upper[i] == '.':
-                        dot_mult += 0.5 * dot_mult
-                        i += 1
-
-                    # Calculate frequency
-                    base_freq = note_base_freqs[note]
-                    # Apply sharp/flat (semitone = 2^(1/12))
-                    freq = base_freq * (2 ** octave) * (2 ** (modifier / 12.0))
-
-                    # Calculate duration: (60 / tempo) * (4 / length) * dot_mult
-                    duration = (60.0 / tempo) * (4.0 / length) * dot_mult
-
-                    # Play the note
-                    self._play_note(freq, duration * articulation)
-
-                # Rest/Pause
-                elif ch in 'PR':
-                    length = default_length
-                    num_str = ""
-                    while i < len(mml_upper) and mml_upper[i].isdigit():
-                        num_str += mml_upper[i]
-                        i += 1
-                    if num_str:
-                        length = int(num_str)
-
-                    dot_mult = 1.0
-                    while i < len(mml_upper) and mml_upper[i] == '.':
-                        dot_mult += 0.5 * dot_mult
-                        i += 1
-
-                    duration = (60.0 / tempo) * (4.0 / length) * dot_mult
-                    time.sleep(duration)
-
-                # Octave command
-                elif ch == 'O':
-                    num_str = ""
-                    while i < len(mml_upper) and mml_upper[i].isdigit():
-                        num_str += mml_upper[i]
-                        i += 1
-                    if num_str:
-                        octave = max(0, min(6, int(num_str)))
-
-                # Increase octave
-                elif ch == '>':
-                    octave = min(6, octave + 1)
-
-                # Decrease octave
-                elif ch == '<':
-                    octave = max(0, octave - 1)
-
-                # Length command
-                elif ch == 'L':
-                    num_str = ""
-                    while i < len(mml_upper) and mml_upper[i].isdigit():
-                        num_str += mml_upper[i]
-                        i += 1
-                    if num_str:
-                        default_length = max(1, min(64, int(num_str)))
-
-                # Tempo command
-                elif ch == 'T':
-                    num_str = ""
-                    while i < len(mml_upper) and mml_upper[i].isdigit():
-                        num_str += mml_upper[i]
-                        i += 1
-                    if num_str:
-                        tempo = max(32, min(255, int(num_str)))
-
-                # Note by number
-                elif ch == 'N':
-                    num_str = ""
-                    while i < len(mml_upper) and mml_upper[i].isdigit():
-                        num_str += mml_upper[i]
-                        i += 1
-                    if num_str:
-                        note_num = int(num_str)
-                        if note_num == 0:
-                            # Rest
-                            duration = (60.0 / tempo) * (4.0 / default_length)
-                            time.sleep(duration)
-                        elif 1 <= note_num <= 84:
-                            # Note number to frequency (N1 = C0)
-                            freq = 16.35 * (2 ** ((note_num - 1) / 12.0))
-                            duration = (60.0 / tempo) * (4.0 / default_length)
-                            self._play_note(freq, duration * articulation)
-
-                # Music articulation
-                elif ch == 'M':
-                    if i < len(mml_upper):
-                        art_ch = mml_upper[i]
-                        i += 1
-                        if art_ch == 'N':
-                            articulation = 7 / 8  # Normal
-                        elif art_ch == 'L':
-                            articulation = 1.0  # Legato
-                        elif art_ch == 'S':
-                            articulation = 3 / 4  # Staccato
-
-                # Skip spaces and unknown characters
-                elif ch in ' \t\n':
-                    pass
-
-        except Exception as e:
-            print(f"Error in PLAY at PC {pc}: {e}")
-
-    def _play_note(self, frequency: float, duration: float) -> None:
-        """Helper to play a single note."""
-        try:
-            if frequency <= 0 or duration <= 0:
-                return
-
-            import array
-            sample_rate = 22050
-            n_samples = int(sample_rate * duration)
-            if n_samples <= 0:
-                return
-
-            # Generate sine wave
-            samples = array.array('h', [0] * n_samples)
-            for i in range(n_samples):
-                t = i / sample_rate
-                # Apply envelope (attack/decay) to avoid clicks
-                envelope = 1.0
-                attack_samples = int(0.01 * sample_rate)  # 10ms attack
-                decay_samples = int(0.05 * sample_rate)   # 50ms decay
-                if i < attack_samples:
-                    envelope = i / attack_samples
-                elif i > n_samples - decay_samples:
-                    envelope = (n_samples - i) / decay_samples
-                samples[i] = int(32767 * 0.5 * envelope * math.sin(2 * math.pi * frequency * t))
-
-            sound = pygame.mixer.Sound(buffer=samples)
-            sound.play()
-            time.sleep(duration)  # Wait for note to finish
-        except Exception:
-            pass
-
-    def _do_draw(self, draw_expr: str, pc: int) -> None:
-        """Execute DRAW command - turtle graphics.
-        Commands:
-        U[n]: Move up n pixels
-        D[n]: Move down n pixels
-        L[n]: Move left n pixels
-        R[n]: Move right n pixels
-        E[n]: Move diagonally up-right
-        F[n]: Move diagonally down-right
-        G[n]: Move diagonally down-left
-        H[n]: Move diagonally up-left
-        M[+/-]x,y: Move to absolute (or relative with +/-) position
-        A[n]: Set angle (0-3, n*90 degrees)
-        TA[n]: Turn angle in degrees
-        C[n]: Set color
-        B: Move without drawing (prefix)
-        N: Return to original position after command (prefix)
-        P paint,border: Paint fill
-        S[n]: Scale factor (1-255, default 4, n/4 is the multiplier)
-        """
-        try:
-            # Evaluate the DRAW string expression
-            draw_string = str(self.eval_expr(draw_expr))
-            if not self.running:
-                return
-
-            i = 0
-            draw_upper = draw_string.upper()
-            scale = 4  # Default scale (1 pixel per unit)
-            color = self.current_fg_color
-
-            while i < len(draw_upper):
-                ch = draw_upper[i]
-                i += 1
-
-                # Prefix modifiers
-                blank_move = False
-                return_after = False
-
-                while ch in 'BN':
-                    if ch == 'B':
-                        blank_move = True
-                    elif ch == 'N':
-                        return_after = True
-                    if i < len(draw_upper):
-                        ch = draw_upper[i]
-                        i += 1
-                    else:
-                        break
-
-                # Parse number after command
-                def parse_number():
-                    nonlocal i
-                    num_str = ""
-                    negative = False
-                    if i < len(draw_upper) and draw_upper[i] in '+-':
-                        if draw_upper[i] == '-':
-                            negative = True
-                        i += 1
-                    while i < len(draw_upper) and draw_upper[i].isdigit():
-                        num_str += draw_upper[i]
-                        i += 1
-                    if num_str:
-                        val = int(num_str)
-                        return -val if negative else val
-                    return 1  # Default distance
-
-                # Direction commands
-                save_x, save_y = self.draw_x, self.draw_y
-                dx, dy = 0, 0
-
-                if ch == 'U':  # Up
-                    n = parse_number()
-                    dy = -n * (scale / 4)
-                elif ch == 'D':  # Down
-                    n = parse_number()
-                    dy = n * (scale / 4)
-                elif ch == 'L':  # Left
-                    n = parse_number()
-                    dx = -n * (scale / 4)
-                elif ch == 'R':  # Right
-                    n = parse_number()
-                    dx = n * (scale / 4)
-                elif ch == 'E':  # Up-right diagonal
-                    n = parse_number()
-                    dx = n * (scale / 4)
-                    dy = -n * (scale / 4)
-                elif ch == 'F':  # Down-right diagonal
-                    n = parse_number()
-                    dx = n * (scale / 4)
-                    dy = n * (scale / 4)
-                elif ch == 'G':  # Down-left diagonal
-                    n = parse_number()
-                    dx = -n * (scale / 4)
-                    dy = n * (scale / 4)
-                elif ch == 'H':  # Up-left diagonal
-                    n = parse_number()
-                    dx = -n * (scale / 4)
-                    dy = -n * (scale / 4)
-                elif ch == 'M':  # Move to position
-                    # Check for relative movement
-                    relative = False
-                    if i < len(draw_upper) and draw_upper[i] in '+-':
-                        relative = True
-                    x = parse_number()
-                    # Skip comma
-                    if i < len(draw_upper) and draw_upper[i] == ',':
-                        i += 1
-                    y = parse_number()
-                    if relative:
-                        dx = x * (scale / 4)
-                        dy = y * (scale / 4)
-                    else:
-                        # Absolute movement
-                        new_x, new_y = x, y
-                        if not blank_move and self.surface:
-                            pygame.draw.line(self.surface, self.basic_color(color),
-                                           (int(self.draw_x), int(self.draw_y)),
-                                           (int(new_x), int(new_y)))
-                            self.mark_dirty()
-                        if not return_after:
-                            self.draw_x, self.draw_y = new_x, new_y
-                        continue
-                elif ch == 'A':  # Set angle (0-3)
-                    n = parse_number()
-                    self.draw_angle = (n % 4) * 90
-                    continue
-                elif ch == 'T':  # Turn angle
-                    if i < len(draw_upper) and draw_upper[i] == 'A':
-                        i += 1
-                        n = parse_number()
-                        self.draw_angle = (self.draw_angle + n) % 360
-                    continue
-                elif ch == 'C':  # Set color
-                    n = parse_number()
-                    color = n % 16
-                    continue
-                elif ch == 'S':  # Set scale
-                    n = parse_number()
-                    scale = max(1, min(255, n))
-                    continue
-                elif ch == 'P':  # Paint (fill)
-                    fill_color = parse_number()
-                    if i < len(draw_upper) and draw_upper[i] == ',':
-                        i += 1
-                    border_color = parse_number()
-                    # Perform flood fill at current position
-                    if self.surface:
-                        self._scanline_fill(int(self.draw_x), int(self.draw_y),
-                                          self.basic_color(fill_color),
-                                          self.basic_color(border_color),
-                                          self.surface.get_at((int(self.draw_x), int(self.draw_y)))[:3])
-                        self.mark_dirty()
-                    continue
-                elif ch in ' \t\n':
-                    continue
-                else:
-                    continue  # Skip unknown commands
-
-                # Apply rotation based on draw_angle
-                if self.draw_angle != 0:
-                    rad = math.radians(self.draw_angle)
-                    new_dx = dx * math.cos(rad) - dy * math.sin(rad)
-                    new_dy = dx * math.sin(rad) + dy * math.cos(rad)
-                    dx, dy = new_dx, new_dy
-
-                # Calculate new position
-                new_x = self.draw_x + dx
-                new_y = self.draw_y + dy
-
-                # Draw line if not blank move
-                if not blank_move and self.surface:
-                    pygame.draw.line(self.surface, self.basic_color(color),
-                                   (int(self.draw_x), int(self.draw_y)),
-                                   (int(new_x), int(new_y)))
-                    self.mark_dirty()
-
-                # Update position (or return to original)
-                if return_after:
-                    self.draw_x, self.draw_y = save_x, save_y
-                else:
-                    self.draw_x, self.draw_y = new_x, new_y
-
-        except Exception as e:
-            print(f"Error in DRAW at PC {pc}: {e}")
-
-    def _do_get_graphics(self, match, pc: int) -> bool:
-        """Handle GET (x1, y1)-(x2, y2), array - capture screen region to array."""
-        try:
-            x1 = int(self.eval_expr(match.group(1).strip()))
-            y1 = int(self.eval_expr(match.group(2).strip()))
-            x2 = int(self.eval_expr(match.group(3).strip()))
-            y2 = int(self.eval_expr(match.group(4).strip()))
-            array_name = match.group(5).upper()
-
-            if not self.running:
-                return False
-
-            # Ensure coordinates are in order
-            if x1 > x2:
-                x1, x2 = x2, x1
-            if y1 > y2:
-                y1, y2 = y2, y1
-
-            # Clip to screen bounds
-            x1 = max(0, min(x1, self.screen_width - 1))
-            x2 = max(0, min(x2, self.screen_width - 1))
-            y1 = max(0, min(y1, self.screen_height - 1))
-            y2 = max(0, min(y2, self.screen_height - 1))
-
-            width = x2 - x1 + 1
-            height = y2 - y1 + 1
-
-            # Capture the screen region as a pygame surface
-            if self.surface:
-                captured = self.surface.subsurface((x1, y1, width, height)).copy()
-                # Store metadata and surface in a special format
-                self.variables[array_name] = {
-                    '_sprite': True,
-                    'width': width,
-                    'height': height,
-                    'surface': captured
-                }
-
-            return False
-        except Exception as e:
-            print(f"Error in GET at PC {pc}: {e}")
-            return False
-
-    def _do_put_graphics(self, match, pc: int) -> bool:
-        """Handle PUT (x, y), array[, mode] - display sprite from array."""
-        try:
-            x = int(self.eval_expr(match.group(1).strip()))
-            y = int(self.eval_expr(match.group(2).strip()))
-            array_name = match.group(3).upper()
-            mode = (match.group(4) or "XOR").upper()
-
-            if not self.running:
-                return False
-
-            # Get the sprite data
-            sprite_data = self.variables.get(array_name)
-            if not sprite_data or not isinstance(sprite_data, dict) or not sprite_data.get('_sprite'):
-                print(f"Error: Array '{array_name}' does not contain sprite data at PC {pc}")
-                return False
-
-            sprite_surface = sprite_data['surface']
-
-            if self.surface and sprite_surface:
-                if mode == "PSET":
-                    self.surface.blit(sprite_surface, (x, y))
-                elif mode == "PRESET":
-                    # Invert colors (simplified)
-                    inverted = sprite_surface.copy()
-                    inverted.fill((255, 255, 255))
-                    inverted.blit(sprite_surface, (0, 0), special_flags=pygame.BLEND_RGB_SUB)
-                    self.surface.blit(inverted, (x, y))
-                elif mode == "AND":
-                    self.surface.blit(sprite_surface, (x, y), special_flags=pygame.BLEND_RGB_MULT)
-                elif mode == "OR":
-                    self.surface.blit(sprite_surface, (x, y), special_flags=pygame.BLEND_RGB_ADD)
-                elif mode == "XOR":
-                    # XOR mode - need to implement manually
-                    temp = self.surface.subsurface((x, y, sprite_data['width'], sprite_data['height'])).copy()
-                    arr1 = pygame.surfarray.pixels3d(temp)
-                    arr2 = pygame.surfarray.pixels3d(sprite_surface)
-                    arr1 ^= arr2
-                    del arr1, arr2
-                    self.surface.blit(temp, (x, y))
-                self.mark_dirty()
-
-            return False
-        except Exception as e:
-            print(f"Error in PUT at PC {pc}: {e}")
-            return False
+    # _do_play and _play_note are now provided by AudioCommandsMixin
+    # _do_draw, _do_get_graphics, _do_put_graphics are now provided by GraphicsCommandsMixin
 
     def _parse_procedure_params(self, params_str: str) -> List[str]:
         """Parse procedure parameter string, handling AS TYPE syntax.
@@ -5762,7 +5940,6 @@ class BasicInterpreter:
 
     def _handle_get_file(self, match, pc: int) -> bool:
         """Handle GET #filenum[, recordnum], variable - read binary data from file."""
-        import struct
         try:
             file_num = int(match.group(1))
             record_num = match.group(2)
@@ -5836,7 +6013,6 @@ class BasicInterpreter:
 
     def _handle_put_file(self, match, pc: int) -> bool:
         """Handle PUT #filenum[, recordnum], variable - write binary data to file."""
-        import struct
         try:
             file_num = int(match.group(1))
             record_num = match.group(2)
@@ -5886,7 +6062,6 @@ class BasicInterpreter:
 
     def _handle_kill(self, filename_expr: str, pc: int) -> bool:
         """Handle KILL filename - delete a file."""
-        import os
         try:
             # Evaluate filename
             if filename_expr.startswith('"') and filename_expr.endswith('"'):
@@ -5908,7 +6083,6 @@ class BasicInterpreter:
 
     def _handle_name(self, old_name_expr: str, new_name_expr: str, pc: int) -> bool:
         """Handle NAME oldname AS newname - rename a file."""
-        import os
         try:
             # Evaluate old filename
             if old_name_expr.startswith('"') and old_name_expr.endswith('"'):
@@ -5937,7 +6111,6 @@ class BasicInterpreter:
 
     def _handle_mkdir(self, dir_expr: str, pc: int) -> bool:
         """Handle MKDIR dirname - create a directory."""
-        import os
         try:
             # Evaluate directory name
             if dir_expr.startswith('"') and dir_expr.endswith('"'):
@@ -5959,7 +6132,6 @@ class BasicInterpreter:
 
     def _handle_rmdir(self, dir_expr: str, pc: int) -> bool:
         """Handle RMDIR dirname - remove a directory."""
-        import os
         try:
             # Evaluate directory name
             if dir_expr.startswith('"') and dir_expr.endswith('"'):
@@ -5985,7 +6157,6 @@ class BasicInterpreter:
 
     def _handle_chdir(self, dir_expr: str, pc: int) -> bool:
         """Handle CHDIR dirname - change current directory."""
-        import os
         try:
             # Evaluate directory name
             if dir_expr.startswith('"') and dir_expr.endswith('"'):
@@ -6007,8 +6178,6 @@ class BasicInterpreter:
 
     def _handle_files(self, pattern_expr: Optional[str], pc: int) -> bool:
         """Handle FILES [pattern] - list directory contents."""
-        import os
-        import glob
         try:
             # Evaluate pattern if provided
             if pattern_expr:
@@ -6096,8 +6265,6 @@ class BasicInterpreter:
     def _handle_shell(self, cmd_expr: Optional[str], pc: int) -> bool:
         """Handle SHELL statement - execute shell command.
         SHELL ["command"] - executes the command or opens an interactive shell."""
-        import subprocess
-        import shlex
         try:
             if cmd_expr and cmd_expr.strip():
                 cmd = str(self.eval_expr(cmd_expr.strip()))
@@ -6424,7 +6591,6 @@ class BasicInterpreter:
     def _handle_environ_set(self, expr: str, pc: int) -> bool:
         """Handle ENVIRON statement - set environment variable.
         ENVIRON "NAME=VALUE" or ENVIRON name$ where name$ contains "NAME=VALUE"."""
-        import os
         try:
             env_str = str(self.eval_expr(expr))
             if not self.running:
@@ -6730,6 +6896,11 @@ class BasicInterpreter:
         self._skip_block("DO", "LOOP", start_pc_num)
 
     def step(self) -> None:
+        """Execute one or more BASIC statements.
+
+        Processes pending events (joystick, pen), handles delays, and executes
+        BASIC code up to steps_per_frame limit or until a natural pause occurs.
+        """
         # Don't execute BASIC code while waiting for INPUT
         if self.input_mode:
             return
@@ -6777,6 +6948,12 @@ class BasicInterpreter:
             self.running = False
 
     def draw(self, target_surface: pygame.Surface) -> None:
+        """Render the BASIC program's screen output to a pygame surface.
+
+        Args:
+            target_surface: The pygame surface to draw to. The internal rendering
+                surface will be scaled to fit this target.
+        """
         if not self.surface:
             return
 
@@ -6882,7 +7059,6 @@ def run_interpreter(filename: str) -> None:
     pygame.quit()
 
 if __name__ == '__main__':
-    import sys
     if len(sys.argv) > 1:
         run_interpreter(sys.argv[1])
     else:
