@@ -23,6 +23,7 @@ from constants import (
 )
 from commands.audio import AudioCommandsMixin
 from commands.graphics import GraphicsCommandsMixin
+from commands.control_flow import ControlFlowMixin
 
 # Try to import numpy for faster array operations
 try:
@@ -780,12 +781,13 @@ def convert_basic_expr(expr: str, known_identifiers: Optional[set] = None) -> st
     _expr_cache[original_expr_for_cache] = expr
     return expr
 
-class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin):
+class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMixin):
     """BASIC interpreter with pygame graphics support.
 
     Inherits from:
         AudioCommandsMixin: Provides BEEP, SOUND, PLAY commands
         GraphicsCommandsMixin: Provides DRAW, GET/PUT graphics, flood fill
+        ControlFlowMixin: Provides GOTO, GOSUB, ON GOTO/GOSUB, block skipping
     """
 
     def __init__(self, font: pygame.font.Font, width: int, height: int) -> None:
@@ -4592,20 +4594,7 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin):
         return False
 
 
-    def _do_goto(self, label: str) -> bool:
-        target_pc_idx = self.labels.get(label)
-        if target_pc_idx is not None:
-            self.pc = target_pc_idx # Set PC for the next line to be executed
-            return True # Indicate PC has changed
-        print(f"Error: Label '{label}' not found for GOTO at PC {self.pc-1}."); self.running = False; return False
-
-    def _do_gosub(self, label: str) -> bool:
-        target_pc_idx = self.labels.get(label)
-        if target_pc_idx is not None:
-            self.gosub_stack.append(self.pc) # Push current NEXT pc to stack
-            self.pc = target_pc_idx # Set PC for GOSUB target
-            return True # Indicate PC has changed
-        print(f"Error: Label '{label}' not found for GOSUB at PC {self.pc-1}."); self.running = False; return False
+    # _do_goto and _do_gosub are now provided by ControlFlowMixin
 
     def _handle_input(self, input_content: str, pc: int) -> bool:
         """Handle INPUT statement. QBasic 4.5 format: INPUT ["prompt"{;|,}] var[, var...]"""
@@ -4766,33 +4755,7 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin):
         self.text_cursor = (1, self.text_cursor[1] + 1)
         return True
 
-    def _handle_on_goto_gosub(self, expr: str, labels_str: str, branch_type: str, pc: int) -> bool:
-        """Handle ON...GOTO and ON...GOSUB statements."""
-        # Evaluate the selector expression
-        selector = self.eval_expr(expr.strip())
-        if not self.running:
-            return False
-
-        try:
-            index = int(selector)
-        except (ValueError, TypeError):
-            print(f"Error: ON {branch_type} selector must be numeric at PC {pc}")
-            self.running = False
-            return False
-
-        # Parse label list
-        labels = [l.strip().upper() for l in labels_str.split(',')]
-
-        # QBasic: if index < 1 or index > number of labels, continue to next statement
-        if index < 1 or index > len(labels):
-            return False  # Continue to next statement
-
-        target_label = labels[index - 1]  # 1-based indexing
-
-        if branch_type == "GOTO":
-            return self._do_goto(target_label)
-        else:  # GOSUB
-            return self._do_gosub(target_label)
+    # _handle_on_goto_gosub is now provided by ControlFlowMixin
 
     def _handle_line_input(self, input_content: str, pc: int) -> bool:
         """Handle LINE INPUT statement. QBasic 4.5 format: LINE INPUT ["prompt"{;|,}] var$
@@ -6747,11 +6710,7 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin):
         if not self.running: return False
         return test_value == case_value
 
-    def _skip_while_block(self, start_pc_num: int) -> None:
-        """Skip to the matching WEND statement."""
-        if self.loop_stack and self.loop_stack[-1].get("type") == "WHILE":
-            self.loop_stack.pop()
-        self._skip_block("WHILE", "WEND", start_pc_num)
+    # _skip_while_block is now provided by ControlFlowMixin
 
     def step_line(self) -> bool:
         """ Executes the current program line (self.pc) and advances self.pc.
@@ -6839,61 +6798,8 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin):
         return False
 
 
-    def _skip_block(self, start_kw_upper: str, end_kw_upper: str, pc_of_block_start: int) -> None:
-        """ Skips a block of code (FOR/NEXT, DO/LOOP) by advancing self.pc. """
-        nesting_level = 1
-        # Start searching from the line *after* the current line (self.pc already advanced)
-        search_pc = self.pc 
-        
-        while search_pc < len(self.program_lines) and nesting_level > 0:
-            _, _, line_to_scan = self.program_lines[search_pc]
-            # Check only the first command on the line for block start/end keywords for simplicity
-            # This doesn't handle multi-statement lines perfectly for nested blocks while skipping,
-            # but is a common simplification.
-            first_cmd_on_line = line_to_scan.split(':')[0].strip().upper()
-
-            if first_cmd_on_line.startswith(start_kw_upper):
-                nesting_level += 1
-            elif first_cmd_on_line.startswith(end_kw_upper):
-                # For NEXT [var], ensure it's a NEXT, not something like NEXTPAGE
-                if end_kw_upper == "NEXT" and not _next_re.match(first_cmd_on_line): # Check with regex
-                    pass # Not a true NEXT statement
-                else:
-                    nesting_level -= 1
-            
-            if nesting_level == 0:
-                self.pc = search_pc + 1 # PC for the line AFTER the block end
-                return
-            search_pc += 1
-        
-        # If loop falls through, EOF was reached before block end
-        print(f"Warning: EOF reached while skipping '{start_kw_upper}' block started at PC {pc_of_block_start}.")
-        self.running = False
-        self.pc = len(self.program_lines) # Move PC to end to stop execution
-
-    def _skip_for_block(self, start_pc_num: int) -> None:
-        # The FOR that initiated the skip is on the stack. Pop it.
-        if self.for_stack and self.for_stack[-1]["loop_pc"] == self.pc:  # Ensure it's the current FOR
-            # If it was a placeholder from skipping an IF, that's handled differently
-            if not self.for_stack[-1].get("placeholder"):
-                self.for_stack.pop()
-        self._skip_block("FOR", "NEXT", start_pc_num)
-
-
-    def _skip_loop_block(self, start_pc_num: int) -> None:
-        # The DO that initiated the skip is on the stack. Pop it.
-        if self.loop_stack and self.loop_stack[-1]["start_pc"] == self.pc:
-            if not self.loop_stack[-1].get("placeholder"):
-                self.loop_stack.pop()
-        self._skip_block("DO", "LOOP", start_pc_num)
-
-    def _skip_to_next(self, start_pc_num: int) -> None:
-        """Skip to the matching NEXT statement for EXIT FOR."""
-        self._skip_block("FOR", "NEXT", start_pc_num)
-
-    def _skip_to_loop(self, start_pc_num: int) -> None:
-        """Skip to the matching LOOP statement for EXIT DO."""
-        self._skip_block("DO", "LOOP", start_pc_num)
+    # _skip_block, _skip_for_block, _skip_loop_block, _skip_to_next, _skip_to_loop
+    # are now provided by ControlFlowMixin
 
     def step(self) -> None:
         """Execute one or more BASIC statements.
