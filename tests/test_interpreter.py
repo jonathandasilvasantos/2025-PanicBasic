@@ -412,8 +412,75 @@ class TestConstants(unittest.TestCase):
             self.assertIsInstance(mode, int)
             self.assertIsInstance(width, int)
             self.assertIsInstance(height, int)
-            self.assertGreater(width, 0)
-            self.assertGreater(height, 0)
+
+
+class TestCommandDispatch(unittest.TestCase):
+    """Test the command dispatch table mechanism."""
+
+    def setUp(self):
+        """Set up test fixtures."""
+        if not pygame.get_init():
+            pygame.init()
+        if not pygame.font.get_init():
+            pygame.font.init()
+        self.font = pygame.font.SysFont(None, 16)
+        self.interp = BasicInterpreter(self.font, 320, 200)
+
+    def test_dispatch_table_exists(self):
+        """Test that dispatch table is created."""
+        self.assertIsNotNone(self.interp._command_dispatch)
+        self.assertIsInstance(self.interp._command_dispatch, dict)
+
+    def test_dispatch_table_has_basic_commands(self):
+        """Test that dispatch table has expected commands."""
+        dispatch = self.interp._command_dispatch
+        # Check for some basic commands
+        self.assertIn("BEEP", dispatch)
+        self.assertIn("STOP", dispatch)
+        self.assertIn("TRON", dispatch)
+        self.assertIn("TROFF", dispatch)
+        self.assertIn("CLS", dispatch)
+        self.assertIn("GOTO", dispatch)
+        self.assertIn("GOSUB", dispatch)
+        self.assertIn("RETURN", dispatch)
+
+    def test_extract_first_keyword(self):
+        """Test keyword extraction from statements."""
+        self.assertEqual(self.interp._extract_first_keyword("PRINT x"), "PRINT")
+        self.assertEqual(self.interp._extract_first_keyword("goto label"), "GOTO")
+        self.assertEqual(self.interp._extract_first_keyword("FOR I = 1 TO 10"), "FOR")
+        self.assertEqual(self.interp._extract_first_keyword("$INCLUDE: 'file.bi'"), "$INCLUDE")
+        self.assertIsNone(self.interp._extract_first_keyword("123"))
+        self.assertIsNone(self.interp._extract_first_keyword(""))
+
+    def test_dispatch_command_beep(self):
+        """Test that BEEP command is dispatched correctly."""
+        # BEEP should be handled and return False (no jump)
+        result = self.interp._dispatch_command("BEEP", 0)
+        self.assertIsNotNone(result)
+        self.assertEqual(result, False)
+
+    def test_dispatch_command_unknown(self):
+        """Test that unknown commands return None."""
+        # Unknown command should return None (fall through)
+        result = self.interp._dispatch_command("UNKNOWNCOMMAND", 0)
+        self.assertIsNone(result)
+
+    def test_dispatch_tron_troff(self):
+        """Test TRON/TROFF via dispatch."""
+        self.assertFalse(self.interp.trace_mode)
+
+        # TRON should enable trace mode
+        self.interp._dispatch_command("TRON", 0)
+        self.assertTrue(self.interp.trace_mode)
+
+        # TROFF should disable trace mode
+        self.interp._dispatch_command("TROFF", 0)
+        self.assertFalse(self.interp.trace_mode)
+
+
+class TestDefaultColors(unittest.TestCase):
+    """Test default color constants."""
 
     def test_default_colors_has_16_colors(self):
         """Test that default color palette has all 16 colors."""

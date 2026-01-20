@@ -1039,6 +1039,584 @@ class BasicInterpreter:
             "MULTIKEY": self._basic_keydown,  # Alias for KEYDOWN (compatibility)
         }
 
+        # Build command dispatch table for O(1) keyword lookup
+        self._command_dispatch = self._build_command_dispatch()
+
+    def _build_command_dispatch(self) -> Dict[str, Any]:
+        """Build and return the command dispatch table.
+
+        Maps first keywords of BASIC statements to their handler methods.
+        Each handler takes (statement, current_pc_num) and returns bool.
+
+        Returns:
+            Dictionary mapping uppercase keywords to handler methods.
+        """
+        return {
+            # Simple single-keyword commands
+            "BEEP": self._cmd_beep,
+            "STOP": self._cmd_stop,
+            "TRON": self._cmd_tron,
+            "TROFF": self._cmd_troff,
+            "CLS": self._cmd_cls,
+            "WEND": self._cmd_wend,
+            "RETURN": self._cmd_return,
+            # Commands with arguments
+            "GOTO": self._cmd_goto,
+            "GOSUB": self._cmd_gosub,
+            "SCREEN": self._cmd_screen,
+            "COLOR": self._cmd_color,
+            "LOCATE": self._cmd_locate,
+            "PRINT": self._cmd_print,
+            "PSET": self._cmd_pset,
+            "PRESET": self._cmd_preset,
+            "LINE": self._cmd_line,
+            "CIRCLE": self._cmd_circle,
+            "PAINT": self._cmd_paint,
+            "SOUND": self._cmd_sound,
+            "PLAY": self._cmd_play,
+            "DRAW": self._cmd_draw,
+            "ERASE": self._cmd_erase,
+            "SWAP": self._cmd_swap,
+            "RANDOMIZE": self._cmd_randomize,
+            "SLEEP": self._cmd_delay,
+            "_DELAY": self._cmd_delay,
+            "RUN": self._cmd_run,
+            "CONT": self._cmd_cont,
+            "CHAIN": self._cmd_chain,
+            "CLEAR": self._cmd_clear,
+            "SYSTEM": self._cmd_system,
+            "SHELL": self._cmd_shell,
+            # Control flow - complex handlers
+            "FOR": self._cmd_for,
+            "NEXT": self._cmd_next,
+            "DO": self._cmd_do,
+            "LOOP": self._cmd_loop,
+            "WHILE": self._cmd_while,
+            # File I/O
+            "OPEN": self._cmd_open,
+            "CLOSE": self._cmd_close,
+            "KILL": self._cmd_kill,
+            "NAME": self._cmd_name,
+            "MKDIR": self._cmd_mkdir,
+            "RMDIR": self._cmd_rmdir,
+            "CHDIR": self._cmd_chdir,
+            "FILES": self._cmd_files,
+            "SEEK": self._cmd_seek,
+            # Data
+            "DATA": self._cmd_data,
+            "READ": self._cmd_read,
+            "RESTORE": self._cmd_restore,
+            # Graphics viewport/window
+            "VIEW": self._cmd_view,
+            "WINDOW": self._cmd_window,
+            "PALETTE": self._cmd_palette,
+            "PCOPY": self._cmd_pcopy,
+            "WIDTH": self._cmd_width,
+            # Memory/hardware
+            "OUT": self._cmd_out,
+            "POKE": self._cmd_poke,
+            "WAIT": self._cmd_wait,
+            # Error handling
+            "ERROR": self._cmd_error,
+            "RESUME": self._cmd_resume,
+            # Procedures
+            "CALL": self._cmd_call,
+            "SUB": self._cmd_sub,
+            "FUNCTION": self._cmd_function,
+            "SHARED": self._cmd_shared,
+            # User-defined types
+            "TYPE": self._cmd_type,
+            # Field/record
+            "FIELD": self._cmd_field,
+            "LSET": self._cmd_lset,
+            "RSET": self._cmd_rset,
+            # Misc
+            "CONST": self._cmd_const,
+            "OPTION": self._cmd_option,
+            "REDIM": self._cmd_redim,
+            "LPRINT": self._cmd_lprint,
+            "ENVIRON": self._cmd_environ,
+            # Timer
+            "TIMER": self._cmd_timer,
+            # Key handling
+            "KEY": self._cmd_key,
+            # Declarations
+            "DECLARE": self._cmd_declare,
+            "DEFINT": self._cmd_deftype,
+            "DEFSNG": self._cmd_deftype,
+            "DEFDBL": self._cmd_deftype,
+            "DEFLNG": self._cmd_deftype,
+            "DEFSTR": self._cmd_deftype,
+            "COMMON": self._cmd_common,
+            # Metacommands
+            "$INCLUDE": self._cmd_include,
+            "$DYNAMIC": self._cmd_dynamic,
+            "$STATIC": self._cmd_static,
+            # Pen handling
+            "PEN": self._cmd_pen,
+            "STRIG": self._cmd_strig,
+        }
+
+    def _extract_first_keyword(self, statement: str) -> Optional[str]:
+        """Extract the first keyword from a BASIC statement.
+
+        Args:
+            statement: The BASIC statement to parse.
+
+        Returns:
+            The first keyword in uppercase, or None if not found.
+        """
+        # Handle metacommands starting with $
+        if statement.startswith('$'):
+            match = re.match(r'(\$[A-Za-z]+)', statement)
+            if match:
+                return match.group(1).upper()
+            return None
+
+        # Handle regular keywords
+        match = re.match(r'([A-Za-z_][A-Za-z0-9_]*)', statement)
+        if match:
+            return match.group(1).upper()
+        return None
+
+    def _dispatch_command(self, statement: str, current_pc_num: int) -> Optional[bool]:
+        """Try to dispatch a command using the dispatch table.
+
+        Args:
+            statement: The BASIC statement to execute.
+            current_pc_num: Current program counter line number.
+
+        Returns:
+            True/False if command was handled (True = jump/delay occurred),
+            None if command was not in dispatch table.
+        """
+        keyword = self._extract_first_keyword(statement)
+        if keyword and keyword in self._command_dispatch:
+            handler = self._command_dispatch[keyword]
+            return handler(statement, current_pc_num)
+        return None
+
+    # --- Command Handler Methods ---
+    # Each handler takes (statement, current_pc_num) and returns bool
+
+    def _cmd_beep(self, statement: str, pc: int) -> bool:
+        """Handle BEEP statement."""
+        if _beep_re.fullmatch(statement.upper()):
+            self._do_beep()
+        return False
+
+    def _cmd_stop(self, statement: str, pc: int) -> bool:
+        """Handle STOP statement."""
+        if _stop_re.fullmatch(statement.upper()):
+            self.stopped = True
+            self.running = False
+            print(f"STOP at PC {pc}")
+        return False
+
+    def _cmd_tron(self, statement: str, pc: int) -> bool:
+        """Handle TRON statement."""
+        if _tron_re.fullmatch(statement.upper()):
+            self.trace_mode = True
+        return False
+
+    def _cmd_troff(self, statement: str, pc: int) -> bool:
+        """Handle TROFF statement."""
+        if _troff_re.fullmatch(statement.upper()):
+            self.trace_mode = False
+        return False
+
+    def _cmd_cls(self, statement: str, pc: int) -> bool:
+        """Handle CLS statement."""
+        if _cls_re.fullmatch(statement.upper()):
+            if self.surface:
+                self.surface.fill(self.basic_color(self.current_bg_color))
+                self.mark_dirty()
+            self.text_cursor = (1, 1)
+        return False
+
+    def _cmd_return(self, statement: str, pc: int) -> bool:
+        """Handle RETURN statement."""
+        if _return_re.fullmatch(statement.upper()):
+            if self.gosub_stack:
+                self.pc = self.gosub_stack.pop()
+                return True
+            else:
+                self._runtime_error("RETURN without GOSUB", pc)
+        return False
+
+    def _cmd_goto(self, statement: str, pc: int) -> bool:
+        """Handle GOTO statement."""
+        m = _goto_re.match(statement)
+        if m:
+            return self._do_goto(m.group(1).upper())
+        return False
+
+    def _cmd_gosub(self, statement: str, pc: int) -> bool:
+        """Handle GOSUB statement."""
+        m = _gosub_re.match(statement)
+        if m:
+            return self._do_gosub(m.group(1).upper())
+        return False
+
+    def _cmd_screen(self, statement: str, pc: int) -> Optional[bool]:
+        """Handle SCREEN statement - delegated to original logic."""
+        return None  # Fall through to original implementation
+
+    def _cmd_color(self, statement: str, pc: int) -> Optional[bool]:
+        """Handle COLOR statement - delegated to original logic."""
+        return None  # Fall through to original implementation
+
+    def _cmd_locate(self, statement: str, pc: int) -> Optional[bool]:
+        """Handle LOCATE statement - delegated to original logic."""
+        return None  # Fall through to original implementation
+
+    def _cmd_sound(self, statement: str, pc: int) -> bool:
+        """Handle SOUND statement."""
+        m = _sound_re.fullmatch(statement)
+        if m:
+            self._do_sound(m.group(1).strip(), m.group(2).strip(), pc)
+        return False
+
+    def _cmd_erase(self, statement: str, pc: int) -> bool:
+        """Handle ERASE statement."""
+        m = _erase_re.fullmatch(statement)
+        if m:
+            self._do_erase(m.group(1).strip(), pc)
+        return False
+
+    def _cmd_swap(self, statement: str, pc: int) -> bool:
+        """Handle SWAP statement."""
+        m = _swap_re.fullmatch(statement)
+        if m:
+            self._do_swap(m.group(1).strip(), m.group(2).strip(), pc)
+        return False
+
+    def _cmd_randomize(self, statement: str, pc: int) -> bool:
+        """Handle RANDOMIZE statement."""
+        m = _randomize_re.fullmatch(statement)
+        if m:
+            seed_expr = m.group(1)
+            if seed_expr:
+                seed_val = self.eval_expr(seed_expr.strip())
+                random.seed(seed_val)
+            else:
+                random.seed()
+        return False
+
+    def _cmd_delay(self, statement: str, pc: int) -> bool:
+        """Handle SLEEP/_DELAY statement."""
+        m = _delay_re.fullmatch(statement)
+        if m:
+            delay_seconds = float(self.eval_expr(m.group(1).strip()))
+            self.delay_until = pygame.time.get_ticks() + int(delay_seconds * 1000)
+            return True
+        return False
+
+    def _cmd_run(self, statement: str, pc: int) -> bool:
+        """Handle RUN statement."""
+        m = _run_re.fullmatch(statement)
+        if m:
+            target = m.group(1)
+            if target:
+                target = target.strip()
+                if target.upper() in self.labels:
+                    self.pc = self.labels[target.upper()]
+                    self.variables.clear()
+                    self.gosub_stack.clear()
+                    self.for_stack.clear()
+                    self.loop_stack.clear()
+                    return True
+                try:
+                    line_num = int(target)
+                    if str(line_num) in self.labels:
+                        self.pc = self.labels[str(line_num)]
+                        self.variables.clear()
+                        self.gosub_stack.clear()
+                        self.for_stack.clear()
+                        self.loop_stack.clear()
+                        return True
+                except ValueError:
+                    pass
+            else:
+                self.pc = 0
+                self.variables.clear()
+                self.gosub_stack.clear()
+                self.for_stack.clear()
+                self.loop_stack.clear()
+                return True
+        return False
+
+    def _cmd_cont(self, statement: str, pc: int) -> bool:
+        """Handle CONT statement."""
+        if _cont_re.fullmatch(statement.upper()):
+            if self.stopped:
+                self.stopped = False
+                self.running = True
+        return False
+
+    def _cmd_declare(self, statement: str, pc: int) -> bool:
+        """Handle DECLARE statement (no-op, parsed at runtime)."""
+        if _declare_re.fullmatch(statement):
+            pass  # DECLARE is informational only
+        return False
+
+    def _cmd_deftype(self, statement: str, pc: int) -> bool:
+        """Handle DEFtype statements (no-op for compatibility)."""
+        if _deftype_re.fullmatch(statement):
+            pass  # Default type declarations are ignored
+        return False
+
+    def _cmd_dynamic(self, statement: str, pc: int) -> bool:
+        """Handle $DYNAMIC metacommand."""
+        if _dynamic_re.match(statement):
+            pass  # Accepted but no action needed
+        return False
+
+    def _cmd_static(self, statement: str, pc: int) -> bool:
+        """Handle $STATIC metacommand."""
+        if _static_re.match(statement):
+            pass  # Accepted but no action needed
+        return False
+
+    # --- Stub handlers (return None to fall through to original logic) ---
+    # These will be fully implemented incrementally
+
+    def _cmd_print(self, statement: str, pc: int) -> Optional[bool]:
+        """Handle PRINT statement - delegated to original logic for now."""
+        return None  # Fall through to original implementation
+
+    def _cmd_pset(self, statement: str, pc: int) -> Optional[bool]:
+        """Handle PSET statement - delegated to original logic for now."""
+        return None
+
+    def _cmd_preset(self, statement: str, pc: int) -> Optional[bool]:
+        """Handle PRESET statement - delegated to original logic for now."""
+        return None
+
+    def _cmd_line(self, statement: str, pc: int) -> Optional[bool]:
+        """Handle LINE statement - delegated to original logic for now."""
+        return None
+
+    def _cmd_circle(self, statement: str, pc: int) -> Optional[bool]:
+        """Handle CIRCLE statement - delegated to original logic for now."""
+        return None
+
+    def _cmd_paint(self, statement: str, pc: int) -> Optional[bool]:
+        """Handle PAINT statement - delegated to original logic for now."""
+        return None
+
+    def _cmd_play(self, statement: str, pc: int) -> Optional[bool]:
+        """Handle PLAY statement - delegated to original logic for now."""
+        return None
+
+    def _cmd_draw(self, statement: str, pc: int) -> Optional[bool]:
+        """Handle DRAW statement - delegated to original logic for now."""
+        return None
+
+    def _cmd_chain(self, statement: str, pc: int) -> Optional[bool]:
+        """Handle CHAIN statement - delegated to original logic for now."""
+        return None
+
+    def _cmd_clear(self, statement: str, pc: int) -> Optional[bool]:
+        """Handle CLEAR statement - delegated to original logic for now."""
+        return None
+
+    def _cmd_system(self, statement: str, pc: int) -> Optional[bool]:
+        """Handle SYSTEM statement - delegated to original logic for now."""
+        return None
+
+    def _cmd_shell(self, statement: str, pc: int) -> Optional[bool]:
+        """Handle SHELL statement - delegated to original logic for now."""
+        return None
+
+    def _cmd_for(self, statement: str, pc: int) -> Optional[bool]:
+        """Handle FOR statement - delegated to original logic for now."""
+        return None
+
+    def _cmd_next(self, statement: str, pc: int) -> Optional[bool]:
+        """Handle NEXT statement - delegated to original logic for now."""
+        return None
+
+    def _cmd_do(self, statement: str, pc: int) -> Optional[bool]:
+        """Handle DO statement - delegated to original logic for now."""
+        return None
+
+    def _cmd_loop(self, statement: str, pc: int) -> Optional[bool]:
+        """Handle LOOP statement - delegated to original logic for now."""
+        return None
+
+    def _cmd_while(self, statement: str, pc: int) -> Optional[bool]:
+        """Handle WHILE statement - delegated to original logic for now."""
+        return None
+
+    def _cmd_wend(self, statement: str, pc: int) -> Optional[bool]:
+        """Handle WEND statement - delegated to original logic for now."""
+        return None
+
+    def _cmd_open(self, statement: str, pc: int) -> Optional[bool]:
+        """Handle OPEN statement - delegated to original logic for now."""
+        return None
+
+    def _cmd_close(self, statement: str, pc: int) -> Optional[bool]:
+        """Handle CLOSE statement - delegated to original logic for now."""
+        return None
+
+    def _cmd_kill(self, statement: str, pc: int) -> Optional[bool]:
+        """Handle KILL statement - delegated to original logic for now."""
+        return None
+
+    def _cmd_name(self, statement: str, pc: int) -> Optional[bool]:
+        """Handle NAME statement - delegated to original logic for now."""
+        return None
+
+    def _cmd_mkdir(self, statement: str, pc: int) -> Optional[bool]:
+        """Handle MKDIR statement - delegated to original logic for now."""
+        return None
+
+    def _cmd_rmdir(self, statement: str, pc: int) -> Optional[bool]:
+        """Handle RMDIR statement - delegated to original logic for now."""
+        return None
+
+    def _cmd_chdir(self, statement: str, pc: int) -> Optional[bool]:
+        """Handle CHDIR statement - delegated to original logic for now."""
+        return None
+
+    def _cmd_files(self, statement: str, pc: int) -> Optional[bool]:
+        """Handle FILES statement - delegated to original logic for now."""
+        return None
+
+    def _cmd_seek(self, statement: str, pc: int) -> Optional[bool]:
+        """Handle SEEK statement - delegated to original logic for now."""
+        return None
+
+    def _cmd_data(self, statement: str, pc: int) -> Optional[bool]:
+        """Handle DATA statement - delegated to original logic for now."""
+        return None
+
+    def _cmd_read(self, statement: str, pc: int) -> Optional[bool]:
+        """Handle READ statement - delegated to original logic for now."""
+        return None
+
+    def _cmd_restore(self, statement: str, pc: int) -> Optional[bool]:
+        """Handle RESTORE statement - delegated to original logic for now."""
+        return None
+
+    def _cmd_view(self, statement: str, pc: int) -> Optional[bool]:
+        """Handle VIEW statement - delegated to original logic for now."""
+        return None
+
+    def _cmd_window(self, statement: str, pc: int) -> Optional[bool]:
+        """Handle WINDOW statement - delegated to original logic for now."""
+        return None
+
+    def _cmd_palette(self, statement: str, pc: int) -> Optional[bool]:
+        """Handle PALETTE statement - delegated to original logic for now."""
+        return None
+
+    def _cmd_pcopy(self, statement: str, pc: int) -> Optional[bool]:
+        """Handle PCOPY statement - delegated to original logic for now."""
+        return None
+
+    def _cmd_width(self, statement: str, pc: int) -> Optional[bool]:
+        """Handle WIDTH statement - delegated to original logic for now."""
+        return None
+
+    def _cmd_out(self, statement: str, pc: int) -> Optional[bool]:
+        """Handle OUT statement - delegated to original logic for now."""
+        return None
+
+    def _cmd_poke(self, statement: str, pc: int) -> Optional[bool]:
+        """Handle POKE statement - delegated to original logic for now."""
+        return None
+
+    def _cmd_wait(self, statement: str, pc: int) -> Optional[bool]:
+        """Handle WAIT statement - delegated to original logic for now."""
+        return None
+
+    def _cmd_error(self, statement: str, pc: int) -> Optional[bool]:
+        """Handle ERROR statement - delegated to original logic for now."""
+        return None
+
+    def _cmd_resume(self, statement: str, pc: int) -> Optional[bool]:
+        """Handle RESUME statement - delegated to original logic for now."""
+        return None
+
+    def _cmd_call(self, statement: str, pc: int) -> Optional[bool]:
+        """Handle CALL statement - delegated to original logic for now."""
+        return None
+
+    def _cmd_sub(self, statement: str, pc: int) -> Optional[bool]:
+        """Handle SUB statement - delegated to original logic for now."""
+        return None
+
+    def _cmd_function(self, statement: str, pc: int) -> Optional[bool]:
+        """Handle FUNCTION statement - delegated to original logic for now."""
+        return None
+
+    def _cmd_shared(self, statement: str, pc: int) -> Optional[bool]:
+        """Handle SHARED statement - delegated to original logic for now."""
+        return None
+
+    def _cmd_type(self, statement: str, pc: int) -> Optional[bool]:
+        """Handle TYPE statement - delegated to original logic for now."""
+        return None
+
+    def _cmd_field(self, statement: str, pc: int) -> Optional[bool]:
+        """Handle FIELD statement - delegated to original logic for now."""
+        return None
+
+    def _cmd_lset(self, statement: str, pc: int) -> Optional[bool]:
+        """Handle LSET statement - delegated to original logic for now."""
+        return None
+
+    def _cmd_rset(self, statement: str, pc: int) -> Optional[bool]:
+        """Handle RSET statement - delegated to original logic for now."""
+        return None
+
+    def _cmd_const(self, statement: str, pc: int) -> Optional[bool]:
+        """Handle CONST statement - delegated to original logic for now."""
+        return None
+
+    def _cmd_option(self, statement: str, pc: int) -> Optional[bool]:
+        """Handle OPTION statement - delegated to original logic for now."""
+        return None
+
+    def _cmd_redim(self, statement: str, pc: int) -> Optional[bool]:
+        """Handle REDIM statement - delegated to original logic for now."""
+        return None
+
+    def _cmd_lprint(self, statement: str, pc: int) -> Optional[bool]:
+        """Handle LPRINT statement - delegated to original logic for now."""
+        return None
+
+    def _cmd_environ(self, statement: str, pc: int) -> Optional[bool]:
+        """Handle ENVIRON statement - delegated to original logic for now."""
+        return None
+
+    def _cmd_timer(self, statement: str, pc: int) -> Optional[bool]:
+        """Handle TIMER statement - delegated to original logic for now."""
+        return None
+
+    def _cmd_key(self, statement: str, pc: int) -> Optional[bool]:
+        """Handle KEY statement - delegated to original logic for now."""
+        return None
+
+    def _cmd_common(self, statement: str, pc: int) -> Optional[bool]:
+        """Handle COMMON statement - delegated to original logic for now."""
+        return None
+
+    def _cmd_include(self, statement: str, pc: int) -> Optional[bool]:
+        """Handle $INCLUDE metacommand - delegated to original logic for now."""
+        return None
+
+    def _cmd_pen(self, statement: str, pc: int) -> Optional[bool]:
+        """Handle PEN statement - delegated to original logic for now."""
+        return None
+
+    def _cmd_strig(self, statement: str, pc: int) -> Optional[bool]:
+        """Handle STRIG statement - delegated to original logic for now."""
+        return None
+
     def _basic_val(self, s_val: str) -> Any:
         s_val = s_val.strip()
         try:
@@ -2390,6 +2968,12 @@ class BasicInterpreter:
                 # self.surface.fill(self.basic_color(self.current_bg_color)) 
                 # self.mark_dirty()
             return False
+
+        # --- Try dispatch table for simple commands (O(1) keyword lookup) ---
+        # This comes after IF/SELECT skip checks to avoid executing in skipped blocks
+        dispatch_result = self._dispatch_command(statement, current_pc_num)
+        if dispatch_result is not None:
+            return dispatch_result
 
         m_screen = _screen_re.fullmatch(statement) # Use fullmatch for commands like SCREEN
         if m_screen:
