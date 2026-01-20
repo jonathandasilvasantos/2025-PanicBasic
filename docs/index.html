@@ -5,15 +5,26 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>PanicBasic - Retro BASIC Programming Environment</title>
     <meta name="description" content="PanicBasic is an experimental, retro-style BASIC environment combining a code editor, interpreter, and console in Python.">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=JetBrains+Mono:wght@400;600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>
         :root {
-            --bg-dark: #1a1a2e;
-            --bg-card: #16213e;
-            --accent: #0f3460;
-            --highlight: #e94560;
-            --text: #eaeaea;
-            --text-muted: #a0a0a0;
-            --code-bg: #0d1117;
+            --bg-primary: #0a0a0f;
+            --bg-secondary: #12121a;
+            --bg-card: #1a1a24;
+            --bg-elevated: #22222e;
+            --border: #2a2a3a;
+            --accent-cyan: #00f5ff;
+            --accent-magenta: #ff00ff;
+            --accent-green: #00ff88;
+            --accent-yellow: #ffee00;
+            --accent-orange: #ff6b00;
+            --text-primary: #ffffff;
+            --text-secondary: #b0b0c0;
+            --text-muted: #6a6a7a;
+            --glow-cyan: rgba(0, 245, 255, 0.4);
+            --glow-magenta: rgba(255, 0, 255, 0.3);
         }
 
         * {
@@ -22,233 +33,509 @@
             box-sizing: border-box;
         }
 
+        html {
+            scroll-behavior: smooth;
+        }
+
         body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
-            background: var(--bg-dark);
-            color: var(--text);
-            line-height: 1.6;
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            line-height: 1.7;
+            overflow-x: hidden;
+        }
+
+        /* Scanline effect overlay */
+        body::before {
+            content: '';
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: repeating-linear-gradient(
+                0deg,
+                transparent,
+                transparent 2px,
+                rgba(0, 0, 0, 0.1) 2px,
+                rgba(0, 0, 0, 0.1) 4px
+            );
+            pointer-events: none;
+            z-index: 9999;
+            opacity: 0.3;
         }
 
         .container {
             max-width: 1200px;
             margin: 0 auto;
-            padding: 0 20px;
+            padding: 0 24px;
         }
 
-        /* Header */
+        /* ========== HEADER ========== */
         header {
-            background: linear-gradient(135deg, var(--bg-card) 0%, var(--accent) 100%);
-            padding: 60px 0;
+            position: relative;
+            padding: 100px 0 80px;
             text-align: center;
-            border-bottom: 3px solid var(--highlight);
+            background:
+                radial-gradient(ellipse at 50% 0%, rgba(0, 245, 255, 0.1) 0%, transparent 50%),
+                radial-gradient(ellipse at 80% 50%, rgba(255, 0, 255, 0.05) 0%, transparent 40%),
+                var(--bg-primary);
+            border-bottom: 1px solid var(--border);
+            overflow: hidden;
+        }
+
+        header::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 1px;
+            background: linear-gradient(90deg, transparent, var(--accent-cyan), transparent);
         }
 
         .logo {
-            font-size: 3.5rem;
-            font-weight: 800;
-            color: var(--highlight);
-            text-shadow: 0 0 20px rgba(233, 69, 96, 0.5);
-            margin-bottom: 10px;
+            font-family: 'Press Start 2P', cursive;
+            font-size: 2.8rem;
+            color: var(--text-primary);
+            text-shadow:
+                0 0 10px var(--glow-cyan),
+                0 0 20px var(--glow-cyan),
+                0 0 40px var(--glow-cyan);
+            margin-bottom: 16px;
+            letter-spacing: 4px;
+        }
+
+        .logo span {
+            color: var(--accent-cyan);
         }
 
         .tagline {
-            font-size: 1.3rem;
-            color: var(--text-muted);
-            margin-bottom: 30px;
+            font-size: 1.1rem;
+            color: var(--text-secondary);
+            margin-bottom: 40px;
+            font-weight: 400;
         }
 
         .cta-buttons {
             display: flex;
-            gap: 15px;
+            gap: 16px;
             justify-content: center;
             flex-wrap: wrap;
         }
 
         .btn {
-            display: inline-block;
-            padding: 12px 30px;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 14px 32px;
             border-radius: 8px;
             text-decoration: none;
             font-weight: 600;
-            transition: transform 0.2s, box-shadow 0.2s;
+            font-size: 0.95rem;
+            transition: all 0.3s ease;
+            border: none;
+            cursor: pointer;
         }
 
         .btn-primary {
-            background: var(--highlight);
-            color: white;
+            background: linear-gradient(135deg, var(--accent-cyan), #0099cc);
+            color: var(--bg-primary);
+            box-shadow: 0 4px 20px var(--glow-cyan);
+        }
+
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 30px var(--glow-cyan);
         }
 
         .btn-secondary {
             background: transparent;
-            color: var(--text);
-            border: 2px solid var(--text);
+            color: var(--text-primary);
+            border: 2px solid var(--border);
         }
 
-        .btn:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 5px 20px rgba(233, 69, 96, 0.3);
+        .btn-secondary:hover {
+            border-color: var(--accent-cyan);
+            color: var(--accent-cyan);
         }
 
-        /* Features */
-        .features {
-            padding: 80px 0;
+        /* ========== SECTIONS ========== */
+        section {
+            padding: 100px 0;
         }
 
         .section-title {
+            font-family: 'Press Start 2P', cursive;
+            font-size: 1.4rem;
             text-align: center;
-            font-size: 2.5rem;
-            margin-bottom: 50px;
-            color: var(--highlight);
+            margin-bottom: 16px;
+            color: var(--text-primary);
+            letter-spacing: 2px;
+        }
+
+        .section-subtitle {
+            text-align: center;
+            color: var(--text-muted);
+            margin-bottom: 60px;
+            font-size: 1rem;
+        }
+
+        /* ========== FEATURES ========== */
+        .features {
+            background: var(--bg-secondary);
         }
 
         .feature-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-            gap: 30px;
+            grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+            gap: 24px;
         }
 
         .feature-card {
             background: var(--bg-card);
-            padding: 30px;
-            border-radius: 12px;
-            border: 1px solid var(--accent);
-            transition: transform 0.2s, border-color 0.2s;
+            padding: 32px;
+            border-radius: 16px;
+            border: 1px solid var(--border);
+            transition: all 0.3s ease;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .feature-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 2px;
+            background: linear-gradient(90deg, var(--accent-cyan), var(--accent-magenta));
+            opacity: 0;
+            transition: opacity 0.3s ease;
         }
 
         .feature-card:hover {
-            transform: translateY(-5px);
-            border-color: var(--highlight);
+            transform: translateY(-4px);
+            border-color: var(--accent-cyan);
+            box-shadow: 0 10px 40px rgba(0, 245, 255, 0.1);
+        }
+
+        .feature-card:hover::before {
+            opacity: 1;
         }
 
         .feature-icon {
-            font-size: 2.5rem;
-            margin-bottom: 15px;
+            width: 56px;
+            height: 56px;
+            background: linear-gradient(135deg, var(--bg-elevated), var(--bg-card));
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.6rem;
+            margin-bottom: 20px;
+            border: 1px solid var(--border);
         }
 
         .feature-card h3 {
-            font-size: 1.3rem;
-            margin-bottom: 10px;
-            color: var(--text);
+            font-size: 1.15rem;
+            margin-bottom: 12px;
+            font-weight: 600;
         }
 
         .feature-card p {
+            color: var(--text-secondary);
+            font-size: 0.95rem;
+            line-height: 1.7;
+        }
+
+        /* ========== GAMES SHOWCASE ========== */
+        .games {
+            background: var(--bg-primary);
+        }
+
+        .games-grid {
+            display: grid;
+            gap: 40px;
+        }
+
+        .game-card {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 40px;
+            background: var(--bg-card);
+            border-radius: 20px;
+            overflow: hidden;
+            border: 1px solid var(--border);
+            transition: all 0.3s ease;
+        }
+
+        .game-card:hover {
+            border-color: var(--accent-cyan);
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.4);
+        }
+
+        .game-card:nth-child(even) {
+            direction: rtl;
+        }
+
+        .game-card:nth-child(even) > * {
+            direction: ltr;
+        }
+
+        .game-screenshot {
+            position: relative;
+            overflow: hidden;
+        }
+
+        .game-screenshot img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            transition: transform 0.5s ease;
+        }
+
+        .game-card:hover .game-screenshot img {
+            transform: scale(1.05);
+        }
+
+        .game-info {
+            padding: 40px;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+        }
+
+        .game-badge {
+            display: inline-block;
+            padding: 6px 12px;
+            background: linear-gradient(135deg, var(--accent-cyan), var(--accent-magenta));
+            color: var(--bg-primary);
+            font-size: 0.7rem;
+            font-weight: 700;
+            border-radius: 4px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-bottom: 16px;
+            width: fit-content;
+        }
+
+        .game-info h3 {
+            font-family: 'Press Start 2P', cursive;
+            font-size: 1.1rem;
+            margin-bottom: 16px;
+            color: var(--accent-cyan);
+        }
+
+        .game-info p {
+            color: var(--text-secondary);
+            margin-bottom: 24px;
+            font-size: 0.95rem;
+            line-height: 1.8;
+        }
+
+        .game-command {
+            display: inline-flex;
+            align-items: center;
+            gap: 12px;
+            background: var(--bg-primary);
+            padding: 12px 20px;
+            border-radius: 8px;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.85rem;
+            color: var(--accent-green);
+            border: 1px solid var(--border);
+        }
+
+        .game-command::before {
+            content: '$';
             color: var(--text-muted);
         }
 
-        /* Code Example */
-        .code-section {
-            background: var(--bg-card);
-            padding: 80px 0;
+        /* Mini games grid */
+        .mini-games {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+            gap: 20px;
+            margin-top: 40px;
         }
 
-        .code-example {
-            background: var(--code-bg);
+        .mini-game-card {
+            background: var(--bg-card);
+            padding: 24px;
             border-radius: 12px;
+            border: 1px solid var(--border);
+            transition: all 0.3s ease;
+        }
+
+        .mini-game-card:hover {
+            border-color: var(--accent-magenta);
+            transform: translateY(-2px);
+        }
+
+        .mini-game-card h4 {
+            font-size: 1rem;
+            margin-bottom: 8px;
+            color: var(--text-primary);
+        }
+
+        .mini-game-card p {
+            color: var(--text-muted);
+            font-size: 0.85rem;
+            margin-bottom: 12px;
+            line-height: 1.6;
+        }
+
+        .mini-game-card code {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.75rem;
+            color: var(--accent-yellow);
+        }
+
+        /* ========== CODE EXAMPLE ========== */
+        .code-section {
+            background: var(--bg-secondary);
+        }
+
+        .code-window {
+            background: var(--bg-primary);
+            border-radius: 16px;
             overflow: hidden;
-            border: 1px solid var(--accent);
+            border: 1px solid var(--border);
+            max-width: 800px;
+            margin: 0 auto;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.4);
         }
 
         .code-header {
-            background: var(--accent);
-            padding: 10px 20px;
+            background: var(--bg-card);
+            padding: 16px 20px;
             display: flex;
             align-items: center;
-            gap: 8px;
+            gap: 10px;
+            border-bottom: 1px solid var(--border);
         }
 
         .code-dot {
-            width: 12px;
-            height: 12px;
+            width: 14px;
+            height: 14px;
             border-radius: 50%;
         }
 
-        .code-dot.red { background: #ff5f56; }
-        .code-dot.yellow { background: #ffbd2e; }
-        .code-dot.green { background: #27c93f; }
+        .code-dot.red { background: #ff5f57; }
+        .code-dot.yellow { background: #febc2e; }
+        .code-dot.green { background: #28c840; }
+
+        .code-title {
+            margin-left: 12px;
+            color: var(--text-muted);
+            font-size: 0.85rem;
+            font-family: 'JetBrains Mono', monospace;
+        }
 
         .code-content {
-            padding: 20px;
-            font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+            padding: 28px;
+            font-family: 'JetBrains Mono', monospace;
             font-size: 0.9rem;
+            line-height: 1.8;
             overflow-x: auto;
         }
 
         .code-content pre {
-            color: var(--text);
+            color: var(--text-secondary);
         }
 
-        .code-keyword { color: #ff79c6; }
-        .code-string { color: #f1fa8c; }
-        .code-number { color: #bd93f9; }
-        .code-comment { color: #6272a4; }
+        .code-keyword { color: var(--accent-magenta); font-weight: 600; }
+        .code-string { color: var(--accent-yellow); }
+        .code-number { color: var(--accent-cyan); }
+        .code-comment { color: var(--text-muted); font-style: italic; }
 
-        /* Installation */
-        .installation {
-            padding: 80px 0;
+        /* ========== QUICK START ========== */
+        .quickstart {
+            background: var(--bg-primary);
         }
 
-        .install-steps {
+        .steps-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-            gap: 30px;
+            grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+            gap: 24px;
         }
 
-        .install-step {
+        .step-card {
             background: var(--bg-card);
-            padding: 25px;
-            border-radius: 12px;
-            border-left: 4px solid var(--highlight);
+            padding: 32px;
+            border-radius: 16px;
+            border: 1px solid var(--border);
+            position: relative;
         }
 
         .step-number {
-            display: inline-block;
-            width: 35px;
-            height: 35px;
-            background: var(--highlight);
-            color: white;
-            border-radius: 50%;
-            text-align: center;
-            line-height: 35px;
-            font-weight: bold;
-            margin-bottom: 15px;
+            position: absolute;
+            top: -16px;
+            left: 24px;
+            width: 40px;
+            height: 40px;
+            background: linear-gradient(135deg, var(--accent-cyan), var(--accent-magenta));
+            color: var(--bg-primary);
+            border-radius: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 700;
+            font-size: 1.1rem;
         }
 
-        .install-step h3 {
-            margin-bottom: 10px;
+        .step-card h3 {
+            margin-top: 8px;
+            margin-bottom: 12px;
+            font-size: 1.05rem;
         }
 
-        .install-step code {
+        .step-card p {
+            color: var(--text-muted);
+            font-size: 0.9rem;
+            margin-bottom: 16px;
+        }
+
+        .step-card code {
             display: block;
-            background: var(--code-bg);
-            padding: 10px 15px;
-            border-radius: 6px;
-            margin-top: 10px;
-            font-family: monospace;
-            color: var(--highlight);
+            background: var(--bg-primary);
+            padding: 14px 18px;
+            border-radius: 8px;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.8rem;
+            color: var(--accent-green);
+            border: 1px solid var(--border);
+            overflow-x: auto;
         }
 
-        /* Commands */
+        /* ========== COMMANDS ========== */
         .commands {
-            background: var(--bg-card);
-            padding: 80px 0;
+            background: var(--bg-secondary);
         }
 
         .command-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-            gap: 20px;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 24px;
         }
 
         .command-category {
-            background: var(--bg-dark);
-            padding: 25px;
-            border-radius: 12px;
+            background: var(--bg-card);
+            padding: 28px;
+            border-radius: 16px;
+            border: 1px solid var(--border);
         }
 
         .command-category h3 {
-            color: var(--highlight);
-            margin-bottom: 15px;
-            font-size: 1.1rem;
+            font-size: 0.9rem;
+            color: var(--accent-cyan);
+            margin-bottom: 20px;
+            padding-bottom: 12px;
+            border-bottom: 1px solid var(--border);
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 1px;
         }
 
         .command-category ul {
@@ -256,193 +543,167 @@
         }
 
         .command-category li {
-            padding: 5px 0;
-            color: var(--text-muted);
-            font-family: monospace;
+            padding: 8px 0;
+            color: var(--text-secondary);
+            font-size: 0.9rem;
+            display: flex;
+            align-items: center;
+            gap: 12px;
         }
 
         .command-category li code {
-            color: var(--text);
-            background: var(--accent);
-            padding: 2px 6px;
+            font-family: 'JetBrains Mono', monospace;
+            color: var(--accent-yellow);
+            background: var(--bg-primary);
+            padding: 4px 10px;
             border-radius: 4px;
-            margin-right: 8px;
+            font-size: 0.8rem;
+            min-width: 100px;
         }
 
-        /* Author */
-        .author {
-            padding: 80px 0;
-            text-align: center;
-        }
-
-        .author-card {
+        /* ========== FOOTER ========== */
+        footer {
             background: var(--bg-card);
-            padding: 40px;
-            border-radius: 12px;
-            display: inline-block;
-            border: 1px solid var(--accent);
+            padding: 60px 0 40px;
+            border-top: 1px solid var(--border);
         }
 
-        .author-name {
-            font-size: 1.5rem;
-            margin-bottom: 10px;
+        .footer-content {
+            display: grid;
+            grid-template-columns: 2fr 1fr 1fr;
+            gap: 60px;
+            margin-bottom: 40px;
         }
 
-        .author-email {
-            color: var(--highlight);
+        .footer-brand h3 {
+            font-family: 'Press Start 2P', cursive;
+            font-size: 1rem;
+            color: var(--accent-cyan);
+            margin-bottom: 16px;
+        }
+
+        .footer-brand p {
+            color: var(--text-muted);
+            font-size: 0.9rem;
+            line-height: 1.7;
+        }
+
+        .footer-section h4 {
+            font-size: 0.85rem;
+            color: var(--text-primary);
+            margin-bottom: 20px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        .footer-section a {
+            display: block;
+            color: var(--text-muted);
+            text-decoration: none;
+            padding: 8px 0;
+            font-size: 0.9rem;
+            transition: color 0.2s ease;
+        }
+
+        .footer-section a:hover {
+            color: var(--accent-cyan);
+        }
+
+        .footer-bottom {
+            padding-top: 30px;
+            border-top: 1px solid var(--border);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 20px;
+        }
+
+        .footer-bottom p {
+            color: var(--text-muted);
+            font-size: 0.85rem;
+        }
+
+        .footer-bottom a {
+            color: var(--accent-cyan);
             text-decoration: none;
         }
 
         .ai-credits {
-            margin-top: 30px;
-            padding-top: 30px;
-            border-top: 1px solid var(--accent);
-        }
-
-        .ai-credits h4 {
-            color: var(--text-muted);
-            margin-bottom: 15px;
-        }
-
-        .ai-logos {
             display: flex;
-            gap: 20px;
-            justify-content: center;
-            flex-wrap: wrap;
+            gap: 16px;
+            align-items: center;
         }
 
-        .ai-logos a {
-            color: var(--text);
-            text-decoration: none;
-            padding: 10px 20px;
-            background: var(--accent);
-            border-radius: 8px;
-            transition: background 0.2s;
-        }
-
-        .ai-logos a:hover {
-            background: var(--highlight);
-        }
-
-        /* Footer */
-        footer {
-            background: var(--code-bg);
-            padding: 40px 0;
-            text-align: center;
-            border-top: 1px solid var(--accent);
-        }
-
-        footer p {
+        .ai-credits span {
             color: var(--text-muted);
-        }
-
-        footer a {
-            color: var(--highlight);
-            text-decoration: none;
-        }
-
-        /* Examples */
-        .examples {
-            padding: 80px 0;
-            background: var(--bg-card);
-        }
-
-        .example-showcase {
-            max-width: 1000px;
-            margin: 0 auto;
-        }
-
-        .example-main {
-            background: var(--bg-dark);
-            border-radius: 12px;
-            overflow: hidden;
-            margin-bottom: 40px;
-            border: 2px solid var(--highlight);
-        }
-
-        .example-screenshot {
-            width: 100%;
-            display: block;
-        }
-
-        .example-info {
-            padding: 25px;
-        }
-
-        .example-info h3 {
-            color: var(--highlight);
-            font-size: 1.5rem;
-            margin-bottom: 10px;
-        }
-
-        .example-info p {
-            color: var(--text-muted);
-            margin-bottom: 15px;
-        }
-
-        .example-info code {
-            display: inline-block;
-            background: var(--code-bg);
-            padding: 8px 15px;
-            border-radius: 6px;
-            font-family: monospace;
-            color: var(--highlight);
-        }
-
-        .example-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 20px;
-        }
-
-        .example-card {
-            background: var(--bg-dark);
-            padding: 20px;
-            border-radius: 10px;
-            border: 1px solid var(--accent);
-            transition: border-color 0.2s;
-        }
-
-        .example-card:hover {
-            border-color: var(--highlight);
-        }
-
-        .example-card h4 {
-            color: var(--text);
-            margin-bottom: 8px;
-        }
-
-        .example-card p {
-            color: var(--text-muted);
-            font-size: 0.9rem;
-            margin-bottom: 10px;
-        }
-
-        .example-card code {
             font-size: 0.8rem;
-            color: var(--highlight);
-            background: var(--code-bg);
-            padding: 4px 8px;
-            border-radius: 4px;
         }
 
-        /* Responsive */
-        @media (max-width: 768px) {
-            .logo {
-                font-size: 2.5rem;
+        .ai-credits a {
+            color: var(--text-secondary);
+            text-decoration: none;
+            font-size: 0.85rem;
+            padding: 6px 14px;
+            background: var(--bg-primary);
+            border-radius: 6px;
+            border: 1px solid var(--border);
+            transition: all 0.2s ease;
+        }
+
+        .ai-credits a:hover {
+            border-color: var(--accent-cyan);
+            color: var(--accent-cyan);
+        }
+
+        /* ========== RESPONSIVE ========== */
+        @media (max-width: 900px) {
+            .game-card {
+                grid-template-columns: 1fr;
             }
 
-            .tagline {
-                font-size: 1.1rem;
+            .game-card:nth-child(even) {
+                direction: ltr;
+            }
+
+            .game-screenshot {
+                height: 250px;
+            }
+
+            .footer-content {
+                grid-template-columns: 1fr;
+                gap: 40px;
+            }
+        }
+
+        @media (max-width: 600px) {
+            .logo {
+                font-size: 1.8rem;
             }
 
             .section-title {
-                font-size: 2rem;
+                font-size: 1.1rem;
             }
 
-            .cta-buttons {
+            header {
+                padding: 60px 0;
+            }
+
+            section {
+                padding: 60px 0;
+            }
+
+            .feature-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .game-info {
+                padding: 24px;
+            }
+
+            .footer-bottom {
                 flex-direction: column;
-                align-items: center;
+                text-align: center;
             }
         }
     </style>
@@ -450,10 +711,13 @@
 <body>
     <header>
         <div class="container">
-            <h1 class="logo">PanicBasic</h1>
-            <p class="tagline">A retro-style BASIC programming environment in Python</p>
+            <h1 class="logo">PANIC<span>BASIC</span></h1>
+            <p class="tagline">A retro-style BASIC programming environment built with Python & Pygame</p>
             <div class="cta-buttons">
-                <a href="https://github.com/zerojnt/pasic" class="btn btn-primary">View on GitHub</a>
+                <a href="https://github.com/zerojnt/pasic" class="btn btn-primary">
+                    <svg width="20" height="20" fill="currentColor" viewBox="0 0 24 24"><path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/></svg>
+                    View on GitHub
+                </a>
                 <a href="https://github.com/zerojnt/pasic/archive/refs/heads/main.zip" class="btn btn-secondary">Download ZIP</a>
             </div>
         </div>
@@ -461,37 +725,111 @@
 
     <section class="features">
         <div class="container">
-            <h2 class="section-title">Features</h2>
+            <h2 class="section-title">FEATURES</h2>
+            <p class="section-subtitle">Everything you need to relive the golden age of BASIC programming</p>
             <div class="feature-grid">
                 <div class="feature-card">
-                    <div class="feature-icon">&#128221;</div>
+                    <div class="feature-icon">&#9998;</div>
                     <h3>Integrated Editor</h3>
                     <p>Custom text editor with line numbering, undo/redo, cut/copy/paste, and a unique drawing layer for annotations.</p>
                 </div>
                 <div class="feature-card">
-                    <div class="feature-icon">&#128187;</div>
+                    <div class="feature-icon">&#9654;</div>
                     <h3>BASIC Interpreter</h3>
-                    <p>Supports classic commands like SCREEN, CLS, PRINT, LINE, CIRCLE, PAINT, loops, conditionals, and subroutines.</p>
+                    <p>Full interpreter supporting classic commands like SCREEN, LINE, CIRCLE, PAINT, loops, conditionals, and subroutines.</p>
                 </div>
                 <div class="feature-card">
                     <div class="feature-icon">&#127918;</div>
                     <h3>Retro Graphics</h3>
-                    <p>320x200 software surface emulating classic BASIC graphics modes with 256 colors.</p>
+                    <p>320x200 software surface emulating classic BASIC graphics modes with a full 256-color palette.</p>
                 </div>
                 <div class="feature-card">
-                    <div class="feature-icon">&#128424;</div>
+                    <div class="feature-icon">&#62;</div>
                     <h3>Built-in Console</h3>
-                    <p>Shell-like console for running system commands directly within the application.</p>
+                    <p>Shell-like console for running system commands directly within the application environment.</p>
                 </div>
                 <div class="feature-card">
                     <div class="feature-icon">&#127923;</div>
                     <h3>Example Games</h3>
-                    <p>Includes Big Monkey (Donkey Kong), Angry Birds, Iron Slug (Metal Slug), Pong, Car Racing, Pinball, and more!</p>
+                    <p>Includes Big Monkey, Angry Birds, Iron Slug, Pong, Pinball, Car Racing, and more complete games!</p>
                 </div>
                 <div class="feature-card">
-                    <div class="feature-icon">&#128640;</div>
+                    <div class="feature-icon">&#9889;</div>
                     <h3>Easy to Use</h3>
-                    <p>Simple installation with pip, intuitive interface, and comprehensive documentation.</p>
+                    <p>Simple pip installation, intuitive interface, and comprehensive documentation to get you started fast.</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section class="games">
+        <div class="container">
+            <h2 class="section-title">EXAMPLE GAMES</h2>
+            <p class="section-subtitle">Complete games included to learn from and enjoy</p>
+
+            <div class="games-grid">
+                <div class="game-card">
+                    <div class="game-screenshot">
+                        <img src="images/big_monkey.png" alt="Big Monkey">
+                    </div>
+                    <div class="game-info">
+                        <span class="game-badge">Featured</span>
+                        <h3>BIG MONKEY</h3>
+                        <p>A Donkey Kong tribute with classic arcade platforming! Climb ladders, dodge rolling barrels thrown by Big Monkey, and rescue the Princess. Features 5 levels, animated title screen, sound effects, music, and high score tracking.</p>
+                        <div class="game-command">python main.py --run examples/big_monkey.bas</div>
+                    </div>
+                </div>
+
+                <div class="game-card">
+                    <div class="game-screenshot">
+                        <img src="images/angry_and_furious_birds.png" alt="Angry and Furious Birds">
+                    </div>
+                    <div class="game-info">
+                        <span class="game-badge">Featured</span>
+                        <h3>ANGRY BIRDS</h3>
+                        <p>A full Angry Birds clone with physics-based gameplay! Launch birds from a slingshot to destroy structures and defeat the pigs. 5 progressive levels, trajectory preview, and high scores.</p>
+                        <div class="game-command">python main.py --run examples/angry_and_furious_birds.bas</div>
+                    </div>
+                </div>
+
+                <div class="game-card">
+                    <div class="game-screenshot">
+                        <img src="images/iron_slug.png" alt="Iron Slug">
+                    </div>
+                    <div class="game-info">
+                        <span class="game-badge">Featured</span>
+                        <h3>IRON SLUG</h3>
+                        <p>A Metal Slug tribute run-and-gun action game! Horizontal scrolling, multiple enemy types, platform jumping, POW rescues, multiple weapons, and epic boss battles across 5 zones.</p>
+                        <div class="game-command">python main.py --run examples/iron_slug.bas</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="mini-games">
+                <div class="mini-game-card">
+                    <h4>Pong</h4>
+                    <p>Classic two-player paddle game with score tracking.</p>
+                    <code>examples/pong.bas</code>
+                </div>
+                <div class="mini-game-card">
+                    <h4>Catch the Star</h4>
+                    <p>Move your basket to catch falling stars.</p>
+                    <code>examples/star.bas</code>
+                </div>
+                <div class="mini-game-card">
+                    <h4>Pinball</h4>
+                    <p>Pinball with flippers, bumpers, and physics.</p>
+                    <code>examples/pinball.bas</code>
+                </div>
+                <div class="mini-game-card">
+                    <h4>Car Racing</h4>
+                    <p>Dodge obstacles on an endless road.</p>
+                    <code>examples/car.bas</code>
+                </div>
+                <div class="mini-game-card">
+                    <h4>Runner</h4>
+                    <p>Endless runner - jump to survive!</p>
+                    <code>examples/runner.bas</code>
                 </div>
             </div>
         </div>
@@ -499,12 +837,14 @@
 
     <section class="code-section">
         <div class="container">
-            <h2 class="section-title">Code Example</h2>
-            <div class="code-example">
+            <h2 class="section-title">CODE EXAMPLE</h2>
+            <p class="section-subtitle">Classic BASIC syntax that feels just like the old days</p>
+            <div class="code-window">
                 <div class="code-header">
                     <span class="code-dot red"></span>
                     <span class="code-dot yellow"></span>
                     <span class="code-dot green"></span>
+                    <span class="code-title">pong.bas</span>
                 </div>
                 <div class="code-content">
 <pre><span class="code-comment">' Simple Pong Game in PanicBasic</span>
@@ -521,11 +861,11 @@ ballY = <span class="code-number">100</span>
     <span class="code-keyword">CLS</span>
 
     <span class="code-comment">' Draw paddle</span>
-    <span class="code-keyword">LINE</span> (<span class="code-number">0</span>, paddleY)-(<span class="code-number">10</span>, paddleY + PADDLE_HEIGHT), <span class="code-number">15</span>, BF
+    <span class="code-keyword">LINE</span> (<span class="code-number">10</span>, paddleY)-(<span class="code-number">15</span>, paddleY + PADDLE_HEIGHT), <span class="code-number">15</span>, BF
 
     <span class="code-comment">' Draw ball</span>
-    <span class="code-keyword">CIRCLE</span> (ballX, ballY), BALL_SIZE, <span class="code-number">15</span>
-    <span class="code-keyword">PAINT</span> (ballX, ballY), <span class="code-number">15</span>
+    <span class="code-keyword">CIRCLE</span> (ballX, ballY), BALL_SIZE, <span class="code-number">14</span>
+    <span class="code-keyword">PAINT</span> (ballX, ballY), <span class="code-number">14</span>
 
     <span class="code-comment">' Move ball</span>
     ballX = ballX + ballDX
@@ -538,98 +878,33 @@ ballY = <span class="code-number">100</span>
         </div>
     </section>
 
-    <section class="examples">
+    <section class="quickstart">
         <div class="container">
-            <h2 class="section-title">Example Games</h2>
-            <p style="text-align: center; color: var(--text-muted); margin-bottom: 40px;">
-                PanicBasic comes with several complete games to learn from and enjoy!
-            </p>
-
-            <div class="example-showcase">
-                <div class="example-main">
-                    <img src="images/big_monkey.png" alt="Big Monkey" class="example-screenshot">
-                    <div class="example-info">
-                        <h3>Big Monkey</h3>
-                        <p>A Donkey Kong tribute with classic arcade platforming! Climb ladders, dodge rolling barrels thrown by Big Monkey, and rescue the Princess. Features 5 levels, animated title screen, sound effects, music, and high score tracking.</p>
-                        <code>python main.py --run examples/big_monkey.bas</code>
-                    </div>
-                </div>
-
-                <div class="example-main" style="margin-top: 30px;">
-                    <img src="images/angry_and_furious_birds.png" alt="Angry and Furious Birds" class="example-screenshot">
-                    <div class="example-info">
-                        <h3>Angry and Furious Birds</h3>
-                        <p>A full Angry Birds clone with physics-based gameplay, 5 levels, animated title screen, sound effects, and music. Launch birds from a slingshot to destroy structures and defeat the pigs!</p>
-                        <code>python main.py --run examples/angry_and_furious_birds.bas</code>
-                    </div>
-                </div>
-
-                <div class="example-main" style="margin-top: 30px;">
-                    <img src="images/iron_slug.png" alt="Iron Slug" class="example-screenshot">
-                    <div class="example-info">
-                        <h3>Iron Slug</h3>
-                        <p>A Metal Slug tribute run-and-gun action game! Features horizontal scrolling, multiple enemy types (soldiers, tanks, helicopters, turrets, jetpack troops), platform jumping, POW rescues, multiple weapons, and boss battles. 5 zones with increasing difficulty.</p>
-                        <code>python main.py --run examples/iron_slug.bas</code>
-                    </div>
-                </div>
-
-                <div class="example-grid">
-                    <div class="example-card">
-                        <h4>Pong</h4>
-                        <p>Classic two-player paddle game with score tracking and increasing ball speed.</p>
-                        <code>examples/pong.bas</code>
-                    </div>
-                    <div class="example-card">
-                        <h4>Catch the Star</h4>
-                        <p>Move your basket to catch falling stars before they hit the ground.</p>
-                        <code>examples/star.bas</code>
-                    </div>
-                    <div class="example-card">
-                        <h4>Pinball</h4>
-                        <p>Pinball simulation with flippers, bumpers, and physics.</p>
-                        <code>examples/pinball.bas</code>
-                    </div>
-                    <div class="example-card">
-                        <h4>Car Racing</h4>
-                        <p>Dodge obstacles as you race down an endless road.</p>
-                        <code>examples/car.bas</code>
-                    </div>
-                    <div class="example-card">
-                        <h4>Runner</h4>
-                        <p>Endless runner game - jump over obstacles to survive!</p>
-                        <code>examples/runner.bas</code>
-                    </div>
-                </div>
-            </div>
-        </div>
-    </section>
-
-    <section class="installation">
-        <div class="container">
-            <h2 class="section-title">Quick Start</h2>
-            <div class="install-steps">
-                <div class="install-step">
+            <h2 class="section-title">QUICK START</h2>
+            <p class="section-subtitle">Get up and running in minutes</p>
+            <div class="steps-grid">
+                <div class="step-card">
                     <span class="step-number">1</span>
-                    <h3>Clone the Repository</h3>
+                    <h3>Clone Repository</h3>
                     <p>Download the source code from GitHub</p>
                     <code>git clone https://github.com/zerojnt/pasic.git</code>
                 </div>
-                <div class="install-step">
+                <div class="step-card">
                     <span class="step-number">2</span>
                     <h3>Install Dependencies</h3>
-                    <p>Install required Python packages</p>
+                    <p>Install the required Python packages</p>
                     <code>pip install -r requirements.txt</code>
                 </div>
-                <div class="install-step">
+                <div class="step-card">
                     <span class="step-number">3</span>
-                    <h3>Run PanicBasic</h3>
-                    <p>Launch the integrated environment</p>
+                    <h3>Launch Editor</h3>
+                    <p>Start the integrated environment</p>
                     <code>python main.py</code>
                 </div>
-                <div class="install-step">
+                <div class="step-card">
                     <span class="step-number">4</span>
-                    <h3>Run an Example</h3>
-                    <p>Try one of the included games</p>
+                    <h3>Run a Game</h3>
+                    <p>Try one of the included examples</p>
                     <code>python main.py --run examples/pong.bas</code>
                 </div>
             </div>
@@ -638,7 +913,8 @@ ballY = <span class="code-number">100</span>
 
     <section class="commands">
         <div class="container">
-            <h2 class="section-title">Supported Commands</h2>
+            <h2 class="section-title">COMMANDS</h2>
+            <p class="section-subtitle">Supported BASIC commands and functions</p>
             <div class="command-grid">
                 <div class="command-category">
                     <h3>Graphics</h3>
@@ -674,28 +950,11 @@ ballY = <span class="code-number">100</span>
                     <h3>I/O & Timing</h3>
                     <ul>
                         <li><code>PRINT</code> Output text</li>
-                        <li><code>INPUT</code> Get user input</li>
+                        <li><code>INPUT</code> User input</li>
                         <li><code>INKEY$</code> Get key press</li>
-                        <li><code>_DELAY</code> Non-blocking delay</li>
-                        <li><code>SLEEP</code> Blocking delay</li>
+                        <li><code>_DELAY</code> Non-blocking wait</li>
+                        <li><code>SLEEP</code> Blocking wait</li>
                     </ul>
-                </div>
-            </div>
-        </div>
-    </section>
-
-    <section class="author">
-        <div class="container">
-            <div class="author-card">
-                <h2 class="author-name">Jonathan da Silva Santos</h2>
-                <a href="mailto:silva.santos.jonathan@gmail.com" class="author-email">silva.santos.jonathan@gmail.com</a>
-
-                <div class="ai-credits">
-                    <h4>Built with assistance from</h4>
-                    <div class="ai-logos">
-                        <a href="https://claude.ai" target="_blank">Claude Code by Anthropic</a>
-                        <a href="https://gemini.google.com" target="_blank">Gemini by Google</a>
-                    </div>
                 </div>
             </div>
         </div>
@@ -703,8 +962,30 @@ ballY = <span class="code-number">100</span>
 
     <footer>
         <div class="container">
-            <p>PanicBasic is released under the <a href="https://github.com/zerojnt/pasic/blob/main/LICENSE">MIT License</a></p>
-            <p style="margin-top: 10px;">&copy; 2025 Jonathan da Silva Santos</p>
+            <div class="footer-content">
+                <div class="footer-brand">
+                    <h3>PANICBASIC</h3>
+                    <p>An experimental, retro-style BASIC environment combining a code editor, interpreter, and console - all in one application. Built with Python and Pygame.</p>
+                </div>
+                <div class="footer-section">
+                    <h4>Links</h4>
+                    <a href="https://github.com/zerojnt/pasic">GitHub Repository</a>
+                    <a href="https://github.com/zerojnt/pasic/issues">Report Issues</a>
+                    <a href="https://github.com/zerojnt/pasic/blob/main/LICENSE">MIT License</a>
+                </div>
+                <div class="footer-section">
+                    <h4>Author</h4>
+                    <a href="mailto:silva.santos.jonathan@gmail.com">Jonathan da Silva Santos</a>
+                </div>
+            </div>
+            <div class="footer-bottom">
+                <p>&copy; 2025 Jonathan da Silva Santos. Released under <a href="https://github.com/zerojnt/pasic/blob/main/LICENSE">MIT License</a>.</p>
+                <div class="ai-credits">
+                    <span>Built with</span>
+                    <a href="https://claude.ai" target="_blank">Claude Code</a>
+                    <a href="https://gemini.google.com" target="_blank">Gemini</a>
+                </div>
+            </div>
         </div>
     </footer>
 </body>
