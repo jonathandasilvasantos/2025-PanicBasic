@@ -847,6 +847,9 @@ def run_editor(file_path: Optional[str] = None) -> None:
             console.draw(main_area_surface)
         elif current_mode == "run":
             if interpreter.running:
+                # Update held keys for continuous input (games need this)
+                if not interpreter.input_mode:
+                    interpreter.update_held_keys()
                 interpreter.step()
             interpreter.draw(main_area_surface)
 

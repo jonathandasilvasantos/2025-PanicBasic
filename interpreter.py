@@ -1594,10 +1594,41 @@ class BasicInterpreter:
     def basic_color(self, c: int) -> Tuple[int, int, int]:
         return self.colors.get(c % 16, self.colors[15]) # Default to white if color out of range
 
-    def inkey(self): 
+    def inkey(self):
         k = self.last_key
         self.last_key = ""
         return k
+
+    def update_held_keys(self) -> None:
+        """Update last_key based on currently held keys for continuous input in games."""
+        # Only update if no key is pending (avoid overwriting fresh key presses)
+        if self.last_key:
+            return
+
+        keys = pygame.key.get_pressed()
+
+        # Check arrow keys first (most common for games)
+        if keys[pygame.K_LEFT]:
+            self.last_key = chr(0) + "K"
+        elif keys[pygame.K_RIGHT]:
+            self.last_key = chr(0) + "M"
+        elif keys[pygame.K_UP]:
+            self.last_key = chr(0) + "H"
+        elif keys[pygame.K_DOWN]:
+            self.last_key = chr(0) + "P"
+        # Check common game keys (WASD)
+        elif keys[pygame.K_a]:
+            self.last_key = "a"
+        elif keys[pygame.K_d]:
+            self.last_key = "d"
+        elif keys[pygame.K_w]:
+            self.last_key = "w"
+        elif keys[pygame.K_s]:
+            self.last_key = "s"
+        elif keys[pygame.K_SPACE]:
+            self.last_key = " "
+        elif keys[pygame.K_ESCAPE]:
+            self.last_key = chr(27)
 
     def point(self, x_expr, y_expr):
         px, py = int(x_expr), int(y_expr)
@@ -6740,6 +6771,10 @@ def run_interpreter(filename: str) -> None:
                 interpreter.mark_dirty()
             else:
                 interpreter.handle_event(event)
+
+        # Update held keys for continuous input (games need this)
+        if interpreter.running and not interpreter.input_mode:
+            interpreter.update_held_keys()
 
         # Execute BASIC instructions
         if interpreter.running:
