@@ -1645,9 +1645,16 @@ class BasicInterpreter:
                     # Keep as string if not a valid number
                     self.data_values.append(val)
 
-    def mark_dirty(self) -> None: self._dirty = True
+    def mark_dirty(self) -> None:
+        """Mark the rendering surface as dirty and requiring redraw."""
+        self._dirty = True
 
     def reset(self, program_lines: List[str]) -> None:
+        """Reset interpreter state and load a new program.
+
+        Args:
+            program_lines: List of BASIC program lines to execute.
+        """
         self.program_lines = []
         self.labels.clear()
         self.variables.clear()
@@ -1804,7 +1811,16 @@ class BasicInterpreter:
         self.mark_dirty()
 
     def basic_color(self, c: int) -> Tuple[int, int, int]:
-        return self.colors.get(c % 16, self.colors[15]) # Default to white if color out of range
+        """Convert a BASIC color number to an RGB tuple.
+
+        Args:
+            c: BASIC color number (0-15). Values outside this range wrap around.
+
+        Returns:
+            RGB tuple (r, g, b) for the color. Returns white (255, 255, 255)
+            if color not found in palette.
+        """
+        return self.colors.get(c % 16, self.colors[15])
 
     def inkey(self) -> str:
         """Return the last key pressed, clearing it from buffer."""
@@ -2066,6 +2082,11 @@ class BasicInterpreter:
 
 
     def handle_event(self, event: pygame.event.Event) -> None:
+        """Handle a pygame event (keyboard input, etc.).
+
+        Args:
+            event: The pygame event to process.
+        """
         if event.type == KEYDOWN:
             # Handle INPUT mode - route key presses to input handler
             if self.input_mode:
@@ -6878,6 +6899,11 @@ class BasicInterpreter:
         self._skip_block("DO", "LOOP", start_pc_num)
 
     def step(self) -> None:
+        """Execute one or more BASIC statements.
+
+        Processes pending events (joystick, pen), handles delays, and executes
+        BASIC code up to steps_per_frame limit or until a natural pause occurs.
+        """
         # Don't execute BASIC code while waiting for INPUT
         if self.input_mode:
             return
@@ -6925,6 +6951,12 @@ class BasicInterpreter:
             self.running = False
 
     def draw(self, target_surface: pygame.Surface) -> None:
+        """Render the BASIC program's screen output to a pygame surface.
+
+        Args:
+            target_surface: The pygame surface to draw to. The internal rendering
+                surface will be scaled to fit this target.
+        """
         if not self.surface:
             return
 
