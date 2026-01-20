@@ -145,20 +145,34 @@ Switch between modes using the footer buttons:
 - `_DELAY seconds` - Non-blocking delay
 - `SLEEP seconds` - Blocking delay
 
-## Example Programs
+## Example Games
 
-The `examples/` folder contains sample BASIC programs:
+The `examples/` folder contains complete games you can play and learn from!
 
-- **pong.bas** - Classic Pong game
-- **star.bas** - Catch the falling stars
-- **car.bas** - Car racing game
-- **pinball.bas** - Pinball simulation
-- **runner.bas** - Endless runner game
+### Angry and Furious Birds (Featured)
 
-Run any example:
+![Angry and Furious Birds](docs/images/angry_and_furious_birds.png)
+
+A full **Angry Birds clone** with:
+- Physics-based bird launching with trajectory preview
+- 5 progressive levels with wood and stone structures
+- Animated title screen with menu system
+- Sound effects and music
+- High score tracking
+
 ```bash
-python main.py --run examples/pong.bas
+python main.py --run examples/angry_and_furious_birds.bas
 ```
+
+### Other Examples
+
+| Game | Description | Command |
+|------|-------------|---------|
+| **Pong** | Classic two-player paddle game | `python main.py --run examples/pong.bas` |
+| **Catch the Star** | Move your basket to catch falling stars | `python main.py --run examples/star.bas` |
+| **Pinball** | Pinball with flippers, bumpers, and physics | `python main.py --run examples/pinball.bas` |
+| **Car Racing** | Dodge obstacles on an endless road | `python main.py --run examples/car.bas` |
+| **Runner** | Endless runner - jump to survive! | `python main.py --run examples/runner.bas` |
 
 ## Project Structure
 
@@ -170,7 +184,12 @@ pasic/
 ├── requirements.txt  # Python dependencies
 ├── LICENSE           # MIT License
 ├── README.md         # This file
+├── docs/             # GitHub Pages website
+│   ├── index.html
+│   └── images/
+│       └── angry_and_furious_birds.png
 └── examples/         # Sample BASIC programs
+    ├── angry_and_furious_birds.bas
     ├── pong.bas
     ├── star.bas
     ├── car.bas
