@@ -149,6 +149,23 @@ Switch between modes using the footer buttons:
 
 The `examples/` folder contains complete games you can play and learn from!
 
+### Big Monkey (Featured)
+
+![Big Monkey](docs/images/big_monkey.png)
+
+A **Donkey Kong tribute** featuring classic arcade platforming:
+- Climb ladders and platforms to rescue the Princess
+- Dodge rolling barrels thrown by Big Monkey
+- Jump over barrels for bonus points (+100)
+- 5 levels with increasing difficulty
+- Animated title screen with menu system
+- Sound effects and music (toggle with M key)
+- High score tracking
+
+```bash
+python main.py --run examples/big_monkey.bas
+```
+
 ### Angry and Furious Birds (Featured)
 
 ![Angry and Furious Birds](docs/images/angry_and_furious_birds.png)
@@ -187,8 +204,10 @@ pasic/
 ├── docs/             # GitHub Pages website
 │   ├── index.html
 │   └── images/
-│       └── angry_and_furious_birds.png
+│       ├── angry_and_furious_birds.png
+│       └── big_monkey.png
 └── examples/         # Sample BASIC programs
+    ├── big_monkey.bas
     ├── angry_and_furious_birds.bas
     ├── pong.bas
     ├── star.bas
