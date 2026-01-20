@@ -403,6 +403,8 @@ _basic_function_names = {
     'STICK', 'STRIG',
     # Light pen function (emulated with mouse)
     'PEN',
+    # Multi-key input functions for games
+    'KEYDOWN', 'MULTIKEY',
     # Memory/System functions
     'FRE', 'PEEK', 'INP', 'FREEFILE', 'LOF', 'EOF', 'LOC',
     # Binary conversion functions
@@ -903,6 +905,9 @@ class BasicInterpreter:
             "STRIG": self._basic_strig,  # Get joystick button status (-1 or 0)
             # Light pen function (emulated with mouse)
             "PEN": self._basic_pen,  # Get light pen information
+            # Multi-key input function for games
+            "KEYDOWN": self._basic_keydown,  # Check if specific key is pressed
+            "MULTIKEY": self._basic_keydown,  # Alias for KEYDOWN (compatibility)
         }
 
     def _basic_val(self, s_val: str) -> Any:
@@ -1320,6 +1325,92 @@ class BasicInterpreter:
             except Exception:
                 pass
         return 0  # No button press
+
+    def _basic_keydown(self, scancode: int) -> int:
+        """KEYDOWN(scancode) / MULTIKEY(scancode) - Check if a specific key is currently pressed.
+        Returns -1 if the key is pressed, 0 otherwise.
+
+        Common scan codes (compatible with QBasic MULTIKEY):
+        Arrow keys: 72=Up, 80=Down, 75=Left, 77=Right
+        Letters: 30=A, 31=S, 32=D, 48=B, 17=W, 44=Z, 45=X
+        Space: 57
+        Escape: 1
+        Enter: 28
+        Ctrl: 29
+        Shift: 42 (left), 54 (right)
+        Alt: 56
+
+        Also supports ASCII codes directly for convenience:
+        32=Space, 27=Escape, 65-90=A-Z, 97-122=a-z
+        """
+        scancode = int(scancode)
+        keys = pygame.key.get_pressed()
+
+        # Map scan codes to pygame keys
+        # Standard QBasic scan codes
+        scancode_map = {
+            # Arrow keys
+            72: pygame.K_UP,
+            80: pygame.K_DOWN,
+            75: pygame.K_LEFT,
+            77: pygame.K_RIGHT,
+            # Function keys
+            59: pygame.K_F1, 60: pygame.K_F2, 61: pygame.K_F3, 62: pygame.K_F4,
+            63: pygame.K_F5, 64: pygame.K_F6, 65: pygame.K_F7, 66: pygame.K_F8,
+            67: pygame.K_F9, 68: pygame.K_F10,
+            # Special keys
+            1: pygame.K_ESCAPE,
+            28: pygame.K_RETURN,
+            29: pygame.K_LCTRL,
+            42: pygame.K_LSHIFT,
+            54: pygame.K_RSHIFT,
+            56: pygame.K_LALT,
+            57: pygame.K_SPACE,
+            14: pygame.K_BACKSPACE,
+            15: pygame.K_TAB,
+            # Letter keys (scan codes)
+            30: pygame.K_a, 48: pygame.K_b, 46: pygame.K_c, 32: pygame.K_d,
+            18: pygame.K_e, 33: pygame.K_f, 34: pygame.K_g, 35: pygame.K_h,
+            23: pygame.K_i, 36: pygame.K_j, 37: pygame.K_k, 38: pygame.K_l,
+            50: pygame.K_m, 49: pygame.K_n, 24: pygame.K_o, 25: pygame.K_p,
+            16: pygame.K_q, 19: pygame.K_r, 31: pygame.K_s, 20: pygame.K_t,
+            22: pygame.K_u, 47: pygame.K_v, 17: pygame.K_w, 45: pygame.K_x,
+            21: pygame.K_y, 44: pygame.K_z,
+            # Number keys
+            2: pygame.K_1, 3: pygame.K_2, 4: pygame.K_3, 5: pygame.K_4,
+            6: pygame.K_5, 7: pygame.K_6, 8: pygame.K_7, 9: pygame.K_8,
+            10: pygame.K_9, 11: pygame.K_0,
+        }
+
+        # Also support ASCII codes for convenience
+        ascii_map = {
+            32: pygame.K_SPACE,
+            27: pygame.K_ESCAPE,
+            13: pygame.K_RETURN,
+            8: pygame.K_BACKSPACE,
+            9: pygame.K_TAB,
+        }
+        # Add A-Z (65-90) and a-z (97-122)
+        for i in range(26):
+            ascii_map[65 + i] = pygame.K_a + i  # A-Z
+            ascii_map[97 + i] = pygame.K_a + i  # a-z (same keys)
+        # Add 0-9 (48-57)
+        for i in range(10):
+            ascii_map[48 + i] = pygame.K_0 + i
+
+        # Check scan code map first
+        if scancode in scancode_map:
+            return -1 if keys[scancode_map[scancode]] else 0
+
+        # Then check ASCII map
+        if scancode in ascii_map:
+            return -1 if keys[ascii_map[scancode]] else 0
+
+        # Try direct pygame key code (for advanced users)
+        if 0 <= scancode < len(keys):
+            return -1 if keys[scancode] else 0
+
+        return 0  # Key not found or not pressed
 
     def _basic_pen(self, n: int) -> int:
         """PEN(n) - Get light pen information (emulated with mouse).

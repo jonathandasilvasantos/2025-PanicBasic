@@ -33,6 +33,7 @@ DIM PlayerLives AS INTEGER
 DIM PlayerWon AS INTEGER
 DIM PlayerWidth AS INTEGER
 DIM PlayerHeight AS INTEGER
+DIM JumpLock AS INTEGER
 
 ' ---- Barrel Arrays ----
 DIM BarrelX(MAXBARRELS) AS SINGLE
@@ -558,6 +559,7 @@ InitLevel:
   PlayerOnLadder = 0
   PlayerDir = 1
   PlayerWon = 0
+  JumpLock = 0
 
   ' Setup platforms - slanted like original DK
   ' Bottom platform (ground)
@@ -838,14 +840,16 @@ DrawHUD:
 RETURN
 
 HandleInput:
+  ' Clear INKEY$ buffer for toggle keys
   k$ = INKEY$
 
-  IF k$ = CHR$(27) THEN
+  ' ESC to quit
+  IF KEYDOWN(1) THEN
     GameOver = 1
     RETURN
   END IF
 
-  ' M - Toggle sound
+  ' M - Toggle sound (use INKEY to avoid rapid toggle)
   IF k$ = "m" OR k$ = "M" THEN
     SoundOn = 1 - SoundOn
     IF SoundOn = 1 THEN
@@ -853,24 +857,26 @@ HandleInput:
     END IF
   END IF
 
-  ' Left arrow or A key
-  IF k$ = CHR$(0) + "K" OR k$ = "a" OR k$ = "A" THEN
+  ' === SIMULTANEOUS KEY DETECTION using KEYDOWN ===
+
+  ' Left arrow (75) or A key (30)
+  IF KEYDOWN(75) OR KEYDOWN(30) THEN
     IF PlayerOnLadder = 0 THEN
       PlayerX = PlayerX - PLAYERSPEED
       PlayerDir = -1
     END IF
   END IF
 
-  ' Right arrow or D key
-  IF k$ = CHR$(0) + "M" OR k$ = "d" OR k$ = "D" THEN
+  ' Right arrow (77) or D key (32)
+  IF KEYDOWN(77) OR KEYDOWN(32) THEN
     IF PlayerOnLadder = 0 THEN
       PlayerX = PlayerX + PLAYERSPEED
       PlayerDir = 1
     END IF
   END IF
 
-  ' Up arrow or W key - climb ladder
-  IF k$ = CHR$(0) + "H" OR k$ = "w" OR k$ = "W" THEN
+  ' Up arrow (72) or W key (17) - climb ladder
+  IF KEYDOWN(72) OR KEYDOWN(17) THEN
     GOSUB CheckLadderClimb
     IF PlayerOnLadder = 1 THEN
       PlayerY = PlayerY - 3
@@ -878,8 +884,8 @@ HandleInput:
     END IF
   END IF
 
-  ' Down arrow or S key - descend ladder
-  IF k$ = CHR$(0) + "P" OR k$ = "s" OR k$ = "S" THEN
+  ' Down arrow (80) or S key (31) - descend ladder
+  IF KEYDOWN(80) OR KEYDOWN(31) THEN
     GOSUB CheckLadderClimb
     IF PlayerOnLadder = 1 THEN
       PlayerY = PlayerY + 3
@@ -887,13 +893,16 @@ HandleInput:
     END IF
   END IF
 
-  ' Space - Jump
-  IF k$ = " " THEN
-    IF PlayerOnGround = 1 AND PlayerOnLadder = 0 THEN
+  ' Space (57) - Jump (with lock to prevent continuous jumping)
+  IF KEYDOWN(57) THEN
+    IF PlayerOnGround = 1 AND PlayerOnLadder = 0 AND JumpLock = 0 THEN
       PlayerVelY = JUMPVEL
       PlayerOnGround = 0
+      JumpLock = 1
       GOSUB PlayJumpSound
     END IF
+  ELSE
+    JumpLock = 0
   END IF
 RETURN
 
