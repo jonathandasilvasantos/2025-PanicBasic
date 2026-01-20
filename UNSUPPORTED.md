@@ -8,28 +8,26 @@ This document lists QBasic 4.5 features and instructions that are **not currentl
 
 | Command | Description |
 |---------|-------------|
-| `GET (graphics)` | Capture screen region to array |
-| `PUT (graphics)` | Display array as sprite on screen |
-| `DRAW` | Turtle graphics drawing language |
-| `PALETTE` | Modify color palette entries |
-| `PALETTE USING` | Set entire palette from array |
 | `PCOPY` | Copy video pages |
 | `VIEW` | Define graphics viewport |
-| `VIEW PRINT` | Define text viewport |
 | `WINDOW` | Define logical coordinate system |
-| `SCREEN` (modes other than 13) | Only SCREEN 13 (320x200) is supported |
 
-Note: `PRESET` IS now supported.
+**NOW SUPPORTED:**
+- `GET (graphics)` - Capture screen region to array
+- `PUT (graphics)` - Display array as sprite on screen
+- `PALETTE` / `PALETTE USING` - Modify color palette entries
+- `VIEW PRINT` - Define text viewport
+- `SCREEN` modes 0, 1, 2, 7, 8, 9, 10, 11, 12, 13
+- `PRESET` and `DRAW`
 
 ---
 
 ## Sound Commands
 
-| Command | Description |
-|---------|-------------|
-| `PLAY` | Play music using MML strings |
-
-Note: `SOUND` and `BEEP` ARE now supported.
+**NOW SUPPORTED:**
+- `SOUND` - Generate sound frequency
+- `BEEP` - System beep
+- `PLAY` - Play MML music strings
 
 ---
 
@@ -37,25 +35,27 @@ Note: `SOUND` and `BEEP` ARE now supported.
 
 | Command | Description |
 |---------|-------------|
-| `OPEN` | Open file for reading/writing |
-| `CLOSE` | Close file |
-| `INPUT #` | Read from file |
-| `LINE INPUT #` | Read line from file |
-| `PRINT #` | Write to file |
-| `WRITE #` | Write delimited data to file |
-| `GET #` | Read binary record from file |
-| `PUT #` | Write binary record to file |
+| `GET #` | Read binary record from file (sequential only) |
+| `PUT #` | Write binary record to file (sequential only) |
 | `SEEK` | Set file position |
 | `LOC` | Get current file position |
-| `LOF` | Get file length |
-| `EOF` | Check for end of file |
-| `FREEFILE` | Get next available file number |
 | `KILL` | Delete file |
 | `NAME` | Rename file |
 | `FILES` | List directory contents |
 | `CHDIR` | Change directory |
 | `MKDIR` | Create directory |
 | `RMDIR` | Remove directory |
+
+**NOW SUPPORTED:**
+- `OPEN` - Open file for INPUT, OUTPUT, APPEND
+- `CLOSE` - Close file
+- `INPUT #` - Read from file
+- `LINE INPUT #` - Read line from file
+- `PRINT #` - Write to file
+- `WRITE #` - Write delimited data to file
+- `LOF` - Get file length
+- `EOF` - Check for end of file
+- `FREEFILE` - Get next available file number
 
 ---
 
@@ -65,22 +65,24 @@ Note: `SOUND` and `BEEP` ARE now supported.
 |---------|-------------|
 | `INPUT$(n, #filenum)` | Read characters from file (only file form) |
 
-Note: `INPUT`, `LINE INPUT`, and `INPUT$(n)` (keyboard) ARE now supported.
+**NOW SUPPORTED:**
+- `INPUT` - Read keyboard input
+- `LINE INPUT` - Read entire line from keyboard
+- `INPUT$(n)` - Read n characters from keyboard
 
 ---
 
 ## Procedures and Functions
 
-| Command | Description |
-|---------|-------------|
-| `SUB...END SUB` | Define subroutine |
-| `FUNCTION...END FUNCTION` | Define function |
-| `DECLARE` | Declare SUB or FUNCTION |
-| `CALL` | Call subroutine |
-| `SHARED` | Share variables with main program |
-| `STATIC` | Declare static local variables |
-
-Note: `DEF FN` (inline functions) IS now supported.
+**NOW SUPPORTED:**
+- `SUB...END SUB` - Define subroutine
+- `FUNCTION...END FUNCTION` - Define function
+- `DECLARE SUB` / `DECLARE FUNCTION` - Declare procedures
+- `CALL` - Call subroutine
+- Implicit SUB calls (without CALL keyword)
+- `SHARED` - Share variables with main program
+- `STATIC` - Declare static local variables
+- `DEF FN` - Inline functions
 
 ---
 
@@ -88,11 +90,12 @@ Note: `DEF FN` (inline functions) IS now supported.
 
 | Command | Description |
 |---------|-------------|
-| `ON ERROR GOTO` | Error handler |
-| `RESUME` | Resume after error |
-| `ERROR` | Trigger error |
+| `ERROR` | Trigger runtime error |
 
-Note: `ON...GOTO` and `ON...GOSUB` ARE now supported.
+**NOW SUPPORTED:**
+- `ON ERROR GOTO` - Error handler
+- `RESUME` / `RESUME NEXT` - Resume after error
+- `ON...GOTO` and `ON...GOSUB` - Computed branching
 
 ---
 
@@ -100,11 +103,13 @@ Note: `ON...GOTO` and `ON...GOSUB` ARE now supported.
 
 | Function | Description |
 |----------|-------------|
-| `CLNG(x)` | Convert to long integer |
-| `CSNG(x)` | Convert to single precision |
-| `CDBL(x)` | Convert to double precision |
-| `ASIN(x)` | Arcsine (not in QBasic, but common) |
-| `ACOS(x)` | Arccosine (not in QBasic, but common) |
+| `ASIN(x)` | Arcsine (not in standard QBasic) |
+| `ACOS(x)` | Arccosine (not in standard QBasic) |
+
+**NOW SUPPORTED:**
+- `CLNG`, `CSNG`, `CDBL` - Type conversion
+- `CINT`, `FIX`, `INT` - Integer conversion
+- All standard trig functions (SIN, COS, TAN, ATN)
 
 ---
 
@@ -112,16 +117,19 @@ Note: `ON...GOTO` and `ON...GOSUB` ARE now supported.
 
 | Command | Description |
 |---------|-------------|
-| `PEEK` | Read memory byte |
-| `POKE` | Write memory byte |
-| `DEF SEG` | Set memory segment |
 | `CLEAR` | Clear variables and set stack |
 | `VARPTR` | Get variable address |
 | `VARSEG` | Get variable segment |
 | `SADD` | Get string address |
-| `FRE` | Get free memory |
 
-Note: `ERASE`, `LBOUND`, `UBOUND`, `REDIM`, and `OPTION BASE` ARE now supported.
+**NOW SUPPORTED:**
+- `PEEK` / `POKE` - Read/write emulated memory
+- `DEF SEG` - Set memory segment (emulated)
+- `FRE` - Get free memory (returns mock value)
+- `ERASE` - Clear arrays
+- `LBOUND`, `UBOUND` - Array bounds
+- `REDIM` - Resize arrays
+- `OPTION BASE` - Set default array base
 
 ---
 
@@ -133,10 +141,12 @@ Note: `ERASE`, `LBOUND`, `UBOUND`, `REDIM`, and `OPTION BASE` ARE now supported.
 | `CHAIN` | Load and run another program |
 | `SHELL` | Execute DOS command |
 | `SYSTEM` | Exit to operating system |
-| `STOP` | Break execution (for debugging) |
 | `CONT` | Continue after STOP |
-| `TRON` | Trace on (debugging) |
-| `TROFF` | Trace off |
+| `TRON` / `TROFF` | Trace debugging |
+
+**NOW SUPPORTED:**
+- `STOP` - Stop program execution
+- `END` - End program
 
 ---
 
@@ -144,10 +154,13 @@ Note: `ERASE`, `LBOUND`, `UBOUND`, `REDIM`, and `OPTION BASE` ARE now supported.
 
 | Function | Description |
 |----------|-------------|
-| `DATE$ = value` | Set system date (reading IS supported) |
-| `TIME$ = value` | Set system time (reading IS supported) |
+| `DATE$ = value` | Set system date |
+| `TIME$ = value` | Set system time |
 
-Note: `TIMER`, `DATE$` (read), and `TIME$` (read) ARE supported.
+**NOW SUPPORTED:**
+- `TIMER` - Get seconds since midnight
+- `DATE$` (read) - Get current date
+- `TIME$` (read) - Get current time
 
 ---
 
@@ -156,19 +169,23 @@ Note: `TIMER`, `DATE$` (read), and `TIME$` (read) ARE supported.
 | Command | Description |
 |---------|-------------|
 | `LPRINT` | Print to printer |
-| `WIDTH` | Set screen/printer width |
 | `LPRINT USING` | Formatted printer output |
 
-Note: `CSRLIN`, `POS(0)`, `TAB(n)`, `SPC(n)`, and `PRINT USING` ARE now supported.
+**NOW SUPPORTED:**
+- `WIDTH` - Set screen width
+- `PRINT USING` - Formatted output
+- `CSRLIN`, `POS(0)` - Cursor position
+- `TAB(n)`, `SPC(n)` - Print spacing
+- `LOCATE` - Position cursor
 
 ---
 
 ## User-Defined Types
 
-| Command | Description |
-|---------|-------------|
-| `TYPE...END TYPE` | Define record structure |
-| `DIM var AS typename` | Declare typed variable |
+**NOW SUPPORTED:**
+- `TYPE...END TYPE` - Define record structure
+- `DIM var AS typename` - Declare typed variable
+- Array of TYPE support
 
 ---
 
@@ -177,27 +194,32 @@ Note: `CSRLIN`, `POS(0)`, `TAB(n)`, `SPC(n)`, and `PRINT USING` ARE now supporte
 | Command | Description |
 |----------|-------------|
 | `FIELD` | Define record fields |
-| `LSET` | Left-justify string in field |
-| `RSET` | Right-justify string in field |
-| `MKI$` | Convert integer to string |
-| `MKL$` | Convert long to string |
-| `MKS$` | Convert single to string |
-| `MKD$` | Convert double to string |
-| `CVI` | Convert string to integer |
-| `CVL` | Convert string to long |
-| `CVS` | Convert string to single |
-| `CVD` | Convert string to double |
+| `LSET` / `RSET` | Justify string in field |
+| `MKI$`, `MKL$`, `MKS$`, `MKD$` | Convert number to string |
+| `CVI`, `CVL`, `CVS`, `CVD` | Convert string to number |
 
 ---
 
 ## Environment
 
-| Function | Description |
-|----------|-------------|
-| `ENVIRON` | Set environment variable |
-| `COMMAND$` | Get command line arguments |
+**NOW SUPPORTED:**
+- `ENVIRON$` - Read environment variable
+- `COMMAND$` - Get command line arguments
 
-Note: `ENVIRON$` (read environment variable) IS now supported.
+| Command | Description |
+|---------|-------------|
+| `ENVIRON` | Set environment variable |
+
+---
+
+## Hardware I/O
+
+| Command | Description |
+|---------|-------------|
+| `INP` / `OUT` | Port I/O (stubbed, no-op) |
+| `WAIT` | Wait for port condition (stubbed) |
+
+Note: These are stubbed for compatibility but don't perform actual port I/O.
 
 ---
 
@@ -205,40 +227,46 @@ Note: `ENVIRON$` (read environment variable) IS now supported.
 
 | Command | Description |
 |---------|-------------|
-| `DEF type` | Set default variable type (DEFINT, DEFSNG, etc.) |
-| `COMMON` | Share variables between modules |
+| `COMMON` | Share variables between modules (use COMMON SHARED instead) |
 | `$INCLUDE` | Include external file |
-| `$DYNAMIC` | Declare dynamic arrays |
-| `$STATIC` | Declare static arrays |
-| `KEY` | Function key handling |
-| `KEY(n) ON/OFF` | Enable/disable key trapping |
+| `$DYNAMIC` / `$STATIC` | Array storage declarations |
+| `KEY` / `KEY(n) ON/OFF` | Function key handling |
 | `ON KEY(n) GOSUB` | Key event handler |
-| `STRIG` | Joystick trigger |
-| `STICK` | Joystick position |
+| `STRIG` / `STICK` | Joystick functions |
 | `ON STRIG GOSUB` | Joystick event handler |
-| `PEN` | Light pen input |
-| `ON PEN GOSUB` | Light pen event handler |
+| `PEN` / `ON PEN GOSUB` | Light pen input |
 | `ON TIMER GOSUB` | Timer event handler |
 | `TIMER ON/OFF` | Enable/disable timer events |
 | `PLAY(n)` | Get background music queue |
 | `ON PLAY GOSUB` | Music event handler |
 
----
-
-## Supported Alternatives
-
-Some unsupported features have workarounds:
-
-| Unsupported | Alternative |
-|-------------|-------------|
-| `SUB/FUNCTION` | Use `GOSUB...RETURN` |
+**NOW SUPPORTED:**
+- `DEF type` (DEFINT, DEFSNG, etc.) - Ignored, uses dynamic typing
+- `COMMON SHARED` / `DIM SHARED` - Declare shared variables
 
 ---
 
-## Priority Features for Future Implementation
+## Notes on Compatibility
 
-These features would have high impact if added:
+The interpreter aims to support the most commonly used QBasic features, particularly those needed for running classic games like:
+- Gorillas
+- Nibbles
+- QBlocks
+- Various third-party BASIC games
 
-1. **PLAY** - Music Macro Language (MML) support
-2. **GET/PUT** - Sprite graphics
-3. **SUB/FUNCTION** - User-defined procedures
+Some hardware-specific features (PEEK/POKE, port I/O) are emulated or stubbed for compatibility but don't provide actual hardware access.
+
+---
+
+## Summary
+
+### Fully Supported Features (Highlights)
+- All standard control flow (IF/THEN/ELSE, FOR/NEXT, DO/LOOP, WHILE/WEND, SELECT CASE)
+- GOSUB/RETURN and SUB/FUNCTION procedures
+- Graphics: SCREEN modes, LINE, CIRCLE, PSET, GET/PUT sprites, PALETTE
+- Sound: SOUND, BEEP, PLAY (MML)
+- File I/O: OPEN, CLOSE, INPUT#, PRINT#, WRITE#, EOF, LOF
+- User-defined types (TYPE...END TYPE)
+- Error handling (ON ERROR GOTO, RESUME)
+- Integer division operator (\)
+- Hex/octal/binary literals (&H, &O, &B)

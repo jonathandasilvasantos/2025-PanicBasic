@@ -14,6 +14,28 @@ try:
 except ImportError:
     HAS_NUMPY = False
 
+# --- Custom Exceptions ---
+class BasicRuntimeError(Exception):
+    """Exception raised during BASIC runtime that can be caught by ON ERROR GOTO."""
+    def __init__(self, message, error_type="runtime"):
+        super().__init__(message)
+        self.error_type = error_type
+
+
+# --- Custom dict for eval that returns 0 for undefined numeric variables ---
+class BasicEvalLocals(dict):
+    """Dict subclass that returns 0 for undefined numeric variables (ending with _INT, _SNG, etc.)
+    and "" for undefined string variables (ending with _STR) in BASIC expressions.
+
+    This implements QBasic's behavior where undefined variables default to 0 or "".
+    """
+    def __missing__(self, key):
+        # Check if it's a string variable (ends with _STR)
+        if key.endswith('_STR'):
+            return ""
+        # All other undefined variables default to 0
+        return 0
+
 # --- Constants ---
 FONT_SIZE = 16
 INITIAL_WIDTH = 800
@@ -36,6 +58,7 @@ _or_re = re.compile(r'\bOR\b', re.IGNORECASE)
 _not_re = re.compile(r'\bNOT\b', re.IGNORECASE)
 _mod_re = re.compile(r'\bMOD\b', re.IGNORECASE)
 _exp_re = re.compile(r'\^')  # BASIC exponentiation operator
+_intdiv_re = re.compile(r'\\')  # BASIC integer division operator
 
 # Specific function keywords that are parameterless or have unique syntax
 _inkey_re = re.compile(r'\bINKEY\$', re.IGNORECASE)  # INKEY$ -> INKEY() (no trailing \b as $ is not a word char)
@@ -44,6 +67,8 @@ _date_re = re.compile(r'\bDATE\$', re.IGNORECASE)  # DATE$ -> DATE()
 _time_re = re.compile(r'\bTIME\$', re.IGNORECASE)  # TIME$ -> TIME()
 _rnd_bare_re = re.compile(r'\bRND\b(?!\s*\()', re.IGNORECASE)  # RND -> RND()
 _csrlin_re = re.compile(r'\bCSRLIN\b(?!\s*\()', re.IGNORECASE)  # CSRLIN -> CSRLIN()
+_command_re = re.compile(r'\bCOMMAND\$', re.IGNORECASE)  # COMMAND$ -> COMMAND()
+_freefile_re = re.compile(r'\bFREEFILE\b(?!\s*\()', re.IGNORECASE)  # FREEFILE -> FREEFILE()
 
 # General pattern for NAME(...) or NAME$(...) which could be a function call or array access
 _func_or_array_re = re.compile(
@@ -54,7 +79,7 @@ _func_or_array_re = re.compile(
 # General identifier pattern (variables, constants)
 # It should run after specific function/array patterns have transformed their part of the string.
 # Note: No trailing \b because $ and % are not word characters
-_identifier_re = re.compile(r'\b([a-zA-Z_][a-zA-Z0-9_]*[\$%]?)')  # Match identifiers with optional $ or % suffix
+_identifier_re = re.compile(r'\b([a-zA-Z_][a-zA-Z0-9_]*[\$%#!&]?)')  # Match identifiers with optional type suffix
 
 
 # --- Command Parsing Patterns (mostly unchanged but reviewed) ---
@@ -62,8 +87,11 @@ _label_re = re.compile(r"^\s*(\d+|[a-zA-Z_][a-zA-Z0-9_]*:)")
 _label_strip_re = re.compile(r"^\s*(\d+\s+|[a-zA-Z_][a-zA-Z0-9_]*:)\s*")
 _for_re = re.compile(
     r'FOR\s+([a-zA-Z_][a-zA-Z0-9_]*\$?)\s*=\s*(.+?)\s+TO\s+(.+?)(?:\s+STEP\s+(.+))?$', re.IGNORECASE)
-_dim_re = re.compile(r'DIM\s+([a-zA-Z_][a-zA-Z0-9_]*\$?)\s*\(([^)]+)\)', re.IGNORECASE)
-_assign_re = re.compile(r'^(?:LET\s+)?([a-zA-Z_][a-zA-Z0-9_]*\$?(?:\s*\([^)]+\))?)\s*=(.*)$', re.IGNORECASE)
+_dim_re = re.compile(r'DIM\s+([a-zA-Z_][a-zA-Z0-9_]*\$?)\s*\(([^)]+)\)(?:\s+AS\s+(\w+))?', re.IGNORECASE)
+# DIM var AS type (simple variable with type, no array)
+_dim_as_re = re.compile(r'DIM\s+([a-zA-Z_][a-zA-Z0-9_]*)\s+AS\s+(\w+)', re.IGNORECASE)
+# Match: var = expr, var$ = expr, arr(i) = expr, p.X = expr, arr(i).X = expr, var# = expr
+_assign_re = re.compile(r'^(?:LET\s+)?([a-zA-Z_][a-zA-Z0-9_]*[\$%!#&]?(?:\s*\([^)]+\))?(?:\.[a-zA-Z_][a-zA-Z0-9_]*)?)\s*=(.*)$', re.IGNORECASE)
 # Pattern to extract array name and indices from LHS like "ARR(1, 2)"
 _assign_lhs_array_re = re.compile(r'([a-zA-Z_][a-zA-Z0-9_]*\$?)\s*\(([^)]+)\)')
 
@@ -140,6 +168,96 @@ _redim_re = re.compile(r"REDIM\s+([a-zA-Z_][a-zA-Z0-9_]*\$?)\s*\(([^)]+)\)", re.
 # PRINT USING - formatted output
 _print_using_re = re.compile(r"PRINT\s+USING\s+(.+?)\s*;\s*(.+)", re.IGNORECASE)
 
+# PLAY - Music Macro Language
+_play_re = re.compile(r"PLAY\s+(.+)", re.IGNORECASE)
+
+# DRAW - Turtle graphics
+_draw_re = re.compile(r"DRAW\s+(.+)", re.IGNORECASE)
+
+# STOP - Break execution
+_stop_re = re.compile(r"STOP", re.IGNORECASE)
+
+# DEFINT/DEFSNG/DEFDBL/DEFLNG/DEFSTR - Default type declarations (ignored)
+_deftype_re = re.compile(r"DEF(INT|SNG|DBL|LNG|STR)\s+[A-Za-z](?:\s*-\s*[A-Za-z])?", re.IGNORECASE)
+
+# PALETTE - Color palette
+_palette_re = re.compile(r"PALETTE(?:\s+USING\s+(.+)|\s+(\d+)\s*,\s*(.+))?", re.IGNORECASE)
+
+# VIEW PRINT - Text viewport
+_view_print_re = re.compile(r"VIEW\s+PRINT(?:\s+(\d+)\s+TO\s+(\d+))?", re.IGNORECASE)
+
+# WIDTH - Screen/printer width
+_width_re = re.compile(r"WIDTH\s+(\d+)(?:\s*,\s*(\d+))?", re.IGNORECASE)
+
+# WAIT - Wait for port condition (emulated as no-op)
+_wait_re = re.compile(r"WAIT\s+([^,]+)\s*,\s*([^,]+)(?:\s*,\s*(.+))?", re.IGNORECASE)
+
+# OUT - Write to I/O port (emulated)
+_out_re = re.compile(r"OUT\s+([^,]+)\s*,\s*(.+)", re.IGNORECASE)
+
+# DEF SEG - Set memory segment (emulated)
+_def_seg_re = re.compile(r"DEF\s+SEG(?:\s*=\s*(.+))?", re.IGNORECASE)
+
+# POKE - Write to memory (emulated)
+_poke_re = re.compile(r"POKE\s+([^,]+)\s*,\s*(.+)", re.IGNORECASE)
+
+# COMMON SHARED - Global variable declaration
+_common_shared_re = re.compile(r"COMMON\s+SHARED\s+(.+)", re.IGNORECASE)
+
+# DIM SHARED - Shared array declaration
+_dim_shared_re = re.compile(r"DIM\s+SHARED\s+(.+)", re.IGNORECASE)
+
+# GET (graphics) - Capture screen region
+_get_gfx_re = re.compile(r"GET\s*\(\s*([^,]+)\s*,\s*([^)]+)\s*\)\s*-\s*\(\s*([^,]+)\s*,\s*([^)]+)\s*\)\s*,\s*([a-zA-Z_][a-zA-Z0-9_]*)", re.IGNORECASE)
+
+# PUT (graphics) - Display sprite
+_put_gfx_re = re.compile(r"PUT\s*\(\s*([^,]+)\s*,\s*([^)]+)\s*\)\s*,\s*([a-zA-Z_][a-zA-Z0-9_]*)(?:\s*,\s*(PSET|PRESET|AND|OR|XOR))?", re.IGNORECASE)
+
+# ON ERROR GOTO - Error handler
+_on_error_re = re.compile(r"ON\s+ERROR\s+GOTO\s+([a-zA-Z0-9_]+)", re.IGNORECASE)
+
+# RESUME - Resume after error
+_resume_re = re.compile(r"RESUME(?:\s+(NEXT|[a-zA-Z0-9_]+))?", re.IGNORECASE)
+
+# DECLARE SUB/FUNCTION - Procedure declaration (ignored, we parse at runtime)
+_declare_re = re.compile(r"DECLARE\s+(SUB|FUNCTION)\s+([a-zA-Z_][a-zA-Z0-9_]*[\$%!#&]?)(?:\s*\(([^)]*)\))?", re.IGNORECASE)
+
+# SUB - Subroutine definition
+_sub_re = re.compile(r"SUB\s+([a-zA-Z_][a-zA-Z0-9_]*)(?:\s*\(([^)]*)\))?(?:\s+STATIC)?", re.IGNORECASE)
+
+# END SUB - End of subroutine
+_end_sub_re = re.compile(r"END\s+SUB", re.IGNORECASE)
+
+# FUNCTION - Function definition
+_function_re = re.compile(r"FUNCTION\s+([a-zA-Z_][a-zA-Z0-9_]*\$?)(?:\s*\(([^)]*)\))?(?:\s+STATIC)?", re.IGNORECASE)
+
+# END FUNCTION - End of function
+_end_function_re = re.compile(r"END\s+FUNCTION", re.IGNORECASE)
+
+# EXIT SUB/FUNCTION
+_exit_sub_re = re.compile(r"EXIT\s+SUB", re.IGNORECASE)
+_exit_function_re = re.compile(r"EXIT\s+FUNCTION", re.IGNORECASE)
+
+# SHARED - Share variables with main program
+_shared_re = re.compile(r"SHARED\s+(.+)", re.IGNORECASE)
+
+# CALL - Call subroutine
+_call_re = re.compile(r"CALL\s+([a-zA-Z_][a-zA-Z0-9_]*)(?:\s*\(([^)]*)\))?", re.IGNORECASE)
+
+# TYPE - User-defined type
+_type_re = re.compile(r"TYPE\s+([a-zA-Z_][a-zA-Z0-9_]*)", re.IGNORECASE)
+
+# END TYPE
+_end_type_re = re.compile(r"END\s+TYPE", re.IGNORECASE)
+
+# File I/O patterns
+_open_re = re.compile(r'OPEN\s+"?([^"]+)"?\s+FOR\s+(INPUT|OUTPUT|APPEND|BINARY|RANDOM)\s+AS\s+#?(\d+)(?:\s+LEN\s*=\s*(\d+))?', re.IGNORECASE)
+_close_re = re.compile(r"CLOSE(?:\s+#?(\d+))?", re.IGNORECASE)
+_input_file_re = re.compile(r"INPUT\s+#(\d+)\s*,\s*(.+)", re.IGNORECASE)
+_line_input_file_re = re.compile(r"LINE\s+INPUT\s+#(\d+)\s*,\s*(.+)", re.IGNORECASE)
+_print_file_re = re.compile(r"PRINT\s+#(\d+)\s*,?\s*(.*)", re.IGNORECASE)
+_write_file_re = re.compile(r"WRITE\s+#(\d+)\s*,?\s*(.*)", re.IGNORECASE)
+
 _expr_cache: Dict[str, str] = {}
 _python_keywords = {'and', 'or', 'not', 'in', 'is', 'lambda', 'if', 'else', 'elif', 'while', 'for', 'try', 'except', 'finally', 'with', 'as', 'def', 'class', 'import', 'from', 'pass', 'break', 'continue', 'return', 'yield', 'global', 'nonlocal', 'assert', 'del', 'True', 'False', 'None'}
 # Python builtins used in generated code (for array indexing) - keep lowercase
@@ -150,7 +268,7 @@ _basic_function_names = {
     # New string functions
     'ASC', 'INSTR', 'LCASE', 'UCASE', 'LTRIM', 'RTRIM', 'SPACE', 'STRING', 'HEX', 'OCT',
     # New math functions
-    'LOG', 'EXP', 'CINT',
+    'LOG', 'EXP', 'CINT', 'CLNG', 'CSNG', 'CDBL',
     # Date/time functions
     'DATE', 'TIME',
     # Cursor/screen functions
@@ -158,7 +276,9 @@ _basic_function_names = {
     # Array functions
     'LBOUND', 'UBOUND',
     # Environment/Input functions
-    'ENVIRON', 'INPUT'
+    'ENVIRON', 'INPUT', 'COMMAND',
+    # Memory/System functions
+    'FRE', 'PEEK', 'INP', 'FREEFILE', 'LOF', 'EOF'
 }
 
 # --- Expression Conversion Logic ---
@@ -170,6 +290,12 @@ def _basic_to_python_identifier(basic_name_str: str) -> str:
         return name_upper[:-1] + "_STR"
     elif name_upper.endswith('%'):
         return name_upper[:-1] + "_INT"
+    elif name_upper.endswith('#'):
+        return name_upper[:-1] + "_DBL"  # Double precision
+    elif name_upper.endswith('!'):
+        return name_upper[:-1] + "_SNG"  # Single precision
+    elif name_upper.endswith('&'):
+        return name_upper[:-1] + "_LNG"  # Long integer
     return name_upper
 
 def _convert_identifier_in_expr(match: re.Match) -> str:
@@ -326,6 +452,8 @@ def convert_basic_expr(expr: str, known_identifiers: Optional[set] = None) -> st
     expr = _time_re.sub("TIME()", expr)
     expr = _rnd_bare_re.sub("RND()", expr)
     expr = _csrlin_re.sub("CSRLIN()", expr)
+    expr = _command_re.sub("COMMAND()", expr)
+    expr = _freefile_re.sub("FREEFILE()", expr)
 
     # 1b. User-defined FN function calls: FN name(args) or FNname(args)
     expr = _fn_call_re.sub(_replace_fn_call, expr)
@@ -339,11 +467,36 @@ def convert_basic_expr(expr: str, known_identifiers: Optional[set] = None) -> st
     expr = _not_re.sub(" not ", expr)
     expr = _mod_re.sub(" % ", expr)
     expr = _exp_re.sub(" ** ", expr)  # BASIC ^ to Python **
+    # BASIC \ integer division - needs to truncate toward zero
+    # Replace a \ b with _INTDIV_(a, b)
+    while '\\' in expr:
+        # Find the backslash and extract operands
+        expr = re.sub(r'(\([^()]+\)|[^\s\\+\-*/()]+)\s*\\\s*(\([^()]+\)|[^\s\\+\-*/()]+)', r'_INTDIV_(\1, \2)', expr, count=1)
     expr = _eq_re.sub(" == ", expr)
     expr = _neq_re.sub(" != ", expr)
 
+    # Convert BASIC hex/octal/binary literals
+    expr = re.sub(r'&H([0-9A-Fa-f]+)', r'0x\1', expr, flags=re.IGNORECASE)
+    expr = re.sub(r'&O([0-7]+)', r'0o\1', expr, flags=re.IGNORECASE)
+    expr = re.sub(r'&B([01]+)', r'0b\1', expr, flags=re.IGNORECASE)
+
+    # Remove type suffix from numeric literals (1#, 3.14!, 5&, etc.)
+    expr = re.sub(r'(\d+\.?\d*)[#!&]', r'\1', expr)
+
     # Clean up any leading/trailing whitespace that might cause syntax errors
     expr = expr.strip()
+
+    # 3.5 Handle type member access
+    # First handle array element member access: arr[i].member -> arr[i]['MEMBER']
+    # After array conversion, we have square brackets, not parentheses
+    expr = re.sub(r'\]\.([a-zA-Z_][a-zA-Z0-9_]*)',
+                  lambda m: f"]['{m.group(1).upper()}']", expr)
+    # Also handle unconverted form (with parentheses): arr(i).member -> arr(i)['MEMBER']
+    expr = re.sub(r'\)\.([a-zA-Z_][a-zA-Z0-9_]*)',
+                  lambda m: f")['{m.group(1).upper()}']", expr)
+    # Then handle simple type member access: p.X -> P['X']
+    expr = re.sub(r'([a-zA-Z_][a-zA-Z0-9_]*)\.([a-zA-Z_][a-zA-Z0-9_]*)',
+                  lambda m: f"{m.group(1).upper()}['{m.group(2).upper()}']", expr)
 
     # 4. Remaining identifiers (variables, constants not part of function calls)
     expr = _identifier_re.sub(_convert_identifier_in_expr, expr)
@@ -416,8 +569,51 @@ class BasicInterpreter:
         # INPUT$ key buffer for multi-character reads
         self._input_dollar_buffer: str = ""
 
+        # Command line arguments (set externally)
+        self.command_line_args: str = ""
+
+        # File I/O state
+        self.file_handles: Dict[int, Any] = {}  # file_number -> file object
+        self.next_file_number: int = 1
+
+        # Emulated memory for PEEK/POKE
+        self.memory_segment: int = 0
+        self.emulated_memory: Dict[int, int] = {}  # address -> byte value
+
+        # I/O port emulation
+        self.io_ports: Dict[int, int] = {}  # port -> value
+
+        # Error handling
+        self.error_handler_label: Optional[str] = None
+        self.error_resume_pc: int = -1
+        self.in_error_handler: bool = False
+
+        # SUB/FUNCTION definitions: name -> (params, body_start_pc, body_end_pc, is_static)
+        self.procedures: Dict[str, Dict[str, Any]] = {}
+        self.procedure_stack: List[Dict[str, Any]] = []  # Stack for nested calls
+        self.current_procedure: Optional[str] = None
+
+        # TYPE definitions: type_name -> {field_name: field_type}
+        self.type_definitions: Dict[str, Dict[str, str]] = {}
+        self.current_type: Optional[str] = None
+
+        # VIEW PRINT viewport (row range)
+        self.view_print_top: int = 1
+        self.view_print_bottom: int = 25  # Default for SCREEN 0
+
+        # STOP/debugging state
+        self.stopped: bool = False
+
+        # DRAW turtle graphics state
+        self.draw_x: float = 0
+        self.draw_y: float = 0
+        self.draw_angle: int = 0  # 0=right, 90=down, 180=left, 270=up
+        self.draw_pen_down: bool = True
+
         # Environment for eval() - functions available to BASIC expressions
         self.eval_env_funcs = {
+            # Integer division that truncates toward zero (QBasic behavior)
+            "_INTDIV_": lambda a, b: int(float(a) / float(b)),
             # Original functions
             "CHR": lambda x: chr(int(x)), "INKEY": self.inkey, "RND": self._basic_rnd,
             "INT": lambda x: math.floor(float(x)), "POINT": self.point,
@@ -447,6 +643,9 @@ class BasicInterpreter:
             "LOG": lambda x: math.log(float(x)),  # Natural logarithm
             "EXP": lambda x: math.exp(float(x)),  # e^x
             "CINT": lambda x: round(float(x)),  # Round to nearest integer
+            "CLNG": lambda x: int(round(float(x))),  # Round to long integer
+            "CSNG": lambda x: float(x),  # Convert to single precision (float in Python)
+            "CDBL": lambda x: float(x),  # Convert to double precision (float in Python)
             # Date/time functions
             "DATE": self._basic_date,  # Current date string
             "TIME": self._basic_time,  # Current time string
@@ -461,6 +660,15 @@ class BasicInterpreter:
             # Environment/Input functions
             "ENVIRON": self._basic_environ,  # Get environment variable
             "INPUT": self._basic_input_dollar,  # INPUT$(n) - read n characters
+            "COMMAND": self._basic_command,  # Get command line arguments
+            # Memory/System functions
+            "FRE": self._basic_fre,  # Get free memory (emulated)
+            "PEEK": self._basic_peek,  # Read from memory (emulated)
+            "INP": self._basic_inp,  # Read from I/O port (emulated)
+            # File functions
+            "FREEFILE": self._basic_freefile,  # Get next available file number
+            "LOF": self._basic_lof,  # Get file length
+            "EOF": self._basic_eof,  # Check for end of file
         }
 
     def _basic_val(self, s_val: str) -> Any:
@@ -630,6 +838,66 @@ class BasicInterpreter:
         # In real QBasic this would block until n characters are typed
         return result
 
+    def _basic_command(self) -> str:
+        """COMMAND$ - Returns command line arguments passed to the program."""
+        return self.command_line_args
+
+    def _basic_fre(self, arg: Any = 0) -> int:
+        """FRE(n) - Returns free memory (emulated, returns large value)."""
+        # FRE(0) = free string space, FRE(-1) = array space, FRE(-2) = stack
+        return 64000  # Return a reasonable emulated value
+
+    def _basic_peek(self, address: int) -> int:
+        """PEEK(address) - Read from emulated memory."""
+        addr = int(address)
+        full_addr = (self.memory_segment << 4) + addr
+        return self.emulated_memory.get(full_addr, 0)
+
+    def _basic_inp(self, port: int) -> int:
+        """INP(port) - Read from I/O port (emulated)."""
+        return self.io_ports.get(int(port), 0)
+
+    def _basic_freefile(self) -> int:
+        """FREEFILE - Returns next available file number."""
+        return self.next_file_number
+
+    def _basic_lof(self, file_num: int) -> int:
+        """LOF(n) - Returns length of file."""
+        fnum = int(file_num)
+        if fnum in self.file_handles:
+            fh = self.file_handles[fnum]
+            if hasattr(fh, 'file_path'):
+                try:
+                    import os
+                    return os.path.getsize(fh.file_path)
+                except:
+                    pass
+            # Try to get size from file object
+            try:
+                pos = fh.tell()
+                fh.seek(0, 2)  # Seek to end
+                size = fh.tell()
+                fh.seek(pos)  # Restore position
+                return size
+            except:
+                pass
+        return 0
+
+    def _basic_eof(self, file_num: int) -> int:
+        """EOF(n) - Returns -1 if at end of file, 0 otherwise."""
+        fnum = int(file_num)
+        if fnum in self.file_handles:
+            fh = self.file_handles[fnum]
+            try:
+                pos = fh.tell()
+                fh.seek(0, 2)
+                end_pos = fh.tell()
+                fh.seek(pos)
+                return -1 if pos >= end_pos else 0
+            except:
+                pass
+        return -1  # Default to EOF if file not found
+
     def _call_user_function(self, func_name: str, args: List[Any]) -> Any:
         """Call a user-defined function (DEF FN)."""
         func_name_upper = func_name.upper()
@@ -733,6 +1001,16 @@ class BasicInterpreter:
         # Reset user-defined functions and option base
         self.user_functions.clear()
         self.option_base = 0
+        # Reset STOP/debugging state
+        self.stopped = False
+        # Reset procedures (SUB/FUNCTION definitions)
+        self.procedures.clear()
+        self.procedure_stack.clear()
+        # Reset DRAW turtle graphics state
+        self.draw_x = self.screen_width / 2
+        self.draw_y = self.screen_height / 2
+        self.draw_angle = 0
+        self.draw_pen_down = True
 
         self._dirty = True
         self._cached_scaled_surface = None
@@ -788,6 +1066,9 @@ class BasicInterpreter:
             
             self.program_lines.append((current_pc_index, original_line, line_content))
             current_pc_index += 1
+
+        # Third pass: pre-parse SUB and FUNCTION definitions
+        self._preparse_procedures()
 
         if self.surface is None or self.surface.get_size() != (self.screen_width, self.screen_height):
             self.surface = pygame.Surface((self.screen_width, self.screen_height)).convert()
@@ -882,12 +1163,27 @@ class BasicInterpreter:
         if not expr_str.strip():
             return ""
 
+        # Temporarily add FUNCTION procedure names to known functions
+        # so they get converted as function calls, not array accesses
+        func_names_added = set()
+        for name, proc in self.procedures.items():
+            if proc['type'] == 'FUNCTION' and name not in _basic_function_names:
+                _basic_function_names.add(name)
+                func_names_added.add(name)
+
         try:
             conv_expr = convert_basic_expr(expr_str, None)
         except Exception as e:
             print(f"Error converting BASIC expr '{expr_str}': {e}")
             self.running = False
+            # Remove temporarily added names
+            for name in func_names_added:
+                _basic_function_names.discard(name)
             return 0
+        finally:
+            # Remove temporarily added names
+            for name in func_names_added:
+                _basic_function_names.discard(name)
 
         # Use compiled code cache for better performance
         if conv_expr not in _compiled_expr_cache:
@@ -921,12 +1217,49 @@ class BasicInterpreter:
                 return lambda *args: self._call_user_function(name, list(args))
             eval_locals[fn_key] = make_fn_caller(fn_name)
 
-        try:
-            result = eval(_compiled_expr_cache[conv_expr], self.eval_env_funcs, eval_locals)
-            return result
-        except Exception as e:
-            print(f"Error evaluating BASIC expr '{expr_str}' (py: '{conv_expr}'): {e}")
-            return 0
+        # Add FUNCTION procedures to eval locals so they can be called in expressions
+        for proc_name, proc in self.procedures.items():
+            if proc['type'] == 'FUNCTION':
+                py_name = _basic_to_python_identifier(proc_name)
+                def make_proc_caller(name):
+                    return lambda *args: self._call_function_procedure(name, args)
+                eval_locals[py_name] = make_proc_caller(proc_name)
+
+        # QBasic treats undefined numeric variables as 0 and undefined string variables as ""
+        # Retry evaluation up to 10 times, adding undefined variables as we encounter them
+        max_retries = 10
+        for retry in range(max_retries):
+            try:
+                result = eval(_compiled_expr_cache[conv_expr], self.eval_env_funcs, eval_locals)
+                return result
+            except NameError as e:
+                # Extract the undefined variable name from the error message
+                # Format: "name 'VARNAME' is not defined"
+                import re
+                match = re.search(r"name '([^']+)' is not defined", str(e))
+                if match:
+                    undefined_var = match.group(1)
+                    # Set default value based on type suffix
+                    if undefined_var.endswith('_STR'):
+                        eval_locals[undefined_var] = ""
+                    else:
+                        eval_locals[undefined_var] = 0
+                    continue  # Retry with the variable defined
+                # If we can't extract the name, fall through to error handling
+                if self.error_handler_label:
+                    raise BasicRuntimeError(str(e))
+                print(f"Error evaluating BASIC expr '{expr_str}' (py: '{conv_expr}'): {e}")
+                return 0
+            except Exception as e:
+                if self.error_handler_label:
+                    # Raise to be caught by step() which will jump to error handler
+                    raise BasicRuntimeError(str(e))
+                print(f"Error evaluating BASIC expr '{expr_str}' (py: '{conv_expr}'): {e}")
+                return 0
+
+        # If we exceeded max retries, something is wrong
+        print(f"Error: Too many undefined variables in '{expr_str}'")
+        return 0
 
 
     def handle_event(self, event: pygame.event.Event) -> None:
@@ -1153,15 +1486,34 @@ class BasicInterpreter:
         m_screen = _screen_re.fullmatch(statement) # Use fullmatch for commands like SCREEN
         if m_screen:
             mode = int(m_screen.group(1)) # Already number from regex
-            # Simplified: SCREEN 13 is 320x200, other modes might map to initial or default
-            if mode == 13:
-                self.screen_width, self.screen_height = 320, 200
-            # else: use default or other predefined modes
-            
+            # QBasic screen modes
+            screen_modes = {
+                0: (640, 400),   # Text mode 80x25 (simulated)
+                1: (320, 200),   # CGA 4-color
+                2: (640, 200),   # CGA 2-color
+                7: (320, 200),   # EGA 16-color
+                8: (640, 200),   # EGA 16-color
+                9: (640, 350),   # EGA 16-color
+                10: (640, 350),  # EGA mono
+                11: (640, 480),  # VGA 2-color
+                12: (640, 480),  # VGA 16-color
+                13: (320, 200),  # VGA 256-color
+            }
+            if mode in screen_modes:
+                self.screen_width, self.screen_height = screen_modes[mode]
+            else:
+                self.screen_width, self.screen_height = 320, 200  # Default
+
+            # Update view print bottom for text modes
+            if self.font:
+                font_h = self.font.get_height()
+                if font_h > 0:
+                    self.view_print_bottom = self.screen_height // font_h
+
             if self.surface is None or self.surface.get_size() != (self.screen_width, self.screen_height):
                  self.surface = pygame.Surface((self.screen_width, self.screen_height)).convert()
                  self._cached_scaled_surface = None # Force rescale
-            
+
             self.surface.fill(self.basic_color(self.current_bg_color)) #SCREEN implies CLS
             self.text_cursor = (1,1)
             self.lpr = (self.screen_width // 2, self.screen_height // 2) # Reset LPR
@@ -1179,25 +1531,61 @@ class BasicInterpreter:
              self.constants[var_name] = val
              return False
 
+        # --- DIM var AS type (simple typed variable or user-defined type) ---
+        m_dim_as = _dim_as_re.fullmatch(statement)
+        if m_dim_as:
+            var_name = m_dim_as.group(1).upper()
+            type_name = m_dim_as.group(2).upper()
+            # Check if it's a user-defined type
+            if type_name in self.type_definitions:
+                # Create an instance of the user-defined type
+                instance = {}
+                for field_name, field_type in self.type_definitions[type_name].items():
+                    if field_type == 'STRING':
+                        instance[field_name] = ""
+                    else:
+                        instance[field_name] = 0
+                instance['_type'] = type_name
+                self.variables[var_name] = instance
+            else:
+                # Built-in type (INTEGER, LONG, SINGLE, DOUBLE, STRING)
+                if type_name == 'STRING':
+                    self.variables[var_name] = ""
+                else:
+                    self.variables[var_name] = 0
+            return False
+
         m_dim = _dim_re.fullmatch(statement)
         if m_dim:
             var_name_orig, idx_str = m_dim.group(1).strip(), m_dim.group(2).strip()
+            type_name = (m_dim.group(3) or "").upper().strip()
             var_name = var_name_orig.upper()
             if var_name in self.constants:
                 print(f"Error: Cannot DIM constant '{var_name}' at PC {current_pc_num}"); self.running = False; return False
-            
+
             try:
                 # DIM A(10) means indices 0-10 (OPTION BASE 0) or 1-10 (OPTION BASE 1).
                 # Size is N+1-option_base.
                 dims = [int(self.eval_expr(idx.strip())) + 1 - self.option_base for idx in idx_str.split(',')]
                 if not self.running: return False
 
-                default_val = "" if var_name.endswith("$") else 0
-                
+                # Determine default value based on type
+                def create_default():
+                    if type_name and type_name in self.type_definitions:
+                        # Create an instance of user-defined type
+                        instance = {'_type': type_name}
+                        for field_name, field_type in self.type_definitions[type_name].items():
+                            instance[field_name] = "" if field_type == 'STRING' else 0
+                        return instance
+                    elif var_name.endswith("$") or type_name == 'STRING':
+                        return ""
+                    else:
+                        return 0
+
                 if len(dims) == 1:
-                    self.variables[var_name] = [default_val] * dims[0]
+                    self.variables[var_name] = [create_default() for _ in range(dims[0])]
                 elif len(dims) == 2:
-                    self.variables[var_name] = [[default_val] * dims[1] for _ in range(dims[0])]
+                    self.variables[var_name] = [[create_default() for _ in range(dims[1])] for _ in range(dims[0])]
                 # Add more dimensions if needed
                 else:
                     print(f"Error: Unsupported array dimensions ({len(dims)}) for '{var_name}' at PC {current_pc_num}"); self.running = False
@@ -1328,6 +1716,41 @@ class BasicInterpreter:
                     print(f"Error: Incorrect array dimension access for '{lhs}' at PC {current_pc_num}"); self.running = False
                 except Exception as e:
                     print(f"Error during array assignment for '{lhs} = {rhs_expr}': {e} at PC {current_pc_num}"); self.running = False
+            elif '.' in lhs:
+                # Type member assignment: p.X = value or body(0).row = value
+                # Check for array element member access (body(0).row)
+                arr_member_match = re.match(r'([a-zA-Z_][a-zA-Z0-9_]*)\s*\(([^)]+)\)\.([a-zA-Z_][a-zA-Z0-9_]*)', lhs, re.IGNORECASE)
+                if arr_member_match:
+                    var_name = arr_member_match.group(1).upper()
+                    idx_str = arr_member_match.group(2)
+                    member_name = arr_member_match.group(3).upper()
+                    if var_name in self.variables and isinstance(self.variables[var_name], list):
+                        try:
+                            indices_list = _split_args(idx_str)
+                            indices = [int(round(float(self.eval_expr(idx.strip())))) for idx in indices_list]
+                            if not self.running: return False
+                            # Navigate to the array element
+                            target = self.variables[var_name]
+                            for idx in indices:
+                                target = target[idx]
+                            # Now target should be a dict (type instance)
+                            if isinstance(target, dict):
+                                target[member_name] = val_to_assign
+                            else:
+                                print(f"Error: Array element is not a user-defined type at PC {current_pc_num}"); self.running = False; return False
+                        except Exception as e:
+                            print(f"Error in array member access '{lhs}': {e} at PC {current_pc_num}"); self.running = False; return False
+                    else:
+                        print(f"Error: '{var_name}' is not an array at PC {current_pc_num}"); self.running = False; return False
+                else:
+                    # Simple type member assignment (p.X = value)
+                    parts = lhs.upper().split('.', 1)
+                    var_name = parts[0]
+                    member_name = parts[1]
+                    if var_name in self.variables and isinstance(self.variables[var_name], dict):
+                        self.variables[var_name][member_name] = val_to_assign
+                    else:
+                        print(f"Error: '{var_name}' is not a user-defined type at PC {current_pc_num}"); self.running = False; return False
             else: # Scalar assignment
                 var_name = lhs.upper()
                 if var_name in self.constants:
@@ -1373,6 +1796,11 @@ class BasicInterpreter:
         m_print_using = _print_using_re.fullmatch(statement)
         if m_print_using:
             return self._do_print_using(m_print_using.group(1).strip(), m_print_using.group(2).strip(), current_pc_num)
+
+        # --- File I/O: PRINT # statement (must come before regular PRINT) ---
+        m_print_file = _print_file_re.fullmatch(statement)
+        if m_print_file:
+            return self._handle_print_file(m_print_file, current_pc_num)
 
         m_print = _print_re.fullmatch(statement)
         if m_print:
@@ -1903,15 +2331,35 @@ class BasicInterpreter:
                 self.data_pointer = 0  # Reset to beginning
             return False
 
+        # --- File I/O: LINE INPUT # statement (must come before LINE INPUT) ---
+        m_line_input_file = _line_input_file_re.fullmatch(statement)
+        if m_line_input_file:
+            return self._handle_line_input_file(m_line_input_file, current_pc_num)
+
         # --- LINE INPUT statement (must come before INPUT) ---
         m_line_input = _line_input_re.fullmatch(statement)
         if m_line_input:
             return self._handle_line_input(m_line_input.group(1).strip(), current_pc_num)
 
+        # --- File I/O: INPUT # statement (must come before regular INPUT) ---
+        m_input_file = _input_file_re.fullmatch(statement)
+        if m_input_file:
+            return self._handle_input_file(m_input_file, current_pc_num)
+
         # --- INPUT statement ---
         m_input = _input_re.fullmatch(statement)
         if m_input:
             return self._handle_input(m_input.group(1).strip(), current_pc_num)
+
+        # --- ON ERROR GOTO statement (must come before ON...GOTO) ---
+        m_on_error = _on_error_re.fullmatch(statement)
+        if m_on_error:
+            label = m_on_error.group(1).upper()
+            if label == "0":
+                self.error_handler_label = None  # Disable error handling
+            else:
+                self.error_handler_label = label
+            return False
 
         # --- ON...GOTO statement ---
         m_on_goto = _on_goto_re.fullmatch(statement)
@@ -1964,9 +2412,220 @@ class BasicInterpreter:
             self._do_redim(m_redim.group(1).strip(), m_redim.group(2).strip(), current_pc_num)
             return False
 
+        # --- PLAY statement (Music Macro Language) ---
+        m_play = _play_re.fullmatch(statement)
+        if m_play:
+            self._do_play(m_play.group(1).strip(), current_pc_num)
+            return False
+
+        # --- DRAW statement (turtle graphics) ---
+        m_draw = _draw_re.fullmatch(statement)
+        if m_draw:
+            self._do_draw(m_draw.group(1).strip(), current_pc_num)
+            return False
+
+        # --- STOP statement ---
+        if _stop_re.fullmatch(up_stmt):
+            self.stopped = True
+            self.running = False
+            print(f"STOP at PC {current_pc_num}")
+            return False
+
         if _end_re.fullmatch(up_stmt):
             self.running = False
             return False # END statement, stop execution
+
+        # --- DEFINT/DEFSNG/DEFDBL/DEFLNG/DEFSTR (ignored, Python handles types dynamically) ---
+        if _deftype_re.fullmatch(statement):
+            return False  # Silently ignore type declarations
+
+        # --- PALETTE statement ---
+        m_palette = _palette_re.fullmatch(statement)
+        if m_palette:
+            # For now, just accept and ignore palette changes
+            # Full implementation would modify self.colors
+            return False
+
+        # --- VIEW PRINT statement ---
+        m_view_print = _view_print_re.fullmatch(statement)
+        if m_view_print:
+            if m_view_print.group(1) and m_view_print.group(2):
+                self.view_print_top = int(m_view_print.group(1))
+                self.view_print_bottom = int(m_view_print.group(2))
+            else:
+                # Reset to full screen
+                font_h = self.font.get_height() if self.font else FONT_SIZE
+                if font_h > 0:
+                    self.view_print_top = 1
+                    self.view_print_bottom = self.screen_height // font_h
+            return False
+
+        # --- WIDTH statement ---
+        m_width = _width_re.fullmatch(statement)
+        if m_width:
+            # WIDTH columns[, rows] - ignored for now (display is fixed)
+            return False
+
+        # --- WAIT statement (port I/O emulated as no-op) ---
+        m_wait = _wait_re.fullmatch(statement)
+        if m_wait:
+            return False  # Emulated as no-op
+
+        # --- OUT statement (port I/O emulated) ---
+        m_out = _out_re.fullmatch(statement)
+        if m_out:
+            port = int(self.eval_expr(m_out.group(1).strip()))
+            value = int(self.eval_expr(m_out.group(2).strip()))
+            self.io_ports[port] = value & 0xFF
+            return False
+
+        # --- DEF SEG statement (memory segment emulated) ---
+        m_def_seg = _def_seg_re.fullmatch(statement)
+        if m_def_seg:
+            if m_def_seg.group(1):
+                self.memory_segment = int(self.eval_expr(m_def_seg.group(1).strip()))
+            else:
+                self.memory_segment = 0  # Reset to default
+            return False
+
+        # --- POKE statement (memory emulated) ---
+        m_poke = _poke_re.fullmatch(statement)
+        if m_poke:
+            address = int(self.eval_expr(m_poke.group(1).strip()))
+            value = int(self.eval_expr(m_poke.group(2).strip()))
+            full_addr = (self.memory_segment << 4) + address
+            self.emulated_memory[full_addr] = value & 0xFF
+            return False
+
+        # --- COMMON SHARED statement ---
+        m_common_shared = _common_shared_re.fullmatch(statement)
+        if m_common_shared:
+            # Variables listed are already global in our implementation
+            return False
+
+        # --- DIM SHARED statement ---
+        m_dim_shared = _dim_shared_re.fullmatch(statement)
+        if m_dim_shared:
+            # Parse as regular DIM, just ignore SHARED keyword
+            dim_content = m_dim_shared.group(1).strip()
+            return self.execute_logical_line(f"DIM {dim_content}", current_pc_num)
+
+        # --- GET (graphics) statement ---
+        m_get_gfx = _get_gfx_re.fullmatch(statement)
+        if m_get_gfx:
+            return self._do_get_graphics(m_get_gfx, current_pc_num)
+
+        # --- PUT (graphics) statement ---
+        m_put_gfx = _put_gfx_re.fullmatch(statement)
+        if m_put_gfx:
+            return self._do_put_graphics(m_put_gfx, current_pc_num)
+
+        # --- RESUME statement ---
+        m_resume = _resume_re.fullmatch(statement)
+        if m_resume:
+            if not self.in_error_handler:
+                print(f"Error: RESUME without error at PC {current_pc_num}")
+                self.running = False
+                return False
+            self.in_error_handler = False
+            target = m_resume.group(1)
+            if target:
+                if target.upper() == "NEXT":
+                    self.pc = self.error_resume_pc + 1
+                else:
+                    return self._do_goto(target.upper())
+            else:
+                self.pc = self.error_resume_pc
+            return True
+
+        # --- DECLARE statement (ignored, we parse SUB/FUNCTION at runtime) ---
+        m_declare = _declare_re.fullmatch(statement)
+        if m_declare:
+            return False  # Declarations are informational only
+
+        # --- SUB definition ---
+        m_sub = _sub_re.fullmatch(statement)
+        if m_sub:
+            return self._handle_sub_definition(m_sub, current_pc_num)
+
+        # --- END SUB ---
+        if _end_sub_re.fullmatch(up_stmt):
+            return self._handle_end_sub(current_pc_num)
+
+        # --- FUNCTION definition ---
+        m_function = _function_re.fullmatch(statement)
+        if m_function:
+            return self._handle_function_definition(m_function, current_pc_num)
+
+        # --- END FUNCTION ---
+        if _end_function_re.fullmatch(up_stmt):
+            return self._handle_end_function(current_pc_num)
+
+        # --- EXIT SUB ---
+        if _exit_sub_re.fullmatch(up_stmt):
+            return self._handle_exit_sub(current_pc_num)
+
+        # --- EXIT FUNCTION ---
+        if _exit_function_re.fullmatch(up_stmt):
+            return self._handle_exit_function(current_pc_num)
+
+        # --- SHARED statement (in SUB/FUNCTION) ---
+        m_shared = _shared_re.fullmatch(statement)
+        if m_shared:
+            # Variables are already global in our simple implementation
+            return False
+
+        # --- CALL statement ---
+        m_call = _call_re.fullmatch(statement)
+        if m_call:
+            return self._handle_call(m_call, current_pc_num)
+
+        # --- TYPE definition ---
+        m_type = _type_re.fullmatch(statement)
+        if m_type:
+            self.current_type = m_type.group(1).upper()
+            self.type_definitions[self.current_type] = {}
+            return False
+
+        # --- END TYPE ---
+        if _end_type_re.fullmatch(up_stmt):
+            self.current_type = None
+            return False
+
+        # --- Type field definition (inside TYPE block) ---
+        if self.current_type:
+            # Parse field definition: fieldname AS type
+            field_match = re.match(r"([a-zA-Z_][a-zA-Z0-9_]*)\s+AS\s+(INTEGER|LONG|SINGLE|DOUBLE|STRING)", statement, re.IGNORECASE)
+            if field_match:
+                field_name = field_match.group(1).upper()
+                field_type = field_match.group(2).upper()
+                self.type_definitions[self.current_type][field_name] = field_type
+                return False
+
+        # --- File I/O: OPEN statement ---
+        m_open = _open_re.fullmatch(statement)
+        if m_open:
+            return self._handle_open(m_open, current_pc_num)
+
+        # --- File I/O: CLOSE statement ---
+        m_close = _close_re.fullmatch(statement)
+        if m_close:
+            return self._handle_close(m_close, current_pc_num)
+
+        # --- File I/O: WRITE # statement ---
+        m_write_file = _write_file_re.fullmatch(statement)
+        if m_write_file:
+            return self._handle_write_file(m_write_file, current_pc_num)
+
+        # --- Implicit SUB/FUNCTION call (without CALL keyword) ---
+        # Check if statement starts with a known procedure name
+        implicit_call_match = re.match(r'([a-zA-Z_][a-zA-Z0-9_]*)\s*(.*)', statement)
+        if implicit_call_match:
+            proc_name = implicit_call_match.group(1).upper()
+            args_str = implicit_call_match.group(2).strip()
+            if proc_name in self.procedures:
+                # Treat as a SUB call: MySub arg1, arg2 -> CALL MySub(arg1, arg2)
+                return self._handle_call_sub(proc_name, args_str, current_pc_num)
 
         # If no pattern matched, it's a syntax error or unrecognized command
         print(f"Syntax Error or Unrecognized Command: '{original_statement_for_error}' at PC {current_pc_num} (Original line: {self.program_lines[current_pc_num][1]})")
@@ -2570,6 +3229,1031 @@ class BasicInterpreter:
             print(f"Error in REDIM at PC {pc}: {e}")
             self.running = False
 
+    def _do_play(self, mml_expr: str, pc: int) -> None:
+        """Execute PLAY command - Music Macro Language.
+        MML commands:
+        A-G: Notes (with optional # or + for sharp, - for flat)
+        O: Set octave (0-6, default 4)
+        L: Set default note length (1-64, 1=whole, 4=quarter, etc.)
+        T: Set tempo in quarter notes per minute (32-255, default 120)
+        N: Play note by number (0-84, 0=rest)
+        P/R: Pause/Rest (1-64)
+        >: Increase octave
+        <: Decrease octave
+        MN: Music Normal (7/8 note length)
+        ML: Music Legato (full note length)
+        MS: Music Staccato (3/4 note length)
+        """
+        try:
+            # Evaluate the MML string expression
+            mml_string = str(self.eval_expr(mml_expr))
+            if not self.running:
+                return
+
+            if not pygame.mixer.get_init():
+                pygame.mixer.init(frequency=22050, size=-16, channels=1)
+
+            import array
+
+            # MML parsing state
+            octave = 4
+            default_length = 4  # Quarter note
+            tempo = 120  # Quarter notes per minute
+            articulation = 7 / 8  # MN by default
+
+            # Note frequencies for octave 0 (C0 to B0)
+            note_base_freqs = {
+                'C': 16.35, 'D': 18.35, 'E': 20.60, 'F': 21.83,
+                'G': 24.50, 'A': 27.50, 'B': 30.87
+            }
+
+            i = 0
+            mml_upper = mml_string.upper()
+
+            while i < len(mml_upper):
+                ch = mml_upper[i]
+                i += 1
+
+                # Note commands A-G
+                if ch in 'ABCDEFG':
+                    note = ch
+                    # Check for sharp/flat
+                    modifier = 0
+                    if i < len(mml_upper) and mml_upper[i] in '#+':
+                        modifier = 1
+                        i += 1
+                    elif i < len(mml_upper) and mml_upper[i] == '-':
+                        modifier = -1
+                        i += 1
+
+                    # Check for length
+                    length = default_length
+                    num_str = ""
+                    while i < len(mml_upper) and mml_upper[i].isdigit():
+                        num_str += mml_upper[i]
+                        i += 1
+                    if num_str:
+                        length = int(num_str)
+
+                    # Check for dot (adds half the note length)
+                    dot_mult = 1.0
+                    while i < len(mml_upper) and mml_upper[i] == '.':
+                        dot_mult += 0.5 * dot_mult
+                        i += 1
+
+                    # Calculate frequency
+                    base_freq = note_base_freqs[note]
+                    # Apply sharp/flat (semitone = 2^(1/12))
+                    freq = base_freq * (2 ** octave) * (2 ** (modifier / 12.0))
+
+                    # Calculate duration: (60 / tempo) * (4 / length) * dot_mult
+                    duration = (60.0 / tempo) * (4.0 / length) * dot_mult
+
+                    # Play the note
+                    self._play_note(freq, duration * articulation)
+
+                # Rest/Pause
+                elif ch in 'PR':
+                    length = default_length
+                    num_str = ""
+                    while i < len(mml_upper) and mml_upper[i].isdigit():
+                        num_str += mml_upper[i]
+                        i += 1
+                    if num_str:
+                        length = int(num_str)
+
+                    dot_mult = 1.0
+                    while i < len(mml_upper) and mml_upper[i] == '.':
+                        dot_mult += 0.5 * dot_mult
+                        i += 1
+
+                    duration = (60.0 / tempo) * (4.0 / length) * dot_mult
+                    time.sleep(duration)
+
+                # Octave command
+                elif ch == 'O':
+                    num_str = ""
+                    while i < len(mml_upper) and mml_upper[i].isdigit():
+                        num_str += mml_upper[i]
+                        i += 1
+                    if num_str:
+                        octave = max(0, min(6, int(num_str)))
+
+                # Increase octave
+                elif ch == '>':
+                    octave = min(6, octave + 1)
+
+                # Decrease octave
+                elif ch == '<':
+                    octave = max(0, octave - 1)
+
+                # Length command
+                elif ch == 'L':
+                    num_str = ""
+                    while i < len(mml_upper) and mml_upper[i].isdigit():
+                        num_str += mml_upper[i]
+                        i += 1
+                    if num_str:
+                        default_length = max(1, min(64, int(num_str)))
+
+                # Tempo command
+                elif ch == 'T':
+                    num_str = ""
+                    while i < len(mml_upper) and mml_upper[i].isdigit():
+                        num_str += mml_upper[i]
+                        i += 1
+                    if num_str:
+                        tempo = max(32, min(255, int(num_str)))
+
+                # Note by number
+                elif ch == 'N':
+                    num_str = ""
+                    while i < len(mml_upper) and mml_upper[i].isdigit():
+                        num_str += mml_upper[i]
+                        i += 1
+                    if num_str:
+                        note_num = int(num_str)
+                        if note_num == 0:
+                            # Rest
+                            duration = (60.0 / tempo) * (4.0 / default_length)
+                            time.sleep(duration)
+                        elif 1 <= note_num <= 84:
+                            # Note number to frequency (N1 = C0)
+                            freq = 16.35 * (2 ** ((note_num - 1) / 12.0))
+                            duration = (60.0 / tempo) * (4.0 / default_length)
+                            self._play_note(freq, duration * articulation)
+
+                # Music articulation
+                elif ch == 'M':
+                    if i < len(mml_upper):
+                        art_ch = mml_upper[i]
+                        i += 1
+                        if art_ch == 'N':
+                            articulation = 7 / 8  # Normal
+                        elif art_ch == 'L':
+                            articulation = 1.0  # Legato
+                        elif art_ch == 'S':
+                            articulation = 3 / 4  # Staccato
+
+                # Skip spaces and unknown characters
+                elif ch in ' \t\n':
+                    pass
+
+        except Exception as e:
+            print(f"Error in PLAY at PC {pc}: {e}")
+
+    def _play_note(self, frequency: float, duration: float) -> None:
+        """Helper to play a single note."""
+        try:
+            if frequency <= 0 or duration <= 0:
+                return
+
+            import array
+            sample_rate = 22050
+            n_samples = int(sample_rate * duration)
+            if n_samples <= 0:
+                return
+
+            # Generate sine wave
+            samples = array.array('h', [0] * n_samples)
+            for i in range(n_samples):
+                t = i / sample_rate
+                # Apply envelope (attack/decay) to avoid clicks
+                envelope = 1.0
+                attack_samples = int(0.01 * sample_rate)  # 10ms attack
+                decay_samples = int(0.05 * sample_rate)   # 50ms decay
+                if i < attack_samples:
+                    envelope = i / attack_samples
+                elif i > n_samples - decay_samples:
+                    envelope = (n_samples - i) / decay_samples
+                samples[i] = int(32767 * 0.5 * envelope * math.sin(2 * math.pi * frequency * t))
+
+            sound = pygame.mixer.Sound(buffer=samples)
+            sound.play()
+            time.sleep(duration)  # Wait for note to finish
+        except Exception:
+            pass
+
+    def _do_draw(self, draw_expr: str, pc: int) -> None:
+        """Execute DRAW command - turtle graphics.
+        Commands:
+        U[n]: Move up n pixels
+        D[n]: Move down n pixels
+        L[n]: Move left n pixels
+        R[n]: Move right n pixels
+        E[n]: Move diagonally up-right
+        F[n]: Move diagonally down-right
+        G[n]: Move diagonally down-left
+        H[n]: Move diagonally up-left
+        M[+/-]x,y: Move to absolute (or relative with +/-) position
+        A[n]: Set angle (0-3, n*90 degrees)
+        TA[n]: Turn angle in degrees
+        C[n]: Set color
+        B: Move without drawing (prefix)
+        N: Return to original position after command (prefix)
+        P paint,border: Paint fill
+        S[n]: Scale factor (1-255, default 4, n/4 is the multiplier)
+        """
+        try:
+            # Evaluate the DRAW string expression
+            draw_string = str(self.eval_expr(draw_expr))
+            if not self.running:
+                return
+
+            i = 0
+            draw_upper = draw_string.upper()
+            scale = 4  # Default scale (1 pixel per unit)
+            color = self.current_fg_color
+
+            while i < len(draw_upper):
+                ch = draw_upper[i]
+                i += 1
+
+                # Prefix modifiers
+                blank_move = False
+                return_after = False
+
+                while ch in 'BN':
+                    if ch == 'B':
+                        blank_move = True
+                    elif ch == 'N':
+                        return_after = True
+                    if i < len(draw_upper):
+                        ch = draw_upper[i]
+                        i += 1
+                    else:
+                        break
+
+                # Parse number after command
+                def parse_number():
+                    nonlocal i
+                    num_str = ""
+                    negative = False
+                    if i < len(draw_upper) and draw_upper[i] in '+-':
+                        if draw_upper[i] == '-':
+                            negative = True
+                        i += 1
+                    while i < len(draw_upper) and draw_upper[i].isdigit():
+                        num_str += draw_upper[i]
+                        i += 1
+                    if num_str:
+                        val = int(num_str)
+                        return -val if negative else val
+                    return 1  # Default distance
+
+                # Direction commands
+                save_x, save_y = self.draw_x, self.draw_y
+                dx, dy = 0, 0
+
+                if ch == 'U':  # Up
+                    n = parse_number()
+                    dy = -n * (scale / 4)
+                elif ch == 'D':  # Down
+                    n = parse_number()
+                    dy = n * (scale / 4)
+                elif ch == 'L':  # Left
+                    n = parse_number()
+                    dx = -n * (scale / 4)
+                elif ch == 'R':  # Right
+                    n = parse_number()
+                    dx = n * (scale / 4)
+                elif ch == 'E':  # Up-right diagonal
+                    n = parse_number()
+                    dx = n * (scale / 4)
+                    dy = -n * (scale / 4)
+                elif ch == 'F':  # Down-right diagonal
+                    n = parse_number()
+                    dx = n * (scale / 4)
+                    dy = n * (scale / 4)
+                elif ch == 'G':  # Down-left diagonal
+                    n = parse_number()
+                    dx = -n * (scale / 4)
+                    dy = n * (scale / 4)
+                elif ch == 'H':  # Up-left diagonal
+                    n = parse_number()
+                    dx = -n * (scale / 4)
+                    dy = -n * (scale / 4)
+                elif ch == 'M':  # Move to position
+                    # Check for relative movement
+                    relative = False
+                    if i < len(draw_upper) and draw_upper[i] in '+-':
+                        relative = True
+                    x = parse_number()
+                    # Skip comma
+                    if i < len(draw_upper) and draw_upper[i] == ',':
+                        i += 1
+                    y = parse_number()
+                    if relative:
+                        dx = x * (scale / 4)
+                        dy = y * (scale / 4)
+                    else:
+                        # Absolute movement
+                        new_x, new_y = x, y
+                        if not blank_move and self.surface:
+                            pygame.draw.line(self.surface, self.basic_color(color),
+                                           (int(self.draw_x), int(self.draw_y)),
+                                           (int(new_x), int(new_y)))
+                            self.mark_dirty()
+                        if not return_after:
+                            self.draw_x, self.draw_y = new_x, new_y
+                        continue
+                elif ch == 'A':  # Set angle (0-3)
+                    n = parse_number()
+                    self.draw_angle = (n % 4) * 90
+                    continue
+                elif ch == 'T':  # Turn angle
+                    if i < len(draw_upper) and draw_upper[i] == 'A':
+                        i += 1
+                        n = parse_number()
+                        self.draw_angle = (self.draw_angle + n) % 360
+                    continue
+                elif ch == 'C':  # Set color
+                    n = parse_number()
+                    color = n % 16
+                    continue
+                elif ch == 'S':  # Set scale
+                    n = parse_number()
+                    scale = max(1, min(255, n))
+                    continue
+                elif ch == 'P':  # Paint (fill)
+                    fill_color = parse_number()
+                    if i < len(draw_upper) and draw_upper[i] == ',':
+                        i += 1
+                    border_color = parse_number()
+                    # Perform flood fill at current position
+                    if self.surface:
+                        self._scanline_fill(int(self.draw_x), int(self.draw_y),
+                                          self.basic_color(fill_color),
+                                          self.basic_color(border_color),
+                                          self.surface.get_at((int(self.draw_x), int(self.draw_y)))[:3])
+                        self.mark_dirty()
+                    continue
+                elif ch in ' \t\n':
+                    continue
+                else:
+                    continue  # Skip unknown commands
+
+                # Apply rotation based on draw_angle
+                if self.draw_angle != 0:
+                    rad = math.radians(self.draw_angle)
+                    new_dx = dx * math.cos(rad) - dy * math.sin(rad)
+                    new_dy = dx * math.sin(rad) + dy * math.cos(rad)
+                    dx, dy = new_dx, new_dy
+
+                # Calculate new position
+                new_x = self.draw_x + dx
+                new_y = self.draw_y + dy
+
+                # Draw line if not blank move
+                if not blank_move and self.surface:
+                    pygame.draw.line(self.surface, self.basic_color(color),
+                                   (int(self.draw_x), int(self.draw_y)),
+                                   (int(new_x), int(new_y)))
+                    self.mark_dirty()
+
+                # Update position (or return to original)
+                if return_after:
+                    self.draw_x, self.draw_y = save_x, save_y
+                else:
+                    self.draw_x, self.draw_y = new_x, new_y
+
+        except Exception as e:
+            print(f"Error in DRAW at PC {pc}: {e}")
+
+    def _do_get_graphics(self, match, pc: int) -> bool:
+        """Handle GET (x1, y1)-(x2, y2), array - capture screen region to array."""
+        try:
+            x1 = int(self.eval_expr(match.group(1).strip()))
+            y1 = int(self.eval_expr(match.group(2).strip()))
+            x2 = int(self.eval_expr(match.group(3).strip()))
+            y2 = int(self.eval_expr(match.group(4).strip()))
+            array_name = match.group(5).upper()
+
+            if not self.running:
+                return False
+
+            # Ensure coordinates are in order
+            if x1 > x2:
+                x1, x2 = x2, x1
+            if y1 > y2:
+                y1, y2 = y2, y1
+
+            # Clip to screen bounds
+            x1 = max(0, min(x1, self.screen_width - 1))
+            x2 = max(0, min(x2, self.screen_width - 1))
+            y1 = max(0, min(y1, self.screen_height - 1))
+            y2 = max(0, min(y2, self.screen_height - 1))
+
+            width = x2 - x1 + 1
+            height = y2 - y1 + 1
+
+            # Capture the screen region as a pygame surface
+            if self.surface:
+                captured = self.surface.subsurface((x1, y1, width, height)).copy()
+                # Store metadata and surface in a special format
+                self.variables[array_name] = {
+                    '_sprite': True,
+                    'width': width,
+                    'height': height,
+                    'surface': captured
+                }
+
+            return False
+        except Exception as e:
+            print(f"Error in GET at PC {pc}: {e}")
+            return False
+
+    def _do_put_graphics(self, match, pc: int) -> bool:
+        """Handle PUT (x, y), array[, mode] - display sprite from array."""
+        try:
+            x = int(self.eval_expr(match.group(1).strip()))
+            y = int(self.eval_expr(match.group(2).strip()))
+            array_name = match.group(3).upper()
+            mode = (match.group(4) or "XOR").upper()
+
+            if not self.running:
+                return False
+
+            # Get the sprite data
+            sprite_data = self.variables.get(array_name)
+            if not sprite_data or not isinstance(sprite_data, dict) or not sprite_data.get('_sprite'):
+                print(f"Error: Array '{array_name}' does not contain sprite data at PC {pc}")
+                return False
+
+            sprite_surface = sprite_data['surface']
+
+            if self.surface and sprite_surface:
+                if mode == "PSET":
+                    self.surface.blit(sprite_surface, (x, y))
+                elif mode == "PRESET":
+                    # Invert colors (simplified)
+                    inverted = sprite_surface.copy()
+                    inverted.fill((255, 255, 255))
+                    inverted.blit(sprite_surface, (0, 0), special_flags=pygame.BLEND_RGB_SUB)
+                    self.surface.blit(inverted, (x, y))
+                elif mode == "AND":
+                    self.surface.blit(sprite_surface, (x, y), special_flags=pygame.BLEND_RGB_MULT)
+                elif mode == "OR":
+                    self.surface.blit(sprite_surface, (x, y), special_flags=pygame.BLEND_RGB_ADD)
+                elif mode == "XOR":
+                    # XOR mode - need to implement manually
+                    temp = self.surface.subsurface((x, y, sprite_data['width'], sprite_data['height'])).copy()
+                    arr1 = pygame.surfarray.pixels3d(temp)
+                    arr2 = pygame.surfarray.pixels3d(sprite_surface)
+                    arr1 ^= arr2
+                    del arr1, arr2
+                    self.surface.blit(temp, (x, y))
+                self.mark_dirty()
+
+            return False
+        except Exception as e:
+            print(f"Error in PUT at PC {pc}: {e}")
+            return False
+
+    def _preparse_procedures(self) -> None:
+        """Pre-parse SUB and FUNCTION definitions during reset.
+
+        This allows calling procedures before their definition in the source code.
+        """
+        # Patterns for SUB and FUNCTION definitions
+        sub_re = re.compile(r"SUB\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*(?:\((.*?)\))?\s*(STATIC)?", re.IGNORECASE)
+        func_re = re.compile(r"FUNCTION\s+([a-zA-Z_][a-zA-Z0-9_\$%#!&]*)\s*(?:\((.*?)\))?\s*(STATIC)?", re.IGNORECASE)
+        end_sub_re = re.compile(r"END\s+SUB", re.IGNORECASE)
+        end_func_re = re.compile(r"END\s+FUNCTION", re.IGNORECASE)
+
+        pc = 0
+        while pc < len(self.program_lines):
+            _, _, line_content = self.program_lines[pc]
+
+            # Check for SUB definition
+            sub_match = sub_re.fullmatch(line_content.strip())
+            if sub_match:
+                sub_name = sub_match.group(1).upper()
+                params_str = sub_match.group(2) or ""
+                params = [p.strip().upper() for p in params_str.split(',') if p.strip()] if params_str.strip() else []
+                is_static = bool(sub_match.group(3))
+
+                # Find END SUB
+                end_pc = pc + 1
+                depth = 1
+                while end_pc < len(self.program_lines) and depth > 0:
+                    _, _, end_line = self.program_lines[end_pc]
+                    end_line = end_line.strip()
+                    if sub_re.fullmatch(end_line):
+                        depth += 1
+                    elif end_sub_re.fullmatch(end_line):
+                        depth -= 1
+                    end_pc += 1
+                end_pc -= 1  # Back up to the END SUB line
+
+                if depth == 0:
+                    self.procedures[sub_name] = {
+                        'type': 'SUB',
+                        'params': params,
+                        'start_pc': pc + 1,  # First line inside SUB
+                        'end_pc': end_pc,    # END SUB line
+                        'is_static': is_static
+                    }
+                pc = end_pc + 1
+                continue
+
+            # Check for FUNCTION definition
+            func_match = func_re.fullmatch(line_content.strip())
+            if func_match:
+                func_name = func_match.group(1).upper()
+                params_str = func_match.group(2) or ""
+                params = [p.strip().upper() for p in params_str.split(',') if p.strip()] if params_str.strip() else []
+                is_static = bool(func_match.group(3))
+
+                # Find END FUNCTION
+                end_pc = pc + 1
+                depth = 1
+                while end_pc < len(self.program_lines) and depth > 0:
+                    _, _, end_line = self.program_lines[end_pc]
+                    end_line = end_line.strip()
+                    if func_re.fullmatch(end_line):
+                        depth += 1
+                    elif end_func_re.fullmatch(end_line):
+                        depth -= 1
+                    end_pc += 1
+                end_pc -= 1  # Back up to the END FUNCTION line
+
+                if depth == 0:
+                    self.procedures[func_name] = {
+                        'type': 'FUNCTION',
+                        'params': params,
+                        'start_pc': pc + 1,  # First line inside FUNCTION
+                        'end_pc': end_pc,    # END FUNCTION line
+                        'is_static': is_static
+                    }
+                pc = end_pc + 1
+                continue
+
+            pc += 1
+
+    def _handle_sub_definition(self, match, pc: int) -> bool:
+        """Handle SUB name[(params)] [STATIC] - skip to END SUB during normal execution."""
+        sub_name = match.group(1).upper()
+        params_str = match.group(2) or ""
+
+        # Parse parameters
+        params = []
+        if params_str.strip():
+            params = [p.strip().upper() for p in params_str.split(',') if p.strip()]
+
+        # Find END SUB to determine body range
+        end_pc = self._find_end_of_block(pc, "SUB", "END SUB")
+        if end_pc == -1:
+            print(f"Error: SUB without END SUB at PC {pc}")
+            self.running = False
+            return False
+
+        # Store procedure definition
+        self.procedures[sub_name] = {
+            'type': 'SUB',
+            'params': params,
+            'start_pc': pc + 1,
+            'end_pc': end_pc,
+            'is_static': 'STATIC' in (match.group(0) or '').upper()
+        }
+
+        # Skip past the SUB body during normal execution
+        self.pc = end_pc + 1
+        return True
+
+    def _handle_end_sub(self, pc: int) -> bool:
+        """Handle END SUB - return from subroutine."""
+        if self.procedure_stack:
+            return self._return_from_procedure(pc)
+        return False
+
+    def _handle_function_definition(self, match, pc: int) -> bool:
+        """Handle FUNCTION name[(params)] [STATIC] - skip to END FUNCTION during normal execution."""
+        func_name = match.group(1).upper()
+        params_str = match.group(2) or ""
+
+        # Parse parameters
+        params = []
+        if params_str.strip():
+            params = [p.strip().upper() for p in params_str.split(',') if p.strip()]
+
+        # Find END FUNCTION to determine body range
+        end_pc = self._find_end_of_block(pc, "FUNCTION", "END FUNCTION")
+        if end_pc == -1:
+            print(f"Error: FUNCTION without END FUNCTION at PC {pc}")
+            self.running = False
+            return False
+
+        # Store procedure definition
+        self.procedures[func_name] = {
+            'type': 'FUNCTION',
+            'params': params,
+            'start_pc': pc + 1,
+            'end_pc': end_pc,
+            'is_static': 'STATIC' in (match.group(0) or '').upper()
+        }
+
+        # Skip past the FUNCTION body during normal execution
+        self.pc = end_pc + 1
+        return True
+
+    def _handle_end_function(self, pc: int) -> bool:
+        """Handle END FUNCTION - return from function."""
+        if self.procedure_stack:
+            return self._return_from_procedure(pc)
+        return False
+
+    def _handle_exit_sub(self, pc: int) -> bool:
+        """Handle EXIT SUB - early return from subroutine."""
+        if self.procedure_stack:
+            return self._return_from_procedure(pc)
+        print(f"Error: EXIT SUB outside of SUB at PC {pc}")
+        return False
+
+    def _handle_exit_function(self, pc: int) -> bool:
+        """Handle EXIT FUNCTION - early return from function."""
+        if self.procedure_stack:
+            return self._return_from_procedure(pc)
+        print(f"Error: EXIT FUNCTION outside of FUNCTION at PC {pc}")
+        return False
+
+    def _handle_call(self, match, pc: int) -> bool:
+        """Handle CALL subname[(args)] - call a subroutine."""
+        sub_name = match.group(1).upper()
+        args_str = match.group(2) or ""
+        return self._handle_call_sub(sub_name, args_str, pc)
+
+    def _handle_call_sub(self, sub_name: str, args_str: str, pc: int) -> bool:
+        """Handle calling a SUB (with or without CALL keyword)."""
+        # Check if procedure exists
+        if sub_name not in self.procedures:
+            print(f"Error: Undefined SUB '{sub_name}' at PC {pc}")
+            self.running = False
+            return False
+
+        proc = self.procedures[sub_name]
+        if proc['type'] != 'SUB':
+            print(f"Error: '{sub_name}' is a FUNCTION, use it in an expression at PC {pc}")
+            self.running = False
+            return False
+
+        return self._call_procedure(sub_name, args_str, pc)
+
+    def _call_procedure(self, name: str, args_str: str, pc: int) -> bool:
+        """Call a SUB or FUNCTION."""
+        proc = self.procedures[name]
+
+        # Parse arguments
+        args = []
+        if args_str.strip():
+            args = [self.eval_expr(a.strip()) for a in _split_args(args_str)]
+            if not self.running:
+                return False
+
+        # Save current state
+        saved_vars = {}
+        for i, param in enumerate(proc['params']):
+            # Strip type suffix from parameter
+            param_clean = re.sub(r'[\$%!#&]$', '', param).upper()
+            if param_clean in self.variables:
+                saved_vars[param_clean] = self.variables[param_clean]
+            # Set parameter to argument value
+            if i < len(args):
+                self.variables[param_clean] = args[i]
+            else:
+                # Default value based on type
+                if param.endswith('$'):
+                    self.variables[param_clean] = ""
+                else:
+                    self.variables[param_clean] = 0
+
+        # Push return info onto stack
+        self.procedure_stack.append({
+            'name': name,
+            'return_pc': self.pc,
+            'saved_vars': saved_vars,
+            'params': proc['params']
+        })
+
+        # Jump to procedure body
+        self.pc = proc['start_pc']
+        return True
+
+    def _return_from_procedure(self, pc: int) -> bool:
+        """Return from a SUB or FUNCTION."""
+        if not self.procedure_stack:
+            return False
+
+        call_info = self.procedure_stack.pop()
+
+        # Restore saved variables
+        for param in call_info['params']:
+            param_clean = re.sub(r'[\$%!#&]$', '', param).upper()
+            if param_clean in call_info['saved_vars']:
+                self.variables[param_clean] = call_info['saved_vars'][param_clean]
+            elif param_clean in self.variables:
+                del self.variables[param_clean]
+
+        # Return to caller
+        self.pc = call_info['return_pc']
+        return True
+
+    def _call_function_procedure(self, name: str, args: tuple) -> Any:
+        """Execute a FUNCTION procedure synchronously and return its value.
+
+        This is used when FUNCTION is called from within an expression.
+        """
+        if name not in self.procedures:
+            raise BasicRuntimeError(f"Undefined FUNCTION '{name}'")
+
+        proc = self.procedures[name]
+        if proc['type'] != 'FUNCTION':
+            raise BasicRuntimeError(f"'{name}' is a SUB, not a FUNCTION")
+
+        # Save current execution state
+        saved_pc = self.pc
+        saved_procedure_stack = list(self.procedure_stack)
+
+        # Save and set parameters
+        saved_vars = {}
+        for i, param in enumerate(proc['params']):
+            param_clean = re.sub(r'[\$%!#&]$', '', param).upper()
+            if param_clean in self.variables:
+                saved_vars[param_clean] = self.variables[param_clean]
+            if i < len(args):
+                self.variables[param_clean] = args[i]
+            else:
+                self.variables[param_clean] = "" if param.endswith('$') else 0
+
+        # Initialize function return variable
+        func_name_clean = re.sub(r'[\$%!#&]$', '', name).upper()
+        if func_name_clean in self.variables:
+            saved_vars[func_name_clean] = self.variables[func_name_clean]
+        self.variables[func_name_clean] = "" if name.endswith('$') else 0
+
+        # Execute function body
+        self.pc = proc['start_pc']
+        max_steps = 10000  # Safety limit
+        steps = 0
+        while self.running and self.pc < len(self.program_lines) and steps < max_steps:
+            _, _, line = self.program_lines[self.pc]
+            line_upper = line.strip().upper()
+
+            # Check for END FUNCTION
+            if line_upper == "END FUNCTION" or line_upper.startswith("END FUNCTION"):
+                break
+
+            # Check for EXIT FUNCTION
+            if line_upper == "EXIT FUNCTION" or line_upper.startswith("EXIT FUNCTION"):
+                break
+
+            self.pc += 1
+            try:
+                self.execute_logical_line(line, self.pc - 1)
+            except BasicRuntimeError:
+                # Re-raise for error handling
+                raise
+            steps += 1
+
+        # Get return value (function name holds the result)
+        result = self.variables.get(func_name_clean, 0)
+
+        # Restore execution state
+        self.pc = saved_pc
+        self.procedure_stack = saved_procedure_stack
+
+        # Restore variables
+        for param in proc['params']:
+            param_clean = re.sub(r'[\$%!#&]$', '', param).upper()
+            if param_clean in saved_vars:
+                self.variables[param_clean] = saved_vars[param_clean]
+            elif param_clean in self.variables:
+                del self.variables[param_clean]
+
+        if func_name_clean in saved_vars:
+            self.variables[func_name_clean] = saved_vars[func_name_clean]
+        elif func_name_clean in self.variables:
+            del self.variables[func_name_clean]
+
+        return result
+
+    def _find_end_of_block(self, start_pc: int, start_kw: str, end_kw: str) -> int:
+        """Find the PC of the END statement for a block."""
+        depth = 1
+        for i in range(start_pc + 1, len(self.program_lines)):
+            line = self.program_lines[i][1].strip().upper()
+            if line.startswith(start_kw + " ") or line == start_kw:
+                depth += 1
+            elif line.startswith(end_kw) or line == end_kw:
+                depth -= 1
+                if depth == 0:
+                    return i
+        return -1
+
+    def _handle_open(self, match, pc: int) -> bool:
+        """Handle OPEN filename FOR mode AS #n."""
+        try:
+            filename = match.group(1).strip().strip('"')
+            mode = match.group(2).upper()
+            file_num = int(match.group(3))
+
+            # Map QBasic modes to Python modes
+            mode_map = {
+                'INPUT': 'r',
+                'OUTPUT': 'w',
+                'APPEND': 'a',
+                'BINARY': 'rb',
+                'RANDOM': 'r+b'
+            }
+
+            py_mode = mode_map.get(mode, 'r')
+
+            # Handle output modes - create file if doesn't exist
+            if mode in ('OUTPUT', 'APPEND'):
+                fh = open(filename, py_mode, encoding='utf-8' if 'b' not in py_mode else None)
+            elif mode == 'INPUT':
+                fh = open(filename, py_mode, encoding='utf-8')
+            else:
+                # Binary/Random - create if doesn't exist
+                try:
+                    fh = open(filename, py_mode)
+                except FileNotFoundError:
+                    fh = open(filename, 'w+b')
+
+            fh.file_path = filename  # Store for LOF
+            self.file_handles[file_num] = fh
+
+            # Update next_file_number
+            if file_num >= self.next_file_number:
+                self.next_file_number = file_num + 1
+
+            return False
+        except Exception as e:
+            print(f"Error in OPEN at PC {pc}: {e}")
+            self.running = False
+            return False
+
+    def _handle_close(self, match, pc: int) -> bool:
+        """Handle CLOSE [#n]."""
+        try:
+            if match.group(1):
+                file_num = int(match.group(1))
+                if file_num in self.file_handles:
+                    self.file_handles[file_num].close()
+                    del self.file_handles[file_num]
+            else:
+                # Close all files
+                for fh in self.file_handles.values():
+                    fh.close()
+                self.file_handles.clear()
+                self.next_file_number = 1
+            return False
+        except Exception as e:
+            print(f"Error in CLOSE at PC {pc}: {e}")
+            return False
+
+    def _handle_input_file(self, match, pc: int) -> bool:
+        """Handle INPUT #n, vars."""
+        try:
+            file_num = int(match.group(1))
+            vars_str = match.group(2)
+
+            if file_num not in self.file_handles:
+                print(f"Error: File #{file_num} not open at PC {pc}")
+                self.running = False
+                return False
+
+            fh = self.file_handles[file_num]
+            var_names = [v.strip() for v in vars_str.split(',')]
+
+            for var_name in var_names:
+                # Read next value from file
+                value = ""
+                in_quotes = False
+                while True:
+                    ch = fh.read(1)
+                    if not ch:
+                        break
+                    if ch == '"':
+                        in_quotes = not in_quotes
+                    elif ch in ',\n' and not in_quotes:
+                        break
+                    else:
+                        value += ch
+
+                # Convert and assign
+                var_upper = var_name.upper()
+                if var_upper.endswith('$'):
+                    self.variables[var_upper] = value.strip().strip('"')
+                else:
+                    try:
+                        if '.' in value:
+                            self.variables[var_upper] = float(value)
+                        else:
+                            self.variables[var_upper] = int(value)
+                    except ValueError:
+                        self.variables[var_upper] = 0
+
+            return False
+        except Exception as e:
+            print(f"Error in INPUT # at PC {pc}: {e}")
+            return False
+
+    def _handle_line_input_file(self, match, pc: int) -> bool:
+        """Handle LINE INPUT #n, var$."""
+        try:
+            file_num = int(match.group(1))
+            var_name = match.group(2).strip().upper()
+
+            if file_num not in self.file_handles:
+                print(f"Error: File #{file_num} not open at PC {pc}")
+                self.running = False
+                return False
+
+            fh = self.file_handles[file_num]
+            line = fh.readline()
+            if line.endswith('\n'):
+                line = line[:-1]
+            self.variables[var_name] = line
+
+            return False
+        except Exception as e:
+            print(f"Error in LINE INPUT # at PC {pc}: {e}")
+            return False
+
+    def _handle_print_file(self, match, pc: int) -> bool:
+        """Handle PRINT #n, expressions."""
+        try:
+            file_num = int(match.group(1))
+            expr_str = match.group(2) or ""
+
+            if file_num not in self.file_handles:
+                print(f"Error: File #{file_num} not open at PC {pc}")
+                self.running = False
+                return False
+
+            fh = self.file_handles[file_num]
+
+            if expr_str.strip():
+                # Evaluate and write expressions
+                parts = _split_args(expr_str)
+                output = ""
+                for part in parts:
+                    part = part.strip()
+                    if part == ';':
+                        continue
+                    elif part == ',':
+                        output += "\t"
+                    else:
+                        val = self.eval_expr(part)
+                        if not self.running:
+                            return False
+                        output += str(val)
+                fh.write(output + "\n")
+            else:
+                fh.write("\n")
+
+            return False
+        except Exception as e:
+            print(f"Error in PRINT # at PC {pc}: {e}")
+            return False
+
+    def _handle_write_file(self, match, pc: int) -> bool:
+        """Handle WRITE #n, expressions (comma-separated with quotes around strings)."""
+        try:
+            file_num = int(match.group(1))
+            expr_str = match.group(2) or ""
+
+            if file_num not in self.file_handles:
+                print(f"Error: File #{file_num} not open at PC {pc}")
+                self.running = False
+                return False
+
+            fh = self.file_handles[file_num]
+
+            if expr_str.strip():
+                parts = _split_args(expr_str)
+                values = []
+                for part in parts:
+                    part = part.strip()
+                    if part in (';', ','):
+                        continue
+                    val = self.eval_expr(part)
+                    if not self.running:
+                        return False
+                    if isinstance(val, str):
+                        values.append(f'"{val}"')
+                    else:
+                        values.append(str(val))
+                fh.write(','.join(values) + "\n")
+            else:
+                fh.write("\n")
+
+            return False
+        except Exception as e:
+            print(f"Error in WRITE # at PC {pc}: {e}")
+            return False
+
     def _assign_variable(self, var_str: str, value: Any, pc: int) -> None:
         """Assign a value to a variable (scalar or array element)."""
         var_str = var_str.strip()
@@ -2665,13 +4349,31 @@ class BasicInterpreter:
         if self.pc >= len(self.program_lines):
             self.running = False
             return False
-        
+
         pc_of_this_line, _, logical_line_content = self.program_lines[self.pc]
         self.pc += 1 # Advance PC for the next line BEFORE executing current one
 
         # Execute the logical line (which might contain multiple statements separated by ':')
         # The return value of execute_logical_line indicates if a GOTO, GOSUB, or DELAY happened.
-        return self.execute_logical_line(logical_line_content, pc_of_this_line)
+        try:
+            return self.execute_logical_line(logical_line_content, pc_of_this_line)
+        except BasicRuntimeError as e:
+            # Handle runtime error with ON ERROR GOTO handler
+            if self.error_handler_label:
+                self.error_resume_pc = pc_of_this_line
+                self.in_error_handler = True
+                # Jump to error handler
+                if self.error_handler_label in self.labels:
+                    self.pc = self.labels[self.error_handler_label]
+                    return True  # PC jumped
+                else:
+                    print(f"Error: Label '{self.error_handler_label}' not found for ON ERROR GOTO")
+                    self.running = False
+                    return False
+            else:
+                print(f"Unhandled runtime error at PC {pc_of_this_line}: {e}")
+                self.running = False
+                return False
 
 
     def _split_statements(self, line_content: str) -> List[str]:
