@@ -2570,10 +2570,23 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
             self._eval_locals_fingerprint = current_fingerprint
         else:
             # Fingerprint same - just update values (keys haven't changed)
+            # Build set of FUNCTION names to avoid overwriting them with variable values
+            # (In BASIC, function name is also the return value variable)
+            func_names = set()
+            for proc_name, proc in self.procedures.items():
+                if proc['type'] == 'FUNCTION':
+                    func_names.add(_basic_to_python_identifier(proc_name))
+                    base_name = proc_name.rstrip('$%!#&')
+                    if base_name != proc_name:
+                        func_names.add(base_name)
+
             for name, value in self.constants.items():
                 eval_locals[_basic_to_python_identifier(name)] = value
             for name, value in self.variables.items():
-                eval_locals[_basic_to_python_identifier(name)] = value
+                py_name = _basic_to_python_identifier(name)
+                # Don't overwrite FUNCTION callables with their return value variable
+                if py_name not in func_names:
+                    eval_locals[py_name] = value
 
         # QBasic treats undefined numeric variables as 0 and undefined string variables as ""
         # Retry evaluation up to 10 times, adding undefined variables as we encounter them
