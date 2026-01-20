@@ -72,7 +72,7 @@ _freefile_re = re.compile(r'\bFREEFILE\b(?!\s*\()', re.IGNORECASE)  # FREEFILE -
 
 # General pattern for NAME(...) or NAME$(...) which could be a function call or array access
 _func_or_array_re = re.compile(
-    r'\b([a-zA-Z_][a-zA-Z0-9_]*\$?)\s*\(([^)]*)\)', # name(args) - args can be empty
+    r'\b([a-zA-Z_][a-zA-Z0-9_]*[\$%!#&]?)\s*\(([^)]*)\)', # name(args) - args can be empty
     re.IGNORECASE
 )
 
@@ -87,13 +87,15 @@ _label_re = re.compile(r"^\s*(\d+|[a-zA-Z_][a-zA-Z0-9_]*:)")
 _label_strip_re = re.compile(r"^\s*(\d+\s+|[a-zA-Z_][a-zA-Z0-9_]*:)\s*")
 _for_re = re.compile(
     r'FOR\s+([a-zA-Z_][a-zA-Z0-9_]*\$?)\s*=\s*(.+?)\s+TO\s+(.+?)(?:\s+STEP\s+(.+))?$', re.IGNORECASE)
-_dim_re = re.compile(r'DIM\s+([a-zA-Z_][a-zA-Z0-9_]*\$?)\s*\(([^)]+)\)(?:\s+AS\s+(\w+))?', re.IGNORECASE)
+_dim_re = re.compile(r'DIM\s+([a-zA-Z_][a-zA-Z0-9_]*[\$%!#&]?)\s*\(([^)]+)\)(?:\s+AS\s+(\w+))?', re.IGNORECASE)
 # DIM var AS type (simple variable with type, no array)
 _dim_as_re = re.compile(r'DIM\s+([a-zA-Z_][a-zA-Z0-9_]*)\s+AS\s+(\w+)', re.IGNORECASE)
+# DIM var (simple scalar variable declaration without AS type or array)
+_dim_scalar_re = re.compile(r'DIM\s+([a-zA-Z_][a-zA-Z0-9_]*[\$%!#&]?)(?:\s*,\s*([a-zA-Z_][a-zA-Z0-9_]*[\$%!#&]?))*$', re.IGNORECASE)
 # Match: var = expr, var$ = expr, arr(i) = expr, p.X = expr, arr(i).X = expr, var# = expr
 _assign_re = re.compile(r'^(?:LET\s+)?([a-zA-Z_][a-zA-Z0-9_]*[\$%!#&]?(?:\s*\([^)]+\))?(?:\.[a-zA-Z_][a-zA-Z0-9_]*)?)\s*=(.*)$', re.IGNORECASE)
 # Pattern to extract array name and indices from LHS like "ARR(1, 2)"
-_assign_lhs_array_re = re.compile(r'([a-zA-Z_][a-zA-Z0-9_]*\$?)\s*\(([^)]+)\)')
+_assign_lhs_array_re = re.compile(r'([a-zA-Z_][a-zA-Z0-9_]*[\$%!#&]?)\s*\(([^)]+)\)')
 
 
 _line_re = re.compile(
@@ -109,7 +111,7 @@ _if_re = re.compile(r"IF\s+(.+?)\s+THEN(.*)", re.IGNORECASE)
 _goto_re = re.compile(r"GOTO\s+([a-zA-Z0-9_]+)", re.IGNORECASE)
 _gosub_re = re.compile(r"GOSUB\s+([a-zA-Z0-9_]+)", re.IGNORECASE)
 _return_re = re.compile(r"RETURN", re.IGNORECASE)
-_screen_re = re.compile(r"SCREEN\s+(\d+)", re.IGNORECASE)
+_screen_re = re.compile(r"SCREEN\s+(.+)", re.IGNORECASE)
 _cls_re = re.compile(r"CLS", re.IGNORECASE)
 _end_re = re.compile(r"END", re.IGNORECASE)
 _randomize_re = re.compile(r"RANDOMIZE(?:\s+(.*))?", re.IGNORECASE)
@@ -192,6 +194,9 @@ _width_re = re.compile(r"WIDTH\s+(\d+)(?:\s*,\s*(\d+))?", re.IGNORECASE)
 # WAIT - Wait for port condition (emulated as no-op)
 _wait_re = re.compile(r"WAIT\s+([^,]+)\s*,\s*([^,]+)(?:\s*,\s*(.+))?", re.IGNORECASE)
 
+# TIMER ON/OFF - Enable/disable timer events (no-op, for compatibility)
+_timer_on_off_re = re.compile(r"TIMER\s+(ON|OFF|STOP)", re.IGNORECASE)
+
 # OUT - Write to I/O port (emulated)
 _out_re = re.compile(r"OUT\s+([^,]+)\s*,\s*(.+)", re.IGNORECASE)
 
@@ -220,16 +225,17 @@ _on_error_re = re.compile(r"ON\s+ERROR\s+GOTO\s+([a-zA-Z0-9_]+)", re.IGNORECASE)
 _resume_re = re.compile(r"RESUME(?:\s+(NEXT|[a-zA-Z0-9_]+))?", re.IGNORECASE)
 
 # DECLARE SUB/FUNCTION - Procedure declaration (ignored, we parse at runtime)
-_declare_re = re.compile(r"DECLARE\s+(SUB|FUNCTION)\s+([a-zA-Z_][a-zA-Z0-9_]*[\$%!#&]?)(?:\s*\(([^)]*)\))?", re.IGNORECASE)
+# Pattern allows array parameters like BCoor() AS ANY or arr() AS INTEGER
+_declare_re = re.compile(r"DECLARE\s+(SUB|FUNCTION)\s+([a-zA-Z_][a-zA-Z0-9_]*[\$%!#&]?)(?:\s*\(((?:[^()]*|\([^()]*\))*)\))?", re.IGNORECASE)
 
-# SUB - Subroutine definition
-_sub_re = re.compile(r"SUB\s+([a-zA-Z_][a-zA-Z0-9_]*)(?:\s*\(([^)]*)\))?(?:\s+STATIC)?", re.IGNORECASE)
+# SUB - Subroutine definition (allows array parameters)
+_sub_re = re.compile(r"SUB\s+([a-zA-Z_][a-zA-Z0-9_]*)(?:\s*\(((?:[^()]*|\([^()]*\))*)\))?(?:\s+STATIC)?", re.IGNORECASE)
 
 # END SUB - End of subroutine
 _end_sub_re = re.compile(r"END\s+SUB", re.IGNORECASE)
 
-# FUNCTION - Function definition
-_function_re = re.compile(r"FUNCTION\s+([a-zA-Z_][a-zA-Z0-9_]*\$?)(?:\s*\(([^)]*)\))?(?:\s+STATIC)?", re.IGNORECASE)
+# FUNCTION - Function definition (allows array parameters and type suffixes like %)
+_function_re = re.compile(r"FUNCTION\s+([a-zA-Z_][a-zA-Z0-9_]*[\$%!#&]?)(?:\s*\(((?:[^()]*|\([^()]*\))*)\))?(?:\s+STATIC)?", re.IGNORECASE)
 
 # END FUNCTION - End of function
 _end_function_re = re.compile(r"END\s+FUNCTION", re.IGNORECASE)
@@ -241,8 +247,8 @@ _exit_function_re = re.compile(r"EXIT\s+FUNCTION", re.IGNORECASE)
 # SHARED - Share variables with main program
 _shared_re = re.compile(r"SHARED\s+(.+)", re.IGNORECASE)
 
-# CALL - Call subroutine
-_call_re = re.compile(r"CALL\s+([a-zA-Z_][a-zA-Z0-9_]*)(?:\s*\(([^)]*)\))?", re.IGNORECASE)
+# CALL - Call subroutine (allows nested parentheses for array args like cities())
+_call_re = re.compile(r"CALL\s+([a-zA-Z_][a-zA-Z0-9_]*)(?:\s*\(((?:[^()]*|\([^()]*\))*)\))?", re.IGNORECASE)
 
 # TYPE - User-defined type
 _type_re = re.compile(r"TYPE\s+([a-zA-Z_][a-zA-Z0-9_]*)", re.IGNORECASE)
@@ -377,7 +383,7 @@ def _replace_func_or_array_access(match: re.Match) -> str:
     name_basic = match.group(1)  # e.g., "MYARRAY", "MYARRAY$", "CHR$", "LEFT$"
     args_str = match.group(2)    # Content between parentheses
 
-    name_base_upper = name_basic.rstrip('$%').upper()
+    name_base_upper = name_basic.rstrip('$%!#&').upper()  # Strip all type suffixes
 
     # Skip FN_ prefixed names (user-defined function calls already converted)
     if name_base_upper.startswith('FN_'):
@@ -1485,7 +1491,8 @@ class BasicInterpreter:
 
         m_screen = _screen_re.fullmatch(statement) # Use fullmatch for commands like SCREEN
         if m_screen:
-            mode = int(m_screen.group(1)) # Already number from regex
+            mode = int(self.eval_expr(m_screen.group(1).strip()))  # Evaluate expression for mode
+            if not self.running: return False
             # QBasic screen modes
             screen_modes = {
                 0: (640, 400),   # Text mode 80x25 (simulated)
@@ -1531,6 +1538,24 @@ class BasicInterpreter:
              self.constants[var_name] = val
              return False
 
+        # --- Multi-variable DIM (e.g., DIM a AS INTEGER, b AS STRING) ---
+        # Check for commas outside parentheses to detect multi-variable declarations
+        if up_stmt.startswith("DIM "):
+            dim_content = statement[4:].strip()  # Remove "DIM "
+            # Check if there are commas outside parentheses
+            paren_depth = 0
+            has_outer_comma = False
+            for char in dim_content:
+                if char == '(':
+                    paren_depth += 1
+                elif char == ')':
+                    paren_depth -= 1
+                elif char == ',' and paren_depth == 0:
+                    has_outer_comma = True
+                    break
+            if has_outer_comma:
+                return self._handle_multi_dim(dim_content, current_pc_num)
+
         # --- DIM var AS type (simple typed variable or user-defined type) ---
         m_dim_as = _dim_as_re.fullmatch(statement)
         if m_dim_as:
@@ -1555,6 +1580,26 @@ class BasicInterpreter:
                     self.variables[var_name] = 0
             return False
 
+        # Handle scalar DIM (no array dimensions, no AS type): DIM var or DIM var, var2, ...
+        m_dim_scalar = _dim_scalar_re.fullmatch(statement)
+        if m_dim_scalar:
+            # Extract all variable names from the match (captures are just the first and last)
+            # Re-parse manually to get all comma-separated variables
+            dim_content = statement[3:].strip()  # Remove "DIM "
+            for var_spec in dim_content.split(','):
+                var_name = var_spec.strip().upper()
+                if var_name:
+                    if var_name in self.constants:
+                        print(f"Error: Cannot DIM constant '{var_name}' at PC {current_pc_num}")
+                        self.running = False
+                        return False
+                    # Initialize with default value based on type suffix
+                    if var_name.endswith('$'):
+                        self.variables[var_name] = ""
+                    else:
+                        self.variables[var_name] = 0
+            return False
+
         m_dim = _dim_re.fullmatch(statement)
         if m_dim:
             var_name_orig, idx_str = m_dim.group(1).strip(), m_dim.group(2).strip()
@@ -1564,9 +1609,22 @@ class BasicInterpreter:
                 print(f"Error: Cannot DIM constant '{var_name}' at PC {current_pc_num}"); self.running = False; return False
 
             try:
-                # DIM A(10) means indices 0-10 (OPTION BASE 0) or 1-10 (OPTION BASE 1).
-                # Size is N+1-option_base.
-                dims = [int(self.eval_expr(idx.strip())) + 1 - self.option_base for idx in idx_str.split(',')]
+                # Parse array dimensions - supports both "DIM A(10)" and "DIM A(0 TO 10)" syntax
+                dims = []
+                for idx_spec in _split_args(idx_str):
+                    idx_spec = idx_spec.strip()
+                    # Check for "lower TO upper" syntax (case-insensitive)
+                    to_match = re.match(r'(.+?)\s+TO\s+(.+)', idx_spec, re.IGNORECASE)
+                    if to_match:
+                        lower_bound = int(self.eval_expr(to_match.group(1).strip()))
+                        upper_bound = int(self.eval_expr(to_match.group(2).strip()))
+                        if not self.running: return False
+                        dims.append(upper_bound - lower_bound + 1)  # Size based on explicit bounds
+                    else:
+                        # Simple "DIM A(10)" means indices 0-10 (or 1-10 with OPTION BASE 1)
+                        upper_bound = int(self.eval_expr(idx_spec))
+                        if not self.running: return False
+                        dims.append(upper_bound + 1 - self.option_base)
                 if not self.running: return False
 
                 # Determine default value based on type
@@ -1582,13 +1640,13 @@ class BasicInterpreter:
                     else:
                         return 0
 
-                if len(dims) == 1:
-                    self.variables[var_name] = [create_default() for _ in range(dims[0])]
-                elif len(dims) == 2:
-                    self.variables[var_name] = [[create_default() for _ in range(dims[1])] for _ in range(dims[0])]
-                # Add more dimensions if needed
-                else:
-                    print(f"Error: Unsupported array dimensions ({len(dims)}) for '{var_name}' at PC {current_pc_num}"); self.running = False
+                # Create N-dimensional array using recursive nested lists
+                def create_nd_array(dimensions, default_factory):
+                    if len(dimensions) == 1:
+                        return [default_factory() for _ in range(dimensions[0])]
+                    return [create_nd_array(dimensions[1:], default_factory) for _ in range(dimensions[0])]
+
+                self.variables[var_name] = create_nd_array(dims, create_default)
             except Exception as e:
                 print(f"Error in DIM statement for '{var_name_orig}': {e} at PC {current_pc_num}"); self.running = False
             return False
@@ -2471,6 +2529,11 @@ class BasicInterpreter:
         if m_wait:
             return False  # Emulated as no-op
 
+        # --- TIMER ON/OFF statement (no-op for compatibility) ---
+        m_timer_on_off = _timer_on_off_re.fullmatch(statement)
+        if m_timer_on_off:
+            return False  # Timer events not implemented, just ignore
+
         # --- OUT statement (port I/O emulated) ---
         m_out = _out_re.fullmatch(statement)
         if m_out:
@@ -2508,7 +2571,9 @@ class BasicInterpreter:
         if m_dim_shared:
             # Parse as regular DIM, just ignore SHARED keyword
             dim_content = m_dim_shared.group(1).strip()
-            return self.execute_logical_line(f"DIM {dim_content}", current_pc_num)
+            # Handle multiple DIM declarations separated by commas
+            # e.g., "DIM SHARED LBan&(x), RBan&(x)" -> handle each array separately
+            return self._handle_multi_dim(dim_content, current_pc_num)
 
         # --- GET (graphics) statement ---
         m_get_gfx = _get_gfx_re.fullmatch(statement)
@@ -3201,13 +3266,23 @@ class BasicInterpreter:
         var_name_upper = var_name.upper()
 
         try:
-            # Parse dimensions (same as DIM)
+            # Parse dimensions - supports both "REDIM A(10)" and "REDIM A(0 TO 10)" syntax
             dims = []
             for dim_expr in _split_args(dims_str):
-                dim_val = self.eval_expr(dim_expr.strip())
-                if not self.running:
-                    return
-                dims.append(int(dim_val) + 1 - self.option_base)  # QBasic uses inclusive upper bound
+                dim_expr = dim_expr.strip()
+                # Check for "lower TO upper" syntax (case-insensitive)
+                to_match = re.match(r'(.+?)\s+TO\s+(.+)', dim_expr, re.IGNORECASE)
+                if to_match:
+                    lower_bound = int(self.eval_expr(to_match.group(1).strip()))
+                    upper_bound = int(self.eval_expr(to_match.group(2).strip()))
+                    if not self.running:
+                        return
+                    dims.append(upper_bound - lower_bound + 1)
+                else:
+                    dim_val = self.eval_expr(dim_expr)
+                    if not self.running:
+                        return
+                    dims.append(int(dim_val) + 1 - self.option_base)  # QBasic uses inclusive upper bound
 
             # Determine default value based on variable type
             default_val = "" if var_name.endswith("$") else 0
@@ -3228,6 +3303,43 @@ class BasicInterpreter:
         except Exception as e:
             print(f"Error in REDIM at PC {pc}: {e}")
             self.running = False
+
+    def _handle_multi_dim(self, dim_content: str, pc: int) -> bool:
+        """Handle DIM statement with multiple declarations.
+
+        Supports:
+        - DIM a, b, c (multiple scalars)
+        - DIM a AS INTEGER, b AS STRING (multiple with types)
+        - DIM a(10), b(20) (multiple arrays)
+        - DIM a(10) AS INTEGER, b(20) AS STRING (multiple arrays with types)
+        """
+        # Split by commas, but respect parentheses for array dimensions
+        declarations = []
+        current = ""
+        paren_depth = 0
+        for char in dim_content:
+            if char == '(':
+                paren_depth += 1
+                current += char
+            elif char == ')':
+                paren_depth -= 1
+                current += char
+            elif char == ',' and paren_depth == 0:
+                if current.strip():
+                    declarations.append(current.strip())
+                current = ""
+            else:
+                current += char
+        if current.strip():
+            declarations.append(current.strip())
+
+        # Process each declaration
+        for decl in declarations:
+            # Execute as individual DIM statement
+            result = self.execute_logical_line(f"DIM {decl}", pc)
+            if not self.running:
+                return False
+        return False
 
     def _do_play(self, mml_expr: str, pc: int) -> None:
         """Execute PLAY command - Music Macro Language.
@@ -3710,14 +3822,63 @@ class BasicInterpreter:
             print(f"Error in PUT at PC {pc}: {e}")
             return False
 
+    def _parse_procedure_params(self, params_str: str) -> List[str]:
+        """Parse procedure parameter string, handling AS TYPE syntax.
+
+        Handles parameters like:
+        - X
+        - X AS INTEGER
+        - arr() AS ANY
+        - arr() AS typename
+
+        Returns list of parameter names (without type info).
+        """
+        if not params_str.strip():
+            return []
+
+        params = []
+        # Split by comma, but be careful with nested parentheses
+        current_param = ""
+        paren_depth = 0
+        for char in params_str:
+            if char == '(':
+                paren_depth += 1
+                current_param += char
+            elif char == ')':
+                paren_depth -= 1
+                current_param += char
+            elif char == ',' and paren_depth == 0:
+                if current_param.strip():
+                    params.append(current_param.strip())
+                current_param = ""
+            else:
+                current_param += char
+        if current_param.strip():
+            params.append(current_param.strip())
+
+        # Extract just the parameter name from each param (strip AS TYPE)
+        result = []
+        for param in params:
+            # Handle "name AS TYPE" or "name() AS TYPE"
+            param_upper = param.upper()
+            as_pos = param_upper.find(' AS ')
+            if as_pos != -1:
+                param_name = param[:as_pos].strip()
+            else:
+                param_name = param.strip()
+            # Keep the name with array indicator () if present
+            result.append(param_name.upper())
+
+        return result
+
     def _preparse_procedures(self) -> None:
         """Pre-parse SUB and FUNCTION definitions during reset.
 
         This allows calling procedures before their definition in the source code.
         """
-        # Patterns for SUB and FUNCTION definitions
-        sub_re = re.compile(r"SUB\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*(?:\((.*?)\))?\s*(STATIC)?", re.IGNORECASE)
-        func_re = re.compile(r"FUNCTION\s+([a-zA-Z_][a-zA-Z0-9_\$%#!&]*)\s*(?:\((.*?)\))?\s*(STATIC)?", re.IGNORECASE)
+        # Patterns for SUB and FUNCTION definitions (supports array params like arr() AS TYPE)
+        sub_re = re.compile(r"SUB\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*(?:\(((?:[^()]*|\([^()]*\))*)\))?\s*(STATIC)?", re.IGNORECASE)
+        func_re = re.compile(r"FUNCTION\s+([a-zA-Z_][a-zA-Z0-9_\$%#!&]*)\s*(?:\(((?:[^()]*|\([^()]*\))*)\))?\s*(STATIC)?", re.IGNORECASE)
         end_sub_re = re.compile(r"END\s+SUB", re.IGNORECASE)
         end_func_re = re.compile(r"END\s+FUNCTION", re.IGNORECASE)
 
@@ -3730,7 +3891,7 @@ class BasicInterpreter:
             if sub_match:
                 sub_name = sub_match.group(1).upper()
                 params_str = sub_match.group(2) or ""
-                params = [p.strip().upper() for p in params_str.split(',') if p.strip()] if params_str.strip() else []
+                params = self._parse_procedure_params(params_str)
                 is_static = bool(sub_match.group(3))
 
                 # Find END SUB
@@ -3762,7 +3923,7 @@ class BasicInterpreter:
             if func_match:
                 func_name = func_match.group(1).upper()
                 params_str = func_match.group(2) or ""
-                params = [p.strip().upper() for p in params_str.split(',') if p.strip()] if params_str.strip() else []
+                params = self._parse_procedure_params(params_str)
                 is_static = bool(func_match.group(3))
 
                 # Find END FUNCTION
@@ -3796,10 +3957,8 @@ class BasicInterpreter:
         sub_name = match.group(1).upper()
         params_str = match.group(2) or ""
 
-        # Parse parameters
-        params = []
-        if params_str.strip():
-            params = [p.strip().upper() for p in params_str.split(',') if p.strip()]
+        # Parse parameters using helper that handles AS TYPE syntax
+        params = self._parse_procedure_params(params_str)
 
         # Find END SUB to determine body range
         end_pc = self._find_end_of_block(pc, "SUB", "END SUB")
@@ -3808,7 +3967,7 @@ class BasicInterpreter:
             self.running = False
             return False
 
-        # Store procedure definition
+        # Store procedure definition (may already exist from pre-parsing)
         self.procedures[sub_name] = {
             'type': 'SUB',
             'params': params,
@@ -3832,10 +3991,8 @@ class BasicInterpreter:
         func_name = match.group(1).upper()
         params_str = match.group(2) or ""
 
-        # Parse parameters
-        params = []
-        if params_str.strip():
-            params = [p.strip().upper() for p in params_str.split(',') if p.strip()]
+        # Parse parameters using helper that handles AS TYPE syntax
+        params = self._parse_procedure_params(params_str)
 
         # Find END FUNCTION to determine body range
         end_pc = self._find_end_of_block(pc, "FUNCTION", "END FUNCTION")
@@ -3844,7 +4001,7 @@ class BasicInterpreter:
             self.running = False
             return False
 
-        # Store procedure definition
+        # Store procedure definition (may already exist from pre-parsing)
         self.procedures[func_name] = {
             'type': 'FUNCTION',
             'params': params,
@@ -3903,36 +4060,73 @@ class BasicInterpreter:
         """Call a SUB or FUNCTION."""
         proc = self.procedures[name]
 
-        # Parse arguments
+        # Parse arguments - handle array references specially
         args = []
+        array_refs = {}  # Maps param index to array name for pass-by-reference
         if args_str.strip():
-            args = [self.eval_expr(a.strip()) for a in _split_args(args_str)]
-            if not self.running:
-                return False
+            split_args = _split_args(args_str)
+            for i, arg in enumerate(split_args):
+                arg = arg.strip()
+                # Check if this is an array reference like "cities()" or "arr%()"
+                array_ref_match = re.match(r'^([a-zA-Z_][a-zA-Z0-9_]*[\$%!#&]?)\s*\(\s*\)$', arg)
+                if array_ref_match:
+                    # This is an array being passed by reference
+                    array_name = array_ref_match.group(1).upper()
+                    # Normalize array name (remove type suffix for lookup)
+                    array_name_base = re.sub(r'[\$%!#&]$', '', array_name)
+                    array_refs[i] = array_name_base
+                    args.append(None)  # Placeholder, will handle specially below
+                else:
+                    args.append(self.eval_expr(arg))
+                    if not self.running:
+                        return False
 
         # Save current state
         saved_vars = {}
+        saved_arrays = {}  # For array references
         for i, param in enumerate(proc['params']):
-            # Strip type suffix from parameter
-            param_clean = re.sub(r'[\$%!#&]$', '', param).upper()
-            if param_clean in self.variables:
-                saved_vars[param_clean] = self.variables[param_clean]
-            # Set parameter to argument value
-            if i < len(args):
-                self.variables[param_clean] = args[i]
+            # Check if parameter is an array parameter (ends with "()")
+            is_array_param = param.endswith('()')
+            if is_array_param:
+                param_clean = re.sub(r'\(\)$', '', param)
+                param_clean = re.sub(r'[\$%!#&]$', '', param_clean).upper()
             else:
-                # Default value based on type
-                if param.endswith('$'):
-                    self.variables[param_clean] = ""
+                # Strip type suffix from parameter
+                param_clean = re.sub(r'[\$%!#&]$', '', param).upper()
+
+            if is_array_param and i in array_refs:
+                # Array parameter: create alias to the passed array (stored in variables as list)
+                source_array = array_refs[i]
+                # Save current state of param array if it exists
+                if param_clean in self.variables:
+                    saved_arrays[param_clean] = self.variables[param_clean]
+                # Create reference to source array (Python lists are passed by reference)
+                if source_array in self.variables:
+                    self.variables[param_clean] = self.variables[source_array]
                 else:
-                    self.variables[param_clean] = 0
+                    # Array doesn't exist, create empty one
+                    self.variables[param_clean] = [0] * 11  # Default 0-10 dimensions
+            else:
+                if param_clean in self.variables:
+                    saved_vars[param_clean] = self.variables[param_clean]
+                # Set parameter to argument value
+                if i < len(args):
+                    self.variables[param_clean] = args[i]
+                else:
+                    # Default value based on type
+                    if param.endswith('$'):
+                        self.variables[param_clean] = ""
+                    else:
+                        self.variables[param_clean] = 0
 
         # Push return info onto stack
         self.procedure_stack.append({
             'name': name,
             'return_pc': self.pc,
             'saved_vars': saved_vars,
-            'params': proc['params']
+            'saved_arrays': saved_arrays,
+            'params': proc['params'],
+            'array_refs': array_refs
         })
 
         # Jump to procedure body
@@ -3947,12 +4141,24 @@ class BasicInterpreter:
         call_info = self.procedure_stack.pop()
 
         # Restore saved variables
-        for param in call_info['params']:
-            param_clean = re.sub(r'[\$%!#&]$', '', param).upper()
-            if param_clean in call_info['saved_vars']:
-                self.variables[param_clean] = call_info['saved_vars'][param_clean]
-            elif param_clean in self.variables:
-                del self.variables[param_clean]
+        for i, param in enumerate(call_info['params']):
+            is_array_param = param.endswith('()')
+            if is_array_param:
+                param_clean = re.sub(r'\(\)$', '', param)
+                param_clean = re.sub(r'[\$%!#&]$', '', param_clean).upper()
+                # Restore saved array state if any
+                saved_arrays = call_info.get('saved_arrays', {})
+                if param_clean in saved_arrays:
+                    self.variables[param_clean] = saved_arrays[param_clean]
+                elif param_clean in self.variables and i not in call_info.get('array_refs', {}):
+                    # Only delete if it wasn't an alias
+                    del self.variables[param_clean]
+            else:
+                param_clean = re.sub(r'[\$%!#&]$', '', param).upper()
+                if param_clean in call_info['saved_vars']:
+                    self.variables[param_clean] = call_info['saved_vars'][param_clean]
+                elif param_clean in self.variables:
+                    del self.variables[param_clean]
 
         # Return to caller
         self.pc = call_info['return_pc']

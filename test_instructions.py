@@ -2127,6 +2127,218 @@ def test_input_dollar_zero():
     print("  INPUT$ zero: PASSED")
 
 # ============================================================
+# CLNG, CSNG, CDBL TESTS
+# ============================================================
+
+def test_clng():
+    """Test CLNG converts to long integer."""
+    print("Testing CLNG...")
+    interp, _ = run_program([
+        'X = CLNG(3.7)',
+        'Y = CLNG(-2.3)'
+    ])
+    assert interp.variables.get('X') == 4, f"Expected 4, got {interp.variables.get('X')}"
+    assert interp.variables.get('Y') == -2, f"Expected -2, got {interp.variables.get('Y')}"
+    print("  CLNG: PASSED")
+
+def test_csng():
+    """Test CSNG converts to single precision."""
+    print("Testing CSNG...")
+    interp, _ = run_program([
+        'X = CSNG(42)',
+        'Y = CSNG("3.14")'
+    ])
+    assert interp.variables.get('X') == 42.0, f"Expected 42.0, got {interp.variables.get('X')}"
+    assert abs(interp.variables.get('Y') - 3.14) < 0.001, f"Expected 3.14, got {interp.variables.get('Y')}"
+    print("  CSNG: PASSED")
+
+def test_cdbl():
+    """Test CDBL converts to double precision."""
+    print("Testing CDBL...")
+    interp, _ = run_program([
+        'X = CDBL(100)',
+        'Y = CDBL(3.14159265)'
+    ])
+    assert interp.variables.get('X') == 100.0, f"Expected 100.0, got {interp.variables.get('X')}"
+    assert abs(interp.variables.get('Y') - 3.14159265) < 0.0000001, f"Expected 3.14159265, got {interp.variables.get('Y')}"
+    print("  CDBL: PASSED")
+
+# ============================================================
+# COMMAND$ TESTS
+# ============================================================
+
+def test_command_basic():
+    """Test COMMAND$ returns command line arguments."""
+    print("Testing COMMAND$ basic...")
+    interp = setup()
+    interp.command_line_args = "test arguments"
+    interp.reset([
+        'X$ = COMMAND$'
+    ])
+    max_steps = 100
+    while interp.running and max_steps > 0:
+        interp.step()
+        max_steps -= 1
+    assert interp.variables.get('X$') == "test arguments", f"Expected 'test arguments', got {interp.variables.get('X$')}"
+    print("  COMMAND$ basic: PASSED")
+
+def test_command_empty():
+    """Test COMMAND$ returns empty when no arguments."""
+    print("Testing COMMAND$ empty...")
+    interp = setup()
+    interp.command_line_args = ""
+    interp.reset([
+        'X$ = COMMAND$'
+    ])
+    max_steps = 100
+    while interp.running and max_steps > 0:
+        interp.step()
+        max_steps -= 1
+    assert interp.variables.get('X$') == "", f"Expected empty, got {interp.variables.get('X$')}"
+    print("  COMMAND$ empty: PASSED")
+
+# ============================================================
+# STOP TESTS
+# ============================================================
+
+def test_stop_basic():
+    """Test STOP halts execution."""
+    print("Testing STOP basic...")
+    interp, _ = run_program([
+        'X = 1',
+        'STOP',
+        'X = 2'
+    ])
+    assert interp.variables.get('X') == 1, f"Expected 1, got {interp.variables.get('X')}"
+    assert interp.stopped == True, "Expected stopped=True"
+    assert interp.running == False, "Expected running=False"
+    print("  STOP basic: PASSED")
+
+def test_stop_in_loop():
+    """Test STOP in loop."""
+    print("Testing STOP in loop...")
+    interp, _ = run_program([
+        'FOR I = 1 TO 10',
+        '  IF I = 5 THEN STOP',
+        'NEXT I'
+    ])
+    assert interp.variables.get('I') == 5, f"Expected 5, got {interp.variables.get('I')}"
+    assert interp.stopped == True, "Expected stopped=True"
+    print("  STOP in loop: PASSED")
+
+# ============================================================
+# PLAY TESTS (Music Macro Language)
+# ============================================================
+
+def test_play_executes():
+    """Test PLAY command executes without error."""
+    print("Testing PLAY executes...")
+    interp = setup()
+    interp.reset([
+        'PLAY "C"'  # Simple single note
+    ])
+    # Just verify it doesn't crash
+    max_steps = 100
+    while interp.running and max_steps > 0:
+        interp.step()
+        max_steps -= 1
+    print("  PLAY executes: PASSED")
+
+def test_play_with_expression():
+    """Test PLAY with string expression."""
+    print("Testing PLAY with expression...")
+    interp = setup()
+    interp.reset([
+        'note$ = "C"',
+        'PLAY note$'
+    ])
+    max_steps = 100
+    while interp.running and max_steps > 0:
+        interp.step()
+        max_steps -= 1
+    print("  PLAY with expression: PASSED")
+
+def test_play_mml_commands():
+    """Test PLAY with MML commands."""
+    print("Testing PLAY MML commands...")
+    interp = setup()
+    interp.reset([
+        'PLAY "O4L4T120"'  # Octave, length, tempo - no actual notes
+    ])
+    max_steps = 100
+    while interp.running and max_steps > 0:
+        interp.step()
+        max_steps -= 1
+    print("  PLAY MML commands: PASSED")
+
+# ============================================================
+# DRAW TESTS (Turtle Graphics)
+# ============================================================
+
+def test_draw_basic():
+    """Test DRAW basic movement."""
+    print("Testing DRAW basic...")
+    interp = setup()
+    interp.reset([
+        'SCREEN 13',
+        'DRAW "R10"'  # Move right 10 pixels
+    ])
+    max_steps = 100
+    while interp.running and max_steps > 0:
+        interp.step()
+        max_steps -= 1
+    # Check that draw position changed
+    assert interp.draw_x > 160, f"Expected draw_x > 160, got {interp.draw_x}"
+    print("  DRAW basic: PASSED")
+
+def test_draw_multiple():
+    """Test DRAW with multiple commands."""
+    print("Testing DRAW multiple...")
+    interp = setup()
+    interp.reset([
+        'SCREEN 13',
+        'DRAW "R10D10L10U10"'  # Square
+    ])
+    max_steps = 100
+    while interp.running and max_steps > 0:
+        interp.step()
+        max_steps -= 1
+    # Should return near starting position
+    assert abs(interp.draw_x - 160) < 2, f"Expected draw_x near 160, got {interp.draw_x}"
+    assert abs(interp.draw_y - 100) < 2, f"Expected draw_y near 100, got {interp.draw_y}"
+    print("  DRAW multiple: PASSED")
+
+def test_draw_blank_move():
+    """Test DRAW blank move (B prefix)."""
+    print("Testing DRAW blank move...")
+    interp = setup()
+    interp.reset([
+        'SCREEN 13',
+        'DRAW "BR20"'  # Move right without drawing
+    ])
+    max_steps = 100
+    while interp.running and max_steps > 0:
+        interp.step()
+        max_steps -= 1
+    # Position should have changed
+    assert interp.draw_x > 160, f"Expected draw_x > 160, got {interp.draw_x}"
+    print("  DRAW blank move: PASSED")
+
+def test_draw_color():
+    """Test DRAW color command."""
+    print("Testing DRAW color...")
+    interp = setup()
+    interp.reset([
+        'SCREEN 13',
+        'DRAW "C4R10"'  # Set color to red, move right
+    ])
+    max_steps = 100
+    while interp.running and max_steps > 0:
+        interp.step()
+        max_steps -= 1
+    print("  DRAW color: PASSED")
+
+# ============================================================
 # RUN ALL TESTS
 # ============================================================
 
@@ -2384,6 +2596,30 @@ def run_all_tests():
         test_input_dollar_basic,
         test_input_dollar_empty,
         test_input_dollar_zero,
+
+        # CLNG, CSNG, CDBL
+        test_clng,
+        test_csng,
+        test_cdbl,
+
+        # COMMAND$
+        test_command_basic,
+        test_command_empty,
+
+        # STOP
+        test_stop_basic,
+        test_stop_in_loop,
+
+        # PLAY
+        test_play_executes,
+        test_play_with_expression,
+        test_play_mml_commands,
+
+        # DRAW
+        test_draw_basic,
+        test_draw_multiple,
+        test_draw_blank_move,
+        test_draw_color,
     ]
 
     passed = 0

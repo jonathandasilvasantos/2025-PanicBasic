@@ -180,6 +180,14 @@ drawPlayer:
 END                        ' Terminates program execution
 ```
 
+### STOP
+
+```basic
+STOP                       ' Break execution (for debugging)
+' Sets stopped=True, running=False
+' Unlike END, STOP is intended for debugging purposes
+```
+
 ### DATA-READ-RESTORE
 
 ```basic
@@ -400,6 +408,32 @@ PAINT (x, y), fillColor, borderColor
 PAINT (100, 100), 4, 15            ' Fill with red, stop at white border
 ```
 
+### DRAW (Turtle Graphics)
+
+```basic
+' Draw using turtle graphics commands
+DRAW "R100"                        ' Move right 100 pixels
+DRAW "D50L100U50"                  ' Draw a rectangle
+
+' DRAW Commands:
+' U[n]: Up n pixels
+' D[n]: Down n pixels
+' L[n]: Left n pixels
+' R[n]: Right n pixels
+' E[n]: Diagonal up-right
+' F[n]: Diagonal down-right
+' G[n]: Diagonal down-left
+' H[n]: Diagonal up-left
+' M[+/-]x,y: Move to position (+ or - for relative)
+' A[n]: Set angle (0-3, n*90 degrees)
+' TA[n]: Turn angle in degrees
+' C[n]: Set color (0-15)
+' B: Prefix - move without drawing
+' N: Prefix - return to start after command
+' S[n]: Scale factor (default 4, n/4 multiplier)
+' P fill,border: Paint fill at current position
+```
+
 ### LOCATE
 
 ```basic
@@ -428,6 +462,9 @@ PRINT                      ' Print blank line
 | `INT(x)` | Floor (round down) | `INT(3.7)` returns `3` |
 | `FIX(x)` | Truncate towards zero | `FIX(-3.7)` returns `-3` |
 | `CINT(x)` | Round to nearest integer | `CINT(3.6)` returns `4` |
+| `CLNG(x)` | Round to long integer | `CLNG(3.7)` returns `4` |
+| `CSNG(x)` | Convert to single precision | `CSNG(42)` returns `42.0` |
+| `CDBL(x)` | Convert to double precision | `CDBL(3.14)` returns `3.14` |
 | `SGN(x)` | Sign (-1, 0, or 1) | `SGN(-5)` returns `-1` |
 | `SQR(x)` | Square root | `SQR(16)` returns `4` |
 | `LOG(x)` | Natural logarithm | `LOG(2.718)` returns `1` |
@@ -472,6 +509,7 @@ PRINT                      ' Print blank line
 | `TIME$` | Current time (HH:MM:SS) | `t$ = TIME$` |
 | `POINT(x, y)` | Get pixel color at position | `c = POINT(100, 50)` |
 | `ENVIRON$(name$)` | Get environment variable | `p$ = ENVIRON$("PATH")` |
+| `COMMAND$` | Get command line arguments | `args$ = COMMAND$` |
 
 ### Cursor/Screen Functions
 
@@ -509,6 +547,27 @@ SOUND 440, 18              ' Play 440 Hz (A4 note) for ~1 second
 SOUND 880, 9               ' Play 880 Hz (A5 note) for ~0.5 seconds
 ' Duration is in clock ticks (18.2 ticks per second in QBasic)
 ' Frequency range: 37-32767 Hz
+```
+
+### PLAY
+
+```basic
+' Play music using Music Macro Language (MML)
+PLAY "CDEFGAB"             ' Play C major scale
+PLAY "O4L4CDEFGAB"         ' Set octave 4, quarter notes, play scale
+PLAY "T120O4L8CDEC"        ' Tempo 120, octave 4, eighth notes
+
+' MML Commands:
+' A-G: Notes (add # or + for sharp, - for flat)
+' O: Set octave (0-6, default 4)
+' L: Set default note length (1=whole, 4=quarter, 8=eighth, etc.)
+' T: Set tempo (32-255 quarter notes per minute, default 120)
+' P/R: Pause/Rest
+' >: Increase octave
+' <: Decrease octave
+' MN: Music Normal (7/8 note length)
+' ML: Music Legato (full note length)
+' MS: Music Staccato (3/4 note length)
 ```
 
 ---
