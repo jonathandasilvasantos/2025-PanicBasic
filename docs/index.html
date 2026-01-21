@@ -835,12 +835,12 @@
 
                 <div class="game-card">
                     <div class="game-screenshot">
-                        <img src="images/iron_slug.png" alt="Iron Slug">
+                        <img src="images/iron_slug.png?v=2" alt="Iron Slug">
                     </div>
                     <div class="game-info">
                         <span class="game-badge">Featured</span>
                         <h3>IRON SLUG</h3>
-                        <p>A Metal Slug tribute run-and-gun action game! Horizontal scrolling, multiple enemy types, platform jumping, POW rescues, multiple weapons, and epic boss battles across 5 zones.</p>
+                        <p>A Metal Slug tribute run-and-gun action game! Arrow keys to move and aim, A to shoot (with diagonal aiming!), S to jump. Battle soldiers, tanks, helicopters, turrets and jetpack enemies across 5 zones with multiple weapons and epic boss fights.</p>
                         <div class="game-command">python main.py --run examples/iron_slug.bas</div>
                     </div>
                 </div>
@@ -997,6 +997,35 @@ ballY = <span class="code-number">100</span>
                         <li><code>SLEEP</code> Blocking wait</li>
                     </ul>
                 </div>
+                <div class="command-category">
+                    <h3>File I/O</h3>
+                    <ul>
+                        <li><code>OPEN/CLOSE</code> File access</li>
+                        <li><code>BSAVE/BLOAD</code> Binary files</li>
+                        <li><code>GET/PUT</code> Random access</li>
+                        <li><code>MKI$/CVI</code> Binary convert</li>
+                        <li><code>MKSMBF$</code> MBF format</li>
+                    </ul>
+                </div>
+                <div class="command-category">
+                    <h3>Error Handling</h3>
+                    <ul>
+                        <li><code>ON ERROR</code> Set handler</li>
+                        <li><code>RESUME</code> Continue</li>
+                        <li><code>ERL/ERR</code> Error info</li>
+                        <li><code>ERROR</code> Trigger error</li>
+                    </ul>
+                </div>
+                <div class="command-category">
+                    <h3>Advanced</h3>
+                    <ul>
+                        <li><code>PMAP</code> Coord mapping</li>
+                        <li><code>WINDOW</code> Logical coords</li>
+                        <li><code>VIEW</code> Viewport</li>
+                        <li><code>DEF SEG</code> Memory segment</li>
+                        <li><code>PEEK/POKE</code> Memory access</li>
+                    </ul>
+                </div>
             </div>
         </div>
     </section>
@@ -1020,7 +1049,7 @@ ballY = <span class="code-number">100</span>
                 </div>
             </div>
             <div class="footer-bottom">
-                <p>&copy; 2025 Jonathan da Silva Santos. Released under <a href="https://github.com/zerojnt/pasic/blob/main/LICENSE">MIT License</a>.</p>
+                <p>&copy; 2025-2026 Jonathan da Silva Santos. Released under <a href="https://github.com/zerojnt/pasic/blob/main/LICENSE">MIT License</a>.</p>
                 <div class="ai-credits">
                     <span>Built with</span>
                     <a href="https://claude.ai" target="_blank">Claude Code</a>
