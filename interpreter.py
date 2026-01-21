@@ -541,7 +541,9 @@ _basic_function_names = {
     # Music function (as callable)
     'PLAY',
     # Error handling functions
-    'ERL', 'ERR'
+    'ERL', 'ERR',
+    # Printer functions
+    'LPOS'
 }
 
 # --- Expression Conversion Logic ---
@@ -1116,6 +1118,8 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
             # Error handling functions
             "ERL": self._basic_erl,  # Get error line number
             "ERR": self._basic_err,  # Get error code
+            # Printer functions (emulated)
+            "LPOS": self._basic_lpos,  # Printer head position
         }
 
         # Build command dispatch table for O(1) keyword lookup
@@ -2042,6 +2046,14 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
         """ERR - Returns the error code of the last error.
         Returns 0 if no error has occurred."""
         return self.error_code
+
+    def _basic_lpos(self, printer_num: int = 0) -> int:
+        """LPOS(n) - Returns the current horizontal position of the printer head.
+        In QBasic, n specifies the printer number (0 for LPT1).
+        Since we don't have actual printer support, this returns 1 (start of line)."""
+        # LPOS returns 1-based column position
+        # Return 1 to indicate start of line (emulated)
+        return 1
 
     def _init_joysticks(self) -> None:
         """Initialize joystick support."""

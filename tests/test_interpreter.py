@@ -1729,6 +1729,31 @@ class TestERLandERRFunctions(unittest.TestCase):
         self.assertEqual(self.interp.variables.get("ERRCODE"), 11)
 
 
+class TestLPOSFunction(unittest.TestCase):
+    """Test LPOS printer function (emulated)."""
+
+    def setUp(self):
+        """Create interpreter instance for testing."""
+        _expr_cache.clear()
+        _compiled_expr_cache.clear()
+        _identifier_cache.clear()
+        self.font = pygame.font.Font(None, 16)
+        self.interp = BasicInterpreter(self.font, 800, 600)
+
+    def test_lpos_returns_one(self):
+        """Test LPOS returns 1 (emulated printer at start of line)."""
+        self.interp.reset([
+            'pos0 = LPOS(0)',
+            'pos1 = LPOS(1)'
+        ])
+        while self.interp.running and self.interp.pc < len(self.interp.program_lines):
+            self.interp.step()
+
+        # LPOS always returns 1 (emulated)
+        self.assertEqual(self.interp.variables.get("POS0"), 1)
+        self.assertEqual(self.interp.variables.get("POS1"), 1)
+
+
 class TestClearStatement(unittest.TestCase):
     """Test CLEAR statement."""
 
