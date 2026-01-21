@@ -880,12 +880,16 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
         self.constants: Dict[str, Any] = {}
         # Eval locals optimization - track state to avoid unnecessary rebuilds
         self._eval_locals: Dict[str, Any] = {}
-        self._eval_locals_fingerprint: Optional[tuple] = None  # (var_keys, const_keys, fn_keys, proc_keys)
+        # Fingerprint using counts for fast comparison (avoids creating frozensets)
+        # Format: (var_count, const_count, user_func_count, proc_func_count)
+        self._eval_locals_fingerprint: Optional[tuple] = None
         # Pre-computed Python identifier names to avoid repeated conversions
         # Maps: basic_name -> python_name (e.g., "Score%" -> "SCORE_INT")
         self._var_py_names: Dict[str, str] = {}  # For variables
         self._const_py_names: Dict[str, str] = {}  # For constants
         self._func_py_names: set = set()  # Set of Python names that are FUNCTION procedures
+        # Cached count of FUNCTION procedures (avoid iterating procedures dict)
+        self._proc_func_count: int = 0
         self.loop_stack: List[Dict[str, Any]] = []
         self.for_stack: List[Dict[str, Any]] = []
         self.gosub_stack: List[int] = []
@@ -2699,6 +2703,7 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
         # Reset procedures (SUB/FUNCTION definitions)
         self.procedures.clear()
         self.procedure_stack.clear()
+        self._proc_func_count = 0  # Reset FUNCTION count for fingerprint
         # Reset DRAW turtle graphics state
         self.draw_x = self.screen_width / 2
         self.draw_y = self.screen_height / 2
@@ -3143,12 +3148,13 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
                 return 0
 
         # Prepare environment for eval - use fingerprint to avoid unnecessary rebuilds
-        # Compute current fingerprint based on dict keys (cheap operation)
+        # Compute current fingerprint based on dict COUNTS (fast integer comparison)
+        # This avoids creating frozensets on every eval_expr call
         current_fingerprint = (
-            frozenset(self.variables.keys()),
-            frozenset(self.constants.keys()),
-            frozenset(self.user_functions.keys()),
-            frozenset(k for k, v in self.procedures.items() if v['type'] == 'FUNCTION')
+            len(self.variables),
+            len(self.constants),
+            len(self.user_functions),
+            self._proc_func_count
         )
 
         eval_locals = self._eval_locals
@@ -6212,6 +6218,7 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
                         'end_pc': end_pc,    # END FUNCTION line
                         'is_static': is_static
                     }
+                    self._proc_func_count += 1  # Track FUNCTION count for fingerprint
                 pc = end_pc + 1
                 continue
 
@@ -6267,6 +6274,8 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
             return False
 
         # Store procedure definition (may already exist from pre-parsing)
+        # Check if already exists to avoid double-counting
+        was_new = func_name not in self.procedures
         self.procedures[func_name] = {
             'type': 'FUNCTION',
             'params': params,
@@ -6274,6 +6283,8 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
             'end_pc': end_pc,
             'is_static': 'STATIC' in (match.group(0) or '').upper()
         }
+        if was_new:
+            self._proc_func_count += 1  # Track FUNCTION count for fingerprint
 
         # Skip past the FUNCTION body during normal execution
         self.pc = end_pc + 1

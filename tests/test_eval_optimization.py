@@ -201,6 +201,53 @@ class TestPerformanceImprovement:
         assert interp._var_py_names.get('V&') == 'V_LNG'
 
 
+class TestFingerprintOptimization:
+    """Test the count-based fingerprint optimization."""
+
+    def test_fingerprint_uses_counts(self):
+        """Test that fingerprint is based on counts, not frozensets."""
+        interp = setup()
+        interp.reset([
+            'X = 10',
+            'Y = X + 1'  # Forces eval_expr
+        ])
+        while interp.running and interp.pc < len(interp.program_lines):
+            interp.step()
+
+        # Check fingerprint is a tuple of integers
+        fp = interp._eval_locals_fingerprint
+        assert fp is not None
+        assert isinstance(fp, tuple)
+        assert len(fp) == 4
+        assert all(isinstance(x, int) for x in fp)
+
+    def test_proc_func_count_tracked(self):
+        """Test that _proc_func_count tracks FUNCTION procedures."""
+        interp = setup()
+        interp.reset([
+            'DECLARE FUNCTION Add%(a%, b%)',
+            'X% = Add%(1, 2)',
+            'END',
+            'FUNCTION Add%(a%, b%)',
+            'Add% = a% + b%',
+            'END FUNCTION'
+        ])
+        initial_count = interp._proc_func_count
+
+        while interp.running and interp.pc < len(interp.program_lines):
+            interp.step()
+
+        # FUNCTION should have been counted during pre-parsing
+        assert interp._proc_func_count >= 1
+
+    def test_proc_func_count_reset(self):
+        """Test that _proc_func_count resets with program reset."""
+        interp = setup()
+        interp._proc_func_count = 5  # Set non-zero
+        interp.reset(['X = 1'])
+        assert interp._proc_func_count == 0
+
+
 class TestSpriteCaching:
     """Test the sprite render caching optimization."""
 

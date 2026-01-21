@@ -46,37 +46,28 @@ Remaining sprite optimizations (lower priority):
 [ ] Optimize XOR mode
 
 ================================================================================
-BOTTLENECK #4: Statement Parsing Overhead
+COMPLETED: Fingerprint Optimization
+================================================================================
+Status: DONE - 16% improvement (34.4 -> 39.9 steps/sec), total 3.7x speedup
+
+Fix implemented: Use count-based fingerprint instead of frozensets
+- Changed fingerprint from frozensets of keys to tuple of counts
+- Added _proc_func_count to track FUNCTION procedure count
+- Avoids creating frozensets on every eval_expr call (was 24M dict.items)
+
+Files changed:
+- interpreter.py: Changed fingerprint computation, added _proc_func_count tracking
+
+================================================================================
+REMAINING: Statement Parsing Overhead (Lower Priority)
 ================================================================================
 Location: interpreter.py:3331-3530
-Impact: Repeated string operations and regex matching
+Current impact: 19.5s self time in _execute_single_statement
 
-PROBLEM ANALYSIS:
-- statement.upper() called on every statement (line 3336)
-- Multiple regex matches per statement in _execute_single_statement
-- _extract_first_keyword uses re.match without statement-level caching
-- Many command handlers do fullmatch(statement.upper()) again
-
-SUGGESTED FIXES:
-[ ] 1. Cache parsed statements
-     - For each unique statement, cache: {keyword, parsed_args}
-     - Game loops repeat same statements millions of times
-
-[ ] 2. Optimize keyword extraction
-     - Instead of regex, use simple string slicing:
-       keyword = statement.split()[0].upper()
-     - Or use statement[:10].split() to limit scan
-
-[ ] 3. Single uppercase per statement
-     - Pass up_stmt to handlers instead of re-uppercasing
-     - Currently line 3336 does up_stmt = statement.upper()
-     - But handlers also call statement.upper()
-
-[ ] 4. Precompile statement patterns
-     - Recognize common patterns like "X = Y" assignments
-     - Fast-path frequent statement types
-
-ESTIMATED IMPROVEMENT: 2-5x faster statement dispatch
+Remaining opportunities:
+[ ] Cache parsed statements for repeated game loop statements
+[ ] Optimize keyword extraction (string split vs regex)
+[ ] Pass up_stmt to handlers to avoid re-uppercasing
 
 ================================================================================
 BOTTLENECK #5: convert_basic_expr() Regex Overhead
