@@ -881,6 +881,11 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
         # Eval locals optimization - track state to avoid unnecessary rebuilds
         self._eval_locals: Dict[str, Any] = {}
         self._eval_locals_fingerprint: Optional[tuple] = None  # (var_keys, const_keys, fn_keys, proc_keys)
+        # Pre-computed Python identifier names to avoid repeated conversions
+        # Maps: basic_name -> python_name (e.g., "Score%" -> "SCORE_INT")
+        self._var_py_names: Dict[str, str] = {}  # For variables
+        self._const_py_names: Dict[str, str] = {}  # For constants
+        self._func_py_names: set = set()  # Set of Python names that are FUNCTION procedures
         self.loop_stack: List[Dict[str, Any]] = []
         self.for_stack: List[Dict[str, Any]] = []
         self.gosub_stack: List[int] = []
@@ -2651,6 +2656,10 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
         # Reset eval locals optimization state
         self._eval_locals.clear()
         self._eval_locals_fingerprint = None
+        # Reset pre-computed Python name caches
+        self._var_py_names.clear()
+        self._const_py_names.clear()
+        self._func_py_names.clear()
         self.if_level = 0
         self.if_skip_level = -1
         self.if_executed.clear()
@@ -3141,11 +3150,21 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
         if self._eval_locals_fingerprint != current_fingerprint:
             eval_locals.clear()
 
+            # Rebuild pre-computed Python name mappings
+            self._const_py_names.clear()
+            self._var_py_names.clear()
+            self._func_py_names.clear()
+
             # Map constants and variables using their Python-mangled names
+            # Pre-compute and cache the name mappings
             for name, value in self.constants.items():
-                eval_locals[_basic_to_python_identifier(name)] = value
+                py_name = _basic_to_python_identifier(name)
+                self._const_py_names[name] = py_name
+                eval_locals[py_name] = value
             for name, value in self.variables.items():
-                eval_locals[_basic_to_python_identifier(name)] = value
+                py_name = _basic_to_python_identifier(name)
+                self._var_py_names[name] = py_name
+                eval_locals[py_name] = value
 
             # Add user-defined FN functions to eval locals
             for fn_name in self.user_functions:
@@ -3155,36 +3174,33 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
                     return lambda *args: self._call_user_function(name, list(args))
                 eval_locals[fn_key] = make_fn_caller(fn_name)
 
-            # Add FUNCTION procedures to eval locals
+            # Add FUNCTION procedures to eval locals and track their Python names
             for proc_name, proc in self.procedures.items():
                 if proc['type'] == 'FUNCTION':
                     py_name = _basic_to_python_identifier(proc_name)
+                    self._func_py_names.add(py_name)
                     def make_proc_caller(name):
                         return lambda *args: self._call_function_procedure(name, args)
                     eval_locals[py_name] = make_proc_caller(proc_name)
                     base_name = proc_name.rstrip('$%!#&')
                     if base_name != proc_name:
+                        self._func_py_names.add(base_name)
                         eval_locals[base_name] = make_proc_caller(proc_name)
 
             self._eval_locals_fingerprint = current_fingerprint
         else:
-            # Fingerprint same - just update values (keys haven't changed)
-            # Build set of FUNCTION names to avoid overwriting them with variable values
-            # (In BASIC, function name is also the return value variable)
-            func_names = set()
-            for proc_name, proc in self.procedures.items():
-                if proc['type'] == 'FUNCTION':
-                    func_names.add(_basic_to_python_identifier(proc_name))
-                    base_name = proc_name.rstrip('$%!#&')
-                    if base_name != proc_name:
-                        func_names.add(base_name)
+            # Fingerprint same - just update values using pre-computed Python names
+            # This is the HOT PATH - avoid calling _basic_to_python_identifier()
 
+            # Update constant values (constants rarely change, but be consistent)
             for name, value in self.constants.items():
-                eval_locals[_basic_to_python_identifier(name)] = value
+                eval_locals[self._const_py_names[name]] = value
+
+            # Update variable values, but don't overwrite FUNCTION callables
             for name, value in self.variables.items():
-                py_name = _basic_to_python_identifier(name)
+                py_name = self._var_py_names[name]
                 # Don't overwrite FUNCTION callables with their return value variable
-                if py_name not in func_names:
+                if py_name not in self._func_py_names:
                     eval_locals[py_name] = value
 
         # QBasic treats undefined numeric variables as 0 and undefined string variables as ""
