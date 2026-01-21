@@ -202,6 +202,26 @@ _func_or_array_re = re.compile(
 # Note: No trailing \b because $ and % are not word characters
 _identifier_re = re.compile(r'\b([a-zA-Z_][a-zA-Z0-9_.]*[\$%#!&]?)')  # Match identifiers with optional type suffix (QBasic allows dots in names)
 
+# Fast-path patterns for simple expressions (skip heavy regex processing)
+# Single identifier (variable/constant): X, COUNT%, MY.VAR$
+_simple_ident_re = re.compile(r'^([a-zA-Z_][a-zA-Z0-9_.]*[\$%#!&]?)$')
+# Numeric literal: 42, -3.14, 0
+_simple_num_re = re.compile(r'^-?\d+\.?\d*$')
+# Simple binary expression WITHOUT spaces around operator: X+1, COUNT>0, A*B
+# (Expressions with spaces like "X + 1" fall through to regular path for consistent spacing)
+# Operators: + - * / > < >= <= = <>
+_simple_binary_nospace_re = re.compile(
+    r'^([a-zA-Z_][a-zA-Z0-9_.]*[\$%#!&]?|-?\d+\.?\d*)'  # Left operand (no trailing space)
+    r'([+\-*/]|>=?|<=?|<>|=)'  # Operator (no surrounding spaces)
+    r'([a-zA-Z_][a-zA-Z0-9_.]*[\$%#!&]?|-?\d+\.?\d*)$'  # Right operand (no leading space)
+)
+# Keywords that need special handling (should not use simple identifier fast-path)
+_special_keywords = frozenset({
+    'INKEY$', 'TIMER', 'DATE$', 'TIME$', 'RND', 'CSRLIN', 'COMMAND$',
+    'FREEFILE', 'ERL', 'ERR', 'ERDEV$', 'ERDEV', 'IOCTL$', 'MKSMBF$', 'MKDMBF$',
+    'AND', 'OR', 'NOT', 'MOD', 'XOR', 'EQV', 'IMP'  # Also exclude logical operators
+})
+
 
 # --- Command Parsing Patterns (mostly unchanged but reviewed) ---
 # Labels: numeric (100 PRINT), numeric with colon (1:), or identifier with colon (Start:)
@@ -787,6 +807,39 @@ def convert_basic_expr(expr: str, known_identifiers: Optional[set] = None) -> st
     if original_expr_for_cache in _expr_cache:
         return _expr_cache[original_expr_for_cache]
 
+    # Fast-path for simple expressions (skip heavy regex processing)
+    # Only applies if: no strings, no parens, no special keywords, no backslash
+    if '"' not in expr and "'" not in expr and '(' not in expr and '\\' not in expr:
+        # Check for single identifier (but not special keywords)
+        m = _simple_ident_re.match(expr)
+        if m and expr.upper() not in _special_keywords:
+            result = _basic_to_python_identifier(m.group(1))
+            _expr_cache[original_expr_for_cache] = result
+            return result
+
+        # Check for simple numeric literal
+        if _simple_num_re.match(expr):
+            _expr_cache[original_expr_for_cache] = expr
+            return expr
+
+        # Check for simple binary expression without spaces (X+1, COUNT>0)
+        m = _simple_binary_nospace_re.match(expr)
+        if m:
+            left, op, right = m.group(1), m.group(2), m.group(3)
+            # Convert operands
+            if left[0].isalpha() or left[0] == '_':
+                left = _basic_to_python_identifier(left)
+            if right[0].isalpha() or right[0] == '_':
+                right = _basic_to_python_identifier(right)
+            # Convert operators (add standard single space around them)
+            if op == '=':
+                op = '=='
+            elif op == '<>':
+                op = '!='
+            result = f"{left} {op} {right}"
+            _expr_cache[original_expr_for_cache] = result
+            return result
+
     # Protect string literals from modification
     expr, strings = _protect_strings(expr)
 
@@ -880,7 +933,20 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
         self.constants: Dict[str, Any] = {}
         # Eval locals optimization - track state to avoid unnecessary rebuilds
         self._eval_locals: Dict[str, Any] = {}
-        self._eval_locals_fingerprint: Optional[tuple] = None  # (var_keys, const_keys, fn_keys, proc_keys)
+        # Fingerprint using counts for fast comparison (avoids creating frozensets)
+        # Format: (var_count, const_count, user_func_count, proc_func_count)
+        self._eval_locals_fingerprint: Optional[tuple] = None
+        # Pre-computed Python identifier names to avoid repeated conversions
+        # Maps: basic_name -> python_name (e.g., "Score%" -> "SCORE_INT")
+        self._var_py_names: Dict[str, str] = {}  # For variables
+        self._const_py_names: Dict[str, str] = {}  # For constants
+        self._func_py_names: set = set()  # Set of Python names that are FUNCTION procedures
+        # Cached count of FUNCTION procedures (avoid iterating procedures dict)
+        self._proc_func_count: int = 0
+        # Statement splitting cache: line_content -> list of statements
+        self._split_cache: Dict[str, List[str]] = {}
+        # Single-line IF detection cache: line_content -> bool
+        self._single_line_if_cache: Dict[str, bool] = {}
         self.loop_stack: List[Dict[str, Any]] = []
         self.for_stack: List[Dict[str, Any]] = []
         self.gosub_stack: List[int] = []
@@ -908,6 +974,10 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
         self._reverse_colors: Dict[Tuple[int, int, int], int] = {
             rgb: num for num, rgb in self.colors.items()
         }
+        # Palette version tracking for sprite render cache invalidation
+        self._palette_version: int = 0
+        # Cache for rendered sprites: sprite_key -> (palette_version, surface)
+        self._sprite_render_cache: Dict[str, Tuple[int, Any]] = {}
         self.current_fg_color: int = DEFAULT_FG_COLOR
         self.current_bg_color: int = DEFAULT_BG_COLOR
         self.lpr: Tuple[int, int] = (0, 0) # Last Point Referenced
@@ -2648,9 +2718,16 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
         _expr_cache.clear()
         _memoized_arg_splits.clear()  # Clear arg split cache
         _identifier_cache.clear()  # Clear identifier conversion cache
+        # Clear statement parsing caches
+        self._split_cache.clear()
+        self._single_line_if_cache.clear()
         # Reset eval locals optimization state
         self._eval_locals.clear()
         self._eval_locals_fingerprint = None
+        # Reset pre-computed Python name caches
+        self._var_py_names.clear()
+        self._const_py_names.clear()
+        self._func_py_names.clear()
         self.if_level = 0
         self.if_skip_level = -1
         self.if_executed.clear()
@@ -2660,6 +2737,9 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
         self.delay_until = 0
         self.current_fg_color = 7 # Default QBasic white
         self.current_bg_color = 0 # Default QBasic black
+        # Reset palette version and sprite render cache
+        self._palette_version = 0
+        self._sprite_render_cache.clear()
         self.lpr = (self.screen_width // 2, self.screen_height // 2)
         self.last_key = ""
         self.last_rnd_value = None # Reset last RND value
@@ -2683,6 +2763,7 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
         # Reset procedures (SUB/FUNCTION definitions)
         self.procedures.clear()
         self.procedure_stack.clear()
+        self._proc_func_count = 0  # Reset FUNCTION count for fingerprint
         # Reset DRAW turtle graphics state
         self.draw_x = self.screen_width / 2
         self.draw_y = self.screen_height / 2
@@ -3127,12 +3208,13 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
                 return 0
 
         # Prepare environment for eval - use fingerprint to avoid unnecessary rebuilds
-        # Compute current fingerprint based on dict keys (cheap operation)
+        # Compute current fingerprint based on dict COUNTS (fast integer comparison)
+        # This avoids creating frozensets on every eval_expr call
         current_fingerprint = (
-            frozenset(self.variables.keys()),
-            frozenset(self.constants.keys()),
-            frozenset(self.user_functions.keys()),
-            frozenset(k for k, v in self.procedures.items() if v['type'] == 'FUNCTION')
+            len(self.variables),
+            len(self.constants),
+            len(self.user_functions),
+            self._proc_func_count
         )
 
         eval_locals = self._eval_locals
@@ -3141,11 +3223,21 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
         if self._eval_locals_fingerprint != current_fingerprint:
             eval_locals.clear()
 
+            # Rebuild pre-computed Python name mappings
+            self._const_py_names.clear()
+            self._var_py_names.clear()
+            self._func_py_names.clear()
+
             # Map constants and variables using their Python-mangled names
+            # Pre-compute and cache the name mappings
             for name, value in self.constants.items():
-                eval_locals[_basic_to_python_identifier(name)] = value
+                py_name = _basic_to_python_identifier(name)
+                self._const_py_names[name] = py_name
+                eval_locals[py_name] = value
             for name, value in self.variables.items():
-                eval_locals[_basic_to_python_identifier(name)] = value
+                py_name = _basic_to_python_identifier(name)
+                self._var_py_names[name] = py_name
+                eval_locals[py_name] = value
 
             # Add user-defined FN functions to eval locals
             for fn_name in self.user_functions:
@@ -3155,36 +3247,33 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
                     return lambda *args: self._call_user_function(name, list(args))
                 eval_locals[fn_key] = make_fn_caller(fn_name)
 
-            # Add FUNCTION procedures to eval locals
+            # Add FUNCTION procedures to eval locals and track their Python names
             for proc_name, proc in self.procedures.items():
                 if proc['type'] == 'FUNCTION':
                     py_name = _basic_to_python_identifier(proc_name)
+                    self._func_py_names.add(py_name)
                     def make_proc_caller(name):
                         return lambda *args: self._call_function_procedure(name, args)
                     eval_locals[py_name] = make_proc_caller(proc_name)
                     base_name = proc_name.rstrip('$%!#&')
                     if base_name != proc_name:
+                        self._func_py_names.add(base_name)
                         eval_locals[base_name] = make_proc_caller(proc_name)
 
             self._eval_locals_fingerprint = current_fingerprint
         else:
-            # Fingerprint same - just update values (keys haven't changed)
-            # Build set of FUNCTION names to avoid overwriting them with variable values
-            # (In BASIC, function name is also the return value variable)
-            func_names = set()
-            for proc_name, proc in self.procedures.items():
-                if proc['type'] == 'FUNCTION':
-                    func_names.add(_basic_to_python_identifier(proc_name))
-                    base_name = proc_name.rstrip('$%!#&')
-                    if base_name != proc_name:
-                        func_names.add(base_name)
+            # Fingerprint same - just update values using pre-computed Python names
+            # This is the HOT PATH - avoid calling _basic_to_python_identifier()
 
+            # Update constant values (constants rarely change, but be consistent)
             for name, value in self.constants.items():
-                eval_locals[_basic_to_python_identifier(name)] = value
+                eval_locals[self._const_py_names[name]] = value
+
+            # Update variable values, but don't overwrite FUNCTION callables
             for name, value in self.variables.items():
-                py_name = _basic_to_python_identifier(name)
+                py_name = self._var_py_names[name]
                 # Don't overwrite FUNCTION callables with their return value variable
-                if py_name not in func_names:
+                if py_name not in self._func_py_names:
                     eval_locals[py_name] = value
 
         # QBasic treats undefined numeric variables as 0 and undefined string variables as ""
@@ -5033,6 +5122,8 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
                     green = ((color_val >> 8) & 0x3F) * 4
                     red = ((color_val >> 16) & 0x3F) * 4
                     self.colors[attr] = (red, green, blue)
+                # Increment palette version to invalidate sprite render cache
+                self._palette_version += 1
             elif using_array is not None:
                 # PALETTE USING array - set multiple colors from array
                 # Not implemented yet, just ignore
@@ -5043,6 +5134,8 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
                 # For Screen 13, also restore VGA 256-color palette
                 if self._screen_mode == 13:
                     self.colors.update(VGA_256_PALETTE)
+                # Increment palette version to invalidate sprite render cache
+                self._palette_version += 1
 
             # Update reverse lookup for POINT function
             self._reverse_colors = {rgb: num for num, rgb in self.colors.items()}
@@ -6185,6 +6278,7 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
                         'end_pc': end_pc,    # END FUNCTION line
                         'is_static': is_static
                     }
+                    self._proc_func_count += 1  # Track FUNCTION count for fingerprint
                 pc = end_pc + 1
                 continue
 
@@ -6240,6 +6334,8 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
             return False
 
         # Store procedure definition (may already exist from pre-parsing)
+        # Check if already exists to avoid double-counting
+        was_new = func_name not in self.procedures
         self.procedures[func_name] = {
             'type': 'FUNCTION',
             'params': params,
@@ -6247,6 +6343,8 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
             'end_pc': end_pc,
             'is_static': 'STATIC' in (match.group(0) or '').upper()
         }
+        if was_new:
+            self._proc_func_count += 1  # Track FUNCTION count for fingerprint
 
         # Skip past the FUNCTION body during normal execution
         self.pc = end_pc + 1
@@ -7245,16 +7343,24 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
         Multi-line IF (block IF) starts with 'IF...THEN' but has no action after THEN,
         and those should NOT match this function.
 
+        Results are cached since game loops execute the same lines repeatedly.
+
         Args:
             line_content: The line to check.
 
         Returns:
             True if this is a single-line IF that should not be split by colons.
         """
+        # Check cache first
+        cached = self._single_line_if_cache.get(line_content)
+        if cached is not None:
+            return cached
+
         upper_line = line_content.upper().strip()
 
         # Must start with IF
         if not upper_line.startswith('IF '):
+            self._single_line_if_cache[line_content] = False
             return False
 
         # Find THEN outside of strings
@@ -7268,6 +7374,7 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
                 break
 
         if then_pos < 0:
+            self._single_line_if_cache[line_content] = False
             return False  # No THEN found (probably invalid, but not our concern here)
 
         # Check what comes after THEN
@@ -7275,24 +7382,37 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
 
         # If nothing after THEN, it's a block IF (multi-line), not single-line
         if not after_then:
+            self._single_line_if_cache[line_content] = False
             return False
 
         # If only a label/line number after THEN (goto), it's handled differently
         # But if there are actual statements, it's a single-line IF
         # Check if there's a colon in the statement (which would be split incorrectly)
+        in_string = False  # Reset for second loop
         for i, char in enumerate(after_then):
             if char == '"':
                 in_string = not in_string
             elif char == ':' and not in_string:
                 # There's a colon - this is a multi-statement single-line IF
+                self._single_line_if_cache[line_content] = True
                 return True
 
         # No colon found, but still a single-line IF (just one statement after THEN)
         # In this case, no splitting would happen anyway, but we return True for safety
+        self._single_line_if_cache[line_content] = True
         return True
 
     def _split_statements(self, line_content: str) -> List[str]:
-        """Split line by colons while respecting string literals."""
+        """Split line by colons while respecting string literals.
+
+        Results are cached since game loops execute the same lines repeatedly.
+        """
+        # Check cache first
+        cached = self._split_cache.get(line_content)
+        if cached is not None:
+            return cached
+
+        # Parse and cache
         statements = []
         current = []
         in_string = False
@@ -7307,6 +7427,8 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
                 current.append(char)
         if current:
             statements.append(''.join(current))
+
+        self._split_cache[line_content] = statements
         return statements
 
     def execute_logical_line(self, line_content: str, pc_of_line: int) -> bool:
