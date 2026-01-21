@@ -59,13 +59,22 @@ Files changed:
 - interpreter.py: Changed fingerprint computation, added _proc_func_count tracking
 
 ================================================================================
-REMAINING: Statement Parsing Overhead (Lower Priority)
+COMPLETED: Statement Parsing Caching
 ================================================================================
-Location: interpreter.py:3331-3530
-Current impact: 19.5s self time in _execute_single_statement
+Status: DONE - 10% improvement (39.9 -> 43.8 steps/sec), total 4.0x speedup
 
-Remaining opportunities:
-[ ] Cache parsed statements for repeated game loop statements
+Fix implemented: Cache statement parsing results
+- Added _split_cache: line_content -> list of statements
+- Added _single_line_if_cache: line_content -> bool
+- Caches populated during execution, cleared on reset()
+- 914 split cache entries, 1003 IF cache entries in WETSPOT
+
+Files changed:
+- interpreter.py: Added caches to __init__, updated _split_statements,
+  _is_single_line_if, and reset()
+- tests/test_eval_optimization.py: Added TestStatementCaching tests
+
+Remaining statement parsing opportunities (diminishing returns):
 [ ] Optimize keyword extraction (string split vs regex)
 [ ] Pass up_stmt to handlers to avoid re-uppercasing
 
@@ -211,12 +220,14 @@ BEFORE (baseline):
 
 AFTER (all optimizations applied):
   WETSPOT.BAS (3000 steps):
-  - Total time: 75.15s
-  - Steps/sec: 39.9
-  - **SPEEDUP: 3.7x**
+  - Total time: 68.45s
+  - Steps/sec: 43.8
+  - **SPEEDUP: 4.0x**
   - str.upper calls: 21,000,000 (96% reduction)
   - dict.items calls: ~6,000,000 (75% reduction)
   - _basic_to_python_identifier calls: 5,244 (99.999% reduction!)
+  - Statement split cache: 914 entries (avoids repeated parsing)
+  - Single-line IF cache: 1003 entries (avoids repeated checks)
 
 iron_slug.bas (3000 steps):
 - Total time: 1.76s

@@ -201,6 +201,66 @@ class TestPerformanceImprovement:
         assert interp._var_py_names.get('V&') == 'V_LNG'
 
 
+class TestStatementCaching:
+    """Test the statement parsing cache optimizations."""
+
+    def test_split_cache_populated(self):
+        """Test that _split_cache is populated when splitting statements."""
+        interp = setup()
+        interp.reset([
+            'X = 1: Y = 2: Z = 3',
+            'A = X + Y + Z'
+        ])
+        while interp.running and interp.pc < len(interp.program_lines):
+            interp.step()
+
+        # Cache should have entries
+        assert len(interp._split_cache) > 0
+
+    def test_single_line_if_cache_populated(self):
+        """Test that _single_line_if_cache is populated."""
+        interp = setup()
+        interp.reset([
+            'X = 5',
+            'IF X > 0 THEN Y = 1',
+            'IF X < 0 THEN Y = 2'
+        ])
+        while interp.running and interp.pc < len(interp.program_lines):
+            interp.step()
+
+        # Cache should have entries for IF checks
+        assert len(interp._single_line_if_cache) > 0
+
+    def test_caches_cleared_on_reset(self):
+        """Test that statement caches are cleared on reset."""
+        interp = setup()
+        interp.reset(['X = 1: Y = 2'])
+        while interp.running and interp.pc < len(interp.program_lines):
+            interp.step()
+
+        # Check that specific entry exists
+        assert 'X = 1: Y = 2' in interp._split_cache
+
+        # Reset should clear old cache entries
+        interp.reset(['A = 1'])
+        # Old entry should be gone
+        assert 'X = 1: Y = 2' not in interp._split_cache
+
+    def test_split_cache_returns_same_result(self):
+        """Test that cached split returns same result as uncached."""
+        interp = setup()
+        interp.reset(['SCREEN 13'])  # Initialize
+        interp.step()
+
+        # First call (uncached)
+        result1 = interp._split_statements('X = 1: Y = 2: Z = 3')
+        # Second call (cached)
+        result2 = interp._split_statements('X = 1: Y = 2: Z = 3')
+
+        assert result1 == result2
+        assert result1 == ['X = 1', ' Y = 2', ' Z = 3']
+
+
 class TestFingerprintOptimization:
     """Test the count-based fingerprint optimization."""
 

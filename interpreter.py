@@ -890,6 +890,10 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
         self._func_py_names: set = set()  # Set of Python names that are FUNCTION procedures
         # Cached count of FUNCTION procedures (avoid iterating procedures dict)
         self._proc_func_count: int = 0
+        # Statement splitting cache: line_content -> list of statements
+        self._split_cache: Dict[str, List[str]] = {}
+        # Single-line IF detection cache: line_content -> bool
+        self._single_line_if_cache: Dict[str, bool] = {}
         self.loop_stack: List[Dict[str, Any]] = []
         self.for_stack: List[Dict[str, Any]] = []
         self.gosub_stack: List[int] = []
@@ -2661,6 +2665,9 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
         _expr_cache.clear()
         _memoized_arg_splits.clear()  # Clear arg split cache
         _identifier_cache.clear()  # Clear identifier conversion cache
+        # Clear statement parsing caches
+        self._split_cache.clear()
+        self._single_line_if_cache.clear()
         # Reset eval locals optimization state
         self._eval_locals.clear()
         self._eval_locals_fingerprint = None
@@ -7283,16 +7290,24 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
         Multi-line IF (block IF) starts with 'IF...THEN' but has no action after THEN,
         and those should NOT match this function.
 
+        Results are cached since game loops execute the same lines repeatedly.
+
         Args:
             line_content: The line to check.
 
         Returns:
             True if this is a single-line IF that should not be split by colons.
         """
+        # Check cache first
+        cached = self._single_line_if_cache.get(line_content)
+        if cached is not None:
+            return cached
+
         upper_line = line_content.upper().strip()
 
         # Must start with IF
         if not upper_line.startswith('IF '):
+            self._single_line_if_cache[line_content] = False
             return False
 
         # Find THEN outside of strings
@@ -7306,6 +7321,7 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
                 break
 
         if then_pos < 0:
+            self._single_line_if_cache[line_content] = False
             return False  # No THEN found (probably invalid, but not our concern here)
 
         # Check what comes after THEN
@@ -7313,24 +7329,37 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
 
         # If nothing after THEN, it's a block IF (multi-line), not single-line
         if not after_then:
+            self._single_line_if_cache[line_content] = False
             return False
 
         # If only a label/line number after THEN (goto), it's handled differently
         # But if there are actual statements, it's a single-line IF
         # Check if there's a colon in the statement (which would be split incorrectly)
+        in_string = False  # Reset for second loop
         for i, char in enumerate(after_then):
             if char == '"':
                 in_string = not in_string
             elif char == ':' and not in_string:
                 # There's a colon - this is a multi-statement single-line IF
+                self._single_line_if_cache[line_content] = True
                 return True
 
         # No colon found, but still a single-line IF (just one statement after THEN)
         # In this case, no splitting would happen anyway, but we return True for safety
+        self._single_line_if_cache[line_content] = True
         return True
 
     def _split_statements(self, line_content: str) -> List[str]:
-        """Split line by colons while respecting string literals."""
+        """Split line by colons while respecting string literals.
+
+        Results are cached since game loops execute the same lines repeatedly.
+        """
+        # Check cache first
+        cached = self._split_cache.get(line_content)
+        if cached is not None:
+            return cached
+
+        # Parse and cache
         statements = []
         current = []
         in_string = False
@@ -7345,6 +7374,8 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
                 current.append(char)
         if current:
             statements.append(''.join(current))
+
+        self._split_cache[line_content] = statements
         return statements
 
     def execute_logical_line(self, line_content: str, pc_of_line: int) -> bool:
