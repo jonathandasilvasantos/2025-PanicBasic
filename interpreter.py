@@ -208,7 +208,8 @@ _dim_as_re = re.compile(r'DIM\s+([a-zA-Z_][a-zA-Z0-9_]*)\s+AS\s+(\w+)', re.IGNOR
 _dim_scalar_re = re.compile(r'DIM\s+([a-zA-Z_][a-zA-Z0-9_]*[\$%!#&]?)(?:\s*,\s*([a-zA-Z_][a-zA-Z0-9_]*[\$%!#&]?))*$', re.IGNORECASE)
 # Match: var = expr, var$ = expr, arr(i) = expr, p.X = expr, arr(i).X = expr, var# = expr
 # QBasic allows dots in variable names (e.g., Flicker.Control, instruct.y.n)
-_assign_re = re.compile(r'^(?:LET\s+)?([a-zA-Z_][a-zA-Z0-9_.]*[\$%!#&]?(?:\s*\([^)]+\))?)\s*=(.*)$', re.IGNORECASE)
+# The pattern now supports: arr(i).member = expr (type member access on array element)
+_assign_re = re.compile(r'^(?:LET\s+)?([a-zA-Z_][a-zA-Z0-9_.]*[\$%!#&]?(?:\s*\([^)]+\))?(?:\.[a-zA-Z_][a-zA-Z0-9_]*)?)\s*=(.*)$', re.IGNORECASE)
 # Pattern to extract array name and indices from LHS like "ARR(1, 2)"
 _assign_lhs_array_re = re.compile(r'([a-zA-Z_][a-zA-Z0-9_]*[\$%!#&]?)\s*\(([^)]+)\)')
 
@@ -721,8 +722,20 @@ def _protect_strings(expr: str) -> Tuple[str, List[str]]:
     return ''.join(result), strings
 
 def _restore_strings(expr: str, strings: List[str]) -> str:
-    """Restore string literals from placeholders."""
+    """Restore string literals from placeholders.
+
+    Also escapes backslashes in string content so Python interprets them
+    correctly. BASIC string "\" becomes Python string "\\" to represent
+    a literal backslash.
+    """
     for i, s in enumerate(strings):
+        # Escape backslashes in string content for Python
+        # The string s includes quotes, e.g., "text" or "\"
+        if len(s) >= 2 and s.startswith('"') and s.endswith('"'):
+            # Extract content, escape backslashes, put quotes back
+            content = s[1:-1]
+            escaped_content = content.replace('\\', '\\\\')
+            s = '"' + escaped_content + '"'
         expr = expr.replace(f"__STR{i}__", s)
     return expr
 
@@ -940,6 +953,10 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
         self.draw_y: float = 0
         self.draw_angle: int = 0  # 0=right, 90=down, 180=left, 270=up
         self.draw_pen_down: bool = True
+
+        # Screen 13 (256-color) mode state
+        self._screen_mode: int = 0  # Current screen mode
+        self._pixel_indices: Optional[bytearray] = None  # Raw palette indices for SCREEN 13
 
         # VIEW - graphics viewport (physical screen coordinates)
         self.view_x1: int = 0
@@ -2455,12 +2472,22 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
 
             # Split by colon (respecting strings) and add each statement as a separate entry
             # This ensures FOR loop_pc values are correct for nested loops
-            statements = self._split_statements(line_content)
-            for stmt in statements:
-                stmt = stmt.strip()
+            # EXCEPTION: Single-line IF statements should NOT be split - the entire
+            # IF...THEN...ELSE block is one logical unit where all statements after THEN
+            # execute conditionally
+            if self._is_single_line_if(line_content):
+                # Keep the entire single-line IF as one statement
+                stmt = line_content.strip()
                 if stmt and not _rem_re.match(stmt) and not stmt.startswith("'"):
                     self.program_lines.append((current_pc_index, original_line, stmt))
                     current_pc_index += 1
+            else:
+                statements = self._split_statements(line_content)
+                for stmt in statements:
+                    stmt = stmt.strip()
+                    if stmt and not _rem_re.match(stmt) and not stmt.startswith("'"):
+                        self.program_lines.append((current_pc_index, original_line, stmt))
+                        current_pc_index += 1
 
         # Third pass: pre-parse SUB and FUNCTION definitions
         self._preparse_procedures()
@@ -3074,7 +3101,19 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
             # Minimal parsing to keep track of block nesting while skipping
             if up_stmt.startswith("FOR "): self.for_stack.append({"placeholder": True, "pc": current_pc_num})
             elif up_stmt.startswith("NEXT"):
-                if self.for_stack and self.for_stack[-1].get("placeholder"): self.for_stack.pop()
+                # NEXT can close multiple loops: NEXT i, j, k
+                # Count the number of variables (commas + 1, or 1 if no variable)
+                next_rest = up_stmt[4:].strip()
+                if next_rest:
+                    # Count comma-separated variables
+                    num_vars = next_rest.count(',') + 1
+                else:
+                    # NEXT without variable closes one loop
+                    num_vars = 1
+                # Pop that many placeholders
+                for _ in range(num_vars):
+                    if self.for_stack and self.for_stack[-1].get("placeholder"):
+                        self.for_stack.pop()
             elif up_stmt.startswith("DO"): self.loop_stack.append({"placeholder": True, "pc": current_pc_num})
             elif up_stmt.startswith("LOOP"):
                 if self.loop_stack and self.loop_stack[-1].get("placeholder"): self.loop_stack.pop()
@@ -3163,6 +3202,7 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
         if m_screen:
             mode = int(self.eval_expr(m_screen.group(1).strip()))  # Evaluate expression for mode
             if not self.running: return False
+            self._screen_mode = mode  # Track current screen mode
             # QBasic screen modes - use SCREEN_MODES from constants module
             if mode in SCREEN_MODES:
                 self.screen_width, self.screen_height = SCREEN_MODES[mode]
@@ -3178,6 +3218,12 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
             if self.surface is None or self.surface.get_size() != (self.screen_width, self.screen_height):
                  self.surface = pygame.Surface((self.screen_width, self.screen_height)).convert()
                  self._cached_scaled_surface = None # Force rescale
+
+            # Initialize pixel index buffer for SCREEN 13 (256-color mode)
+            if mode == 13:
+                self._pixel_indices = bytearray(self.screen_width * self.screen_height)
+            else:
+                self._pixel_indices = None
 
             self.surface.fill(self.basic_color(self.current_bg_color)) #SCREEN implies CLS
             self.text_cursor = (1,1)
@@ -3241,6 +3287,9 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
         # Use smart parser that can handle nested parentheses
         if up_stmt.startswith("DIM "):
             dim_content = statement[4:].strip()  # Remove "DIM "
+            # Handle DIM SHARED - strip the SHARED keyword
+            if dim_content.upper().startswith("SHARED "):
+                dim_content = dim_content[7:].strip()  # Remove "SHARED "
             return self._handle_multi_dim(dim_content, current_pc_num)
 
         # --- DIM var AS type (simple typed variable or user-defined type) ---
@@ -4586,8 +4635,44 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
         # --- PALETTE statement ---
         m_palette = _palette_re.fullmatch(statement)
         if m_palette:
-            # For now, just accept and ignore palette changes
-            # Full implementation would modify self.colors
+            using_array = m_palette.group(1)
+            attr_expr = m_palette.group(2)
+            color_expr = m_palette.group(3)
+
+            if attr_expr is not None and color_expr is not None:
+                # PALETTE attribute, color - set specific color
+                attr = int(self.eval_expr(attr_expr.strip()))
+                if not self.running:
+                    return False
+                color_val = int(self.eval_expr(color_expr.strip()))
+                if not self.running:
+                    return False
+
+                # Convert QBasic color value to RGB
+                # QBasic uses: blue + green*256 + red*65536 (each component 0-63)
+                # We need to scale 0-63 to 0-255
+                if color_val == -1:
+                    # -1 means reset this attribute to default
+                    if attr in VGA_256_PALETTE:
+                        self.colors[attr] = VGA_256_PALETTE[attr]
+                else:
+                    blue = (color_val & 0x3F) * 4
+                    green = ((color_val >> 8) & 0x3F) * 4
+                    red = ((color_val >> 16) & 0x3F) * 4
+                    self.colors[attr] = (red, green, blue)
+            elif using_array is not None:
+                # PALETTE USING array - set multiple colors from array
+                # Not implemented yet, just ignore
+                pass
+            else:
+                # PALETTE without arguments - reset to default palette
+                self.colors = dict(DEFAULT_COLORS)
+                # For Screen 13, also restore VGA 256-color palette
+                if self._screen_mode == 13:
+                    self.colors.update(VGA_256_PALETTE)
+
+            # Update reverse lookup for POINT function
+            self._reverse_colors = {rgb: num for num, rgb in self.colors.items()}
             return False
 
         # --- PCOPY statement (copy video pages) ---
@@ -6059,7 +6144,22 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
 
             # Get filename
             filename_expr = parts[0]
+            # Check if it's a simple string literal (no + or concatenation operators)
+            # A simple literal starts and ends with quotes AND has no + outside quotes
+            is_simple_literal = False
             if filename_expr.startswith('"') and filename_expr.endswith('"'):
+                # Check if there's a + operator outside of string quotes
+                in_str = False
+                has_operator = False
+                for ch in filename_expr:
+                    if ch == '"':
+                        in_str = not in_str
+                    elif not in_str and ch == '+':
+                        has_operator = True
+                        break
+                is_simple_literal = not has_operator
+
+            if is_simple_literal:
                 filename = filename_expr[1:-1]
             else:
                 filename = str(self.eval_expr(filename_expr))
@@ -6104,11 +6204,17 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
                 if self.surface is None:
                     self.surface = pygame.Surface((self.screen_width, self.screen_height)).convert()
 
+                # Ensure pixel index buffer exists for Screen 13
+                if self._pixel_indices is None:
+                    self._pixel_indices = bytearray(self.screen_width * self.screen_height)
+
                 for i, byte in enumerate(data):
                     pixel_index = offset + i
                     x = pixel_index % screen_width
                     y = pixel_index // screen_width
                     if 0 <= x < self.screen_width and 0 <= y < self.screen_height:
+                        # Store palette index in buffer
+                        self._pixel_indices[y * self.screen_width + x] = byte
                         # Use 256-color VGA palette, with fallback to colors dict
                         color = self.colors.get(byte, VGA_256_PALETTE.get(byte, (byte, byte, byte)))
                         self.surface.set_at((x, y), color)
@@ -6609,6 +6715,61 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
                 return False
 
 
+    def _is_single_line_if(self, line_content: str) -> bool:
+        """Check if a line is a single-line IF statement (IF...THEN with action on same line).
+
+        Single-line IF statements like 'IF x = 1 THEN y = 2: z = 3' should NOT be
+        split by colons because all statements after THEN are conditional.
+
+        Multi-line IF (block IF) starts with 'IF...THEN' but has no action after THEN,
+        and those should NOT match this function.
+
+        Args:
+            line_content: The line to check.
+
+        Returns:
+            True if this is a single-line IF that should not be split by colons.
+        """
+        upper_line = line_content.upper().strip()
+
+        # Must start with IF
+        if not upper_line.startswith('IF '):
+            return False
+
+        # Find THEN outside of strings
+        in_string = False
+        then_pos = -1
+        for i in range(len(upper_line) - 4):  # -4 for 'THEN'
+            if upper_line[i] == '"':
+                in_string = not in_string
+            elif not in_string and upper_line[i:i+4] == 'THEN':
+                then_pos = i
+                break
+
+        if then_pos < 0:
+            return False  # No THEN found (probably invalid, but not our concern here)
+
+        # Check what comes after THEN
+        after_then = line_content[then_pos + 4:].strip()
+
+        # If nothing after THEN, it's a block IF (multi-line), not single-line
+        if not after_then:
+            return False
+
+        # If only a label/line number after THEN (goto), it's handled differently
+        # But if there are actual statements, it's a single-line IF
+        # Check if there's a colon in the statement (which would be split incorrectly)
+        for i, char in enumerate(after_then):
+            if char == '"':
+                in_string = not in_string
+            elif char == ':' and not in_string:
+                # There's a colon - this is a multi-statement single-line IF
+                return True
+
+        # No colon found, but still a single-line IF (just one statement after THEN)
+        # In this case, no splitting would happen anyway, but we return True for safety
+        return True
+
     def _split_statements(self, line_content: str) -> List[str]:
         """Split line by colons while respecting string literals."""
         statements = []
@@ -6642,6 +6803,15 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
                 elif char == "'" and not in_string:
                     line_content = line_content[:i]
                     break
+
+        # Single-line IF statements should NOT be split - they are handled atomically
+        # by _execute_single_statement which processes the IF condition and executes
+        # the THEN part only if condition is true
+        if self._is_single_line_if(line_content):
+            stmt_text = line_content.strip()
+            if stmt_text:
+                return self._execute_single_statement(stmt_text, pc_of_line)
+            return False
 
         statements = self._split_statements(line_content)
         for stmt_text in statements:
@@ -6744,8 +6914,34 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
         target_surface.blit(self._cached_scaled_surface, (0, 0))
         self._dirty = False
 
+# --- Screenshot Helper Function ---
+def save_screenshot(surface: pygame.Surface, filename_prefix: str = "screenshot") -> str:
+    """Save a screenshot of the current surface.
+
+    Args:
+        surface: The pygame surface to save
+        filename_prefix: Prefix for the screenshot filename
+
+    Returns:
+        The path to the saved screenshot
+    """
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    screenshot_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "screenshots")
+    os.makedirs(screenshot_dir, exist_ok=True)
+    screenshot_path = os.path.join(screenshot_dir, f"{filename_prefix}_{timestamp}.png")
+    pygame.image.save(surface, screenshot_path)
+    print(f"Screenshot saved: {screenshot_path}")
+    return screenshot_path
+
 # --- Main Program Execution ---
-def run_interpreter(filename: str) -> None:
+def run_interpreter(filename: str, auto_screenshot: bool = False, max_frames: int = 0) -> None:
+    """Run the BASIC interpreter.
+
+    Args:
+        filename: Path to the BASIC file to run
+        auto_screenshot: If True, automatically save screenshot when program ends
+        max_frames: If > 0, automatically exit after this many frames (for testing)
+    """
     pygame.init()
     pygame.font.init()
 
@@ -6791,6 +6987,8 @@ def run_interpreter(filename: str) -> None:
     clock = pygame.time.Clock()
     application_running = True
     bg_color = (30, 30, 30)
+    frame_count = 0
+    base_name = os.path.splitext(os.path.basename(filename))[0]
 
     while application_running:
         # Process events
@@ -6805,6 +7003,10 @@ def run_interpreter(filename: str) -> None:
                     screen = pygame.display.set_mode((event.w, event.h), display_flags)
                 interpreter.handle_event(event)
                 interpreter.mark_dirty()
+            elif event.type == KEYDOWN and event.key == pygame.K_F12:
+                # F12 - Save screenshot
+                if interpreter.surface:
+                    save_screenshot(interpreter.surface, base_name)
             else:
                 interpreter.handle_event(event)
 
@@ -6821,13 +7023,27 @@ def run_interpreter(filename: str) -> None:
         interpreter.draw(screen)
         pygame.display.flip()
 
+        frame_count += 1
         clock.tick(60)
+
+        # Auto-exit after max_frames if specified (for testing)
+        if max_frames > 0 and frame_count >= max_frames:
+            application_running = False
+
+    # Auto-save screenshot on exit if enabled
+    if auto_screenshot and interpreter.surface:
+        save_screenshot(interpreter.surface, f"{base_name}_exit")
 
     print("Exiting PyBASIC Interpreter.")
     pygame.quit()
 
 if __name__ == '__main__':
-    if len(sys.argv) > 1:
-        run_interpreter(sys.argv[1])
-    else:
-        print("Usage: python interpreter.py <your_basic_file.bas>")
+    import argparse
+    parser = argparse.ArgumentParser(description='Run BASIC interpreter')
+    parser.add_argument('file', help='BASIC file to run')
+    parser.add_argument('--screenshot', '-s', action='store_true',
+                       help='Auto-save screenshot on exit')
+    parser.add_argument('--frames', '-f', type=int, default=0,
+                       help='Exit after N frames (for testing)')
+    args = parser.parse_args()
+    run_interpreter(args.file, auto_screenshot=args.screenshot, max_frames=args.frames)

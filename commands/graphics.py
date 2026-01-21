@@ -12,6 +12,8 @@ from typing import TYPE_CHECKING, Tuple, Any
 
 import pygame
 
+from constants import VGA_256_PALETTE
+
 if TYPE_CHECKING:
     from interpreter import BasicInterpreter
 
@@ -348,18 +350,32 @@ class GraphicsCommandsMixin:
             width = x2 - x1 + 1
             height = y2 - y1 + 1
 
-            # Capture the screen region as a pygame surface
+            # Capture the screen region
             if self.surface:
-                captured = self.surface.subsurface((x1, y1, width, height)).copy()
                 # Initialize sprites dict if not exists
                 if not hasattr(self, '_sprites'):
                     self._sprites = {}
+
+                # Capture palette indices if available (Screen 13 mode)
+                indices = None
+                if hasattr(self, '_pixel_indices') and self._pixel_indices is not None:
+                    indices = bytearray(width * height)
+                    for py in range(height):
+                        for px in range(width):
+                            src_idx = (y1 + py) * self.screen_width + (x1 + px)
+                            if src_idx < len(self._pixel_indices):
+                                indices[py * width + px] = self._pixel_indices[src_idx]
+
+                # Also capture the current surface (for fallback/non-indexed modes)
+                captured = self.surface.subsurface((x1, y1, width, height)).copy()
+
                 # Store sprite with unique key based on array name and index
                 self._sprites[sprite_key] = {
                     '_sprite': True,
                     'width': width,
                     'height': height,
-                    'surface': captured
+                    'surface': captured,
+                    'indices': indices  # Palette indices for Screen 13
                 }
                 # Also store in variables for simple array name lookups
                 if paren_pos == -1:
@@ -421,11 +437,30 @@ class GraphicsCommandsMixin:
                 # Silently skip if no sprite (common in games during initialization)
                 return False
 
-            sprite_surface = sprite_data['surface']
+            width = sprite_data['width']
+            height = sprite_data['height']
+            sprite_indices = sprite_data.get('indices')
+
+            # If we have palette indices, convert them to RGB using current palette
+            # This allows sprites captured at one palette state to display correctly
+            # when the palette has been changed (e.g., after PALETTE reset)
+            if sprite_indices is not None and self.surface:
+                # Create a fresh surface using current palette colors
+                sprite_surface = pygame.Surface((width, height)).convert()
+                sprite_surface.fill((0, 0, 0))  # Fill with transparent/black
+
+                for py in range(height):
+                    for px in range(width):
+                        idx = py * width + px
+                        if idx < len(sprite_indices):
+                            palette_idx = sprite_indices[idx]
+                            # Use current colors dict, fall back to VGA_256_PALETTE
+                            color = self.colors.get(palette_idx, VGA_256_PALETTE.get(palette_idx, (palette_idx, palette_idx, palette_idx)))
+                            sprite_surface.set_at((px, py), color)
+            else:
+                sprite_surface = sprite_data['surface']
 
             if self.surface and sprite_surface:
-                width = sprite_data['width']
-                height = sprite_data['height']
                 if mode == "PSET":
                     self.surface.blit(sprite_surface, (x, y))
                 elif mode == "PRESET":
