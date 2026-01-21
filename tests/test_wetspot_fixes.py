@@ -340,5 +340,50 @@ class TestSubStringParameters:
         assert '42' in interpreter.variables.get('RESULT$', '')
 
 
+class TestPutNestedParentheses:
+    """Tests for PUT statement with nested parentheses in coordinates."""
+
+    def test_put_with_array_member_access(self, interpreter):
+        """Test PUT with expressions like Block(B).x * 16."""
+        code = [
+            'SCREEN 13',
+            'TYPE BlockType',
+            '  x AS INTEGER',
+            '  y AS INTEGER',
+            'END TYPE',
+            'DIM Block(10) AS BlockType',
+            'DIM Sprite&(100)',
+            'Block(1).x = 5',
+            'Block(1).y = 3',
+            'B = 1',
+            '\'Capture a sprite first',
+            'PSET (0, 0), 15',
+            'GET (0, 0)-(15, 15), Sprite&',
+            '\'PUT with nested parens in coords',
+            'PUT (Block(B).x * 16, -8 + (Block(B).y * 16)), Sprite&, PSET',
+        ]
+        interpreter.reset(code)
+        # Should not crash
+        interpreter.run_with_simulated_input(max_steps=200)
+        # Verify the interpreter ran without errors
+        assert interpreter.variables.get('B') == 1
+
+    def test_put_with_complex_expression(self, interpreter):
+        """Test PUT with complex nested expressions."""
+        code = [
+            'SCREEN 13',
+            'DIM Arr(10)',
+            'DIM Sprite&(100)',
+            'Arr(1) = 10',
+            'i = 1',
+            'GET (0, 0)-(15, 15), Sprite&',
+            '\'PUT with expression containing function-like array access',
+            'PUT (Arr(i) + 5, (Arr(i) * 2) + 3), Sprite&, PSET',
+        ]
+        interpreter.reset(code)
+        interpreter.run_with_simulated_input(max_steps=200)
+        assert interpreter.variables.get('I') == 1
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])

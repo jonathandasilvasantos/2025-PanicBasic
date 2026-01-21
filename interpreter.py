@@ -389,7 +389,8 @@ _common_re = LazyPattern(r"COMMON\s+(?!SHARED\s)(.+)", re.IGNORECASE)
 _dim_shared_re = re.compile(r"DIM\s+SHARED\s+(.+)", re.IGNORECASE)
 
 # Coordinate expression pattern - handles nested function calls like Scl(15)
-_coord_expr = r'(?:[^(),]+|\([^()]*\))+'
+# Updated to handle 2 levels of nesting for expressions like (Block(B).y * 16)
+_coord_expr = r'(?:[^(),]+|\((?:[^()]+|\([^()]*\))*\))+'
 
 # GET (graphics) - Capture screen region (array name can have type suffix like & and optional index)
 _get_gfx_re = re.compile(rf"GET\s*\(\s*({_coord_expr})\s*,\s*({_coord_expr})\s*\)\s*-\s*\(\s*({_coord_expr})\s*,\s*({_coord_expr})\s*\)\s*,\s*(.+)", re.IGNORECASE)
@@ -502,7 +503,8 @@ _time_assign_re = re.compile(r"TIME\$\s*=\s*(.+)", re.IGNORECASE)
 
 # Expression caches using LRU to prevent unbounded memory growth
 _expr_cache: LRUCache = LRUCache(maxsize=EXPR_CACHE_MAX_SIZE)  # Cache for BASIC to Python expression conversion
-_identifier_cache: LRUCache = LRUCache(maxsize=IDENTIFIER_CACHE_MAX_SIZE)  # Cache for identifier name conversions
+# Use simple dict for identifier cache - identifiers are bounded in number and LRU eviction is unnecessary
+_identifier_cache: Dict[str, str] = {}  # Cache for identifier name conversions (no LRU overhead)
 _python_keywords = {'and', 'or', 'not', 'in', 'is', 'lambda', 'if', 'else', 'elif', 'while', 'for', 'try', 'except', 'finally', 'with', 'as', 'def', 'class', 'import', 'from', 'pass', 'break', 'continue', 'return', 'yield', 'global', 'nonlocal', 'assert', 'del', 'True', 'False', 'None'}
 # Python builtins used in generated code (for array indexing) - keep lowercase
 _python_builtins_used = {'int'}
@@ -554,9 +556,10 @@ def _basic_to_python_identifier(basic_name_str: str) -> str:
     # This avoids storing separate cache entries for 'Var', 'VAR', 'var', etc.
     normalized = basic_name_str.upper()
 
-    # Check cache first using normalized key
-    if normalized in _identifier_cache:
-        return _identifier_cache[normalized]
+    # Check cache first using dict.get() for single lookup (faster than __contains__ + __getitem__)
+    cached = _identifier_cache.get(normalized)
+    if cached is not None:
+        return cached
 
     # Compute result based on type suffix
     if normalized.endswith('$'):
