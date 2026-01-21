@@ -185,6 +185,7 @@ _erl_re = re.compile(r'\bERL\b(?!\s*\()', re.IGNORECASE)  # ERL -> ERL()
 _err_re = re.compile(r'\bERR\b(?!\s*\()', re.IGNORECASE)  # ERR -> ERR()
 _erdev_str_re = re.compile(r'\bERDEV\$', re.IGNORECASE)  # ERDEV$ -> ERDEVSTR()
 _erdev_re = re.compile(r'\bERDEV\b(?!\s*\(|\$)', re.IGNORECASE)  # ERDEV -> ERDEV() (not followed by $ or ()
+_ioctl_str_re = re.compile(r'\bIOCTL\$\s*\(', re.IGNORECASE)  # IOCTL$(arg) -> IOCTLSTR(arg)
 
 # General pattern for NAME(...) or NAME$(...) which could be a function call or array access
 # Uses nested paren pattern to handle cases like func(a(), b) or arr(func(x))
@@ -551,7 +552,9 @@ _basic_function_names = {
     # File attribute function
     'FILEATTR',
     # Memory function
-    'SETMEM'
+    'SETMEM',
+    # Device control function
+    'IOCTLSTR'
 }
 
 # --- Expression Conversion Logic ---
@@ -785,6 +788,7 @@ def convert_basic_expr(expr: str, known_identifiers: Optional[set] = None) -> st
     expr = _err_re.sub("ERR()", expr)
     expr = _erdev_str_re.sub("ERDEVSTR()", expr)  # ERDEV$ -> ERDEVSTR()
     expr = _erdev_re.sub("ERDEV()", expr)  # ERDEV -> ERDEV()
+    expr = _ioctl_str_re.sub("IOCTLSTR(", expr)  # IOCTL$(arg) -> IOCTLSTR(arg)
 
     # 1b. User-defined FN function calls: FN name(args) or FNname(args)
     expr = _fn_call_re.sub(_replace_fn_call, expr)
@@ -1137,6 +1141,8 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
             "FILEATTR": self._basic_fileattr,  # File attributes (mode, handle)
             # Memory function (emulated)
             "SETMEM": self._basic_setmem,  # Adjust far heap memory
+            # Device control function (emulated)
+            "IOCTLSTR": self._basic_ioctl_str,  # IOCTL$ -> IOCTLSTR
         }
 
         # Build command dispatch table for O(1) keyword lookup
@@ -1202,6 +1208,7 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
             "CHDIR": self._cmd_chdir,
             "FILES": self._cmd_files,
             "SEEK": self._cmd_seek,
+            "IOCTL": self._cmd_ioctl,
             # Data
             "DATA": self._cmd_data,
             "READ": self._cmd_read,
@@ -1588,6 +1595,12 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
     def _cmd_seek(self, statement: str, pc: int) -> Optional[bool]:
         """Handle SEEK statement - delegated to original logic for now."""
         return None
+
+    def _cmd_ioctl(self, statement: str, pc: int) -> Optional[bool]:
+        """Handle IOCTL statement - sends control string to device driver.
+        Since we don't have actual device drivers, this is a no-op."""
+        # IOCTL #file_num, control_string$ - ignored (no real device drivers)
+        return False  # Statement handled, no PC change
 
     def _cmd_data(self, statement: str, pc: int) -> Optional[bool]:
         """Handle DATA statement - delegated to original logic for now."""
@@ -2128,6 +2141,12 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
         we emulate this by returning a fixed large value (representing available memory)."""
         # Return emulated far heap size (64KB - a typical QBasic far heap size)
         return 65536
+
+    def _basic_ioctl_str(self, file_num: int) -> str:
+        """IOCTL$(n) - Returns device control string from driver.
+        In QBasic, this retrieves control information from a device driver.
+        Since we don't have actual device drivers, this returns an empty string."""
+        return ""
 
     def _init_joysticks(self) -> None:
         """Initialize joystick support."""

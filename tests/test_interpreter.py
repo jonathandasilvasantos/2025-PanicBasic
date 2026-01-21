@@ -1869,6 +1869,41 @@ class TestSETMEMFunction(unittest.TestCase):
         self.assertEqual(self.interp.variables.get("MEMSIZE"), 65536)
 
 
+class TestIOCTLFunctions(unittest.TestCase):
+    """Test IOCTL$ function and IOCTL statement (emulated)."""
+
+    def setUp(self):
+        """Create interpreter instance for testing."""
+        _expr_cache.clear()
+        _compiled_expr_cache.clear()
+        _identifier_cache.clear()
+        self.font = pygame.font.Font(None, 16)
+        self.interp = BasicInterpreter(self.font, 800, 600)
+
+    def test_ioctl_str_returns_empty(self):
+        """Test IOCTL$ returns empty string (emulated)."""
+        self.interp.reset([
+            'ctrl$ = IOCTL$(1)'
+        ])
+        while self.interp.running and self.interp.pc < len(self.interp.program_lines):
+            self.interp.step()
+
+        # IOCTL$ always returns empty string (emulated)
+        self.assertEqual(self.interp.variables.get("CTRL$"), "")
+
+    def test_ioctl_statement_no_error(self):
+        """Test IOCTL statement doesn't cause error (emulated no-op)."""
+        self.interp.reset([
+            'IOCTL #1, "test"',
+            'result = 1'
+        ])
+        while self.interp.running and self.interp.pc < len(self.interp.program_lines):
+            self.interp.step()
+
+        # IOCTL is a no-op, program should continue
+        self.assertEqual(self.interp.variables.get("RESULT"), 1)
+
+
 class TestClearStatement(unittest.TestCase):
     """Test CLEAR statement."""
 
