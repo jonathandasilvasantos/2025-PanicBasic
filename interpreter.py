@@ -222,6 +222,26 @@ _special_keywords = frozenset({
     'AND', 'OR', 'NOT', 'MOD', 'XOR', 'EQV', 'IMP'  # Also exclude logical operators
 })
 
+# BASIC keywords that should NOT be treated as labels when followed by ':'
+# These are control flow and other statement keywords that can legitimately
+# precede a colon on the same line (e.g., "DO: x = x + 1: LOOP WHILE x < 5")
+_reserved_not_labels = frozenset({
+    'DO', 'LOOP', 'FOR', 'NEXT', 'WHILE', 'WEND', 'IF', 'THEN', 'ELSE', 'ELSEIF',
+    'SELECT', 'CASE', 'END', 'SUB', 'FUNCTION', 'TYPE', 'DIM', 'REDIM', 'CONST',
+    'PRINT', 'INPUT', 'LINE', 'CIRCLE', 'PSET', 'PRESET', 'DRAW', 'PAINT',
+    'GET', 'PUT', 'LOCATE', 'COLOR', 'CLS', 'SCREEN', 'PALETTE', 'PCOPY',
+    'OPEN', 'CLOSE', 'WRITE', 'READ', 'DATA', 'RESTORE', 'SEEK', 'KILL',
+    'NAME', 'MKDIR', 'RMDIR', 'CHDIR', 'FILES', 'SHELL', 'RUN', 'CHAIN',
+    'CALL', 'GOSUB', 'RETURN', 'GOTO', 'ON', 'RESUME', 'ERROR',
+    'DEF', 'LET', 'SWAP', 'ERASE', 'CLEAR', 'RANDOMIZE', 'SOUND', 'BEEP', 'PLAY',
+    'KEY', 'VIEW', 'WINDOW', 'POKE', 'OUT', 'WAIT', 'WIDTH', 'SLEEP',
+    'STATIC', 'SHARED', 'COMMON', 'DECLARE', 'OPTION', 'DEFINT', 'DEFLNG',
+    'DEFSNG', 'DEFDBL', 'DEFSTR', 'REM', 'STOP', 'CONT', 'SYSTEM', 'EXIT',
+    'BLOAD', 'BSAVE', 'FIELD', 'LSET', 'RSET', 'MKI', 'MKL', 'MKS', 'MKD',
+    'CVI', 'CVL', 'CVS', 'CVD', 'IOCTL', 'LOCK', 'UNLOCK', 'LPRINT', 'LPOS',
+    'STRIG', 'STICK', 'PEN', 'COM', 'TIMER', 'UEVENT', 'SIGNAL'
+})
+
 
 # --- Command Parsing Patterns (mostly unchanged but reviewed) ---
 # Labels: numeric (100 PRINT), numeric with colon (1:), or identifier with colon (Start:)
@@ -2831,11 +2851,13 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
                 if comment_pos >= 0:
                     stripped = stripped[:comment_pos].strip()
 
-            # Check for label
+            # Check for label (but not BASIC keywords like DO:, FOR:, etc.)
             label_match = _label_re.match(stripped)
             if label_match:
-                pending_label = label_match.group(1).strip().rstrip(':').upper()
-                stripped = _label_strip_re.sub("", stripped, count=1).strip()
+                potential_label = label_match.group(1).strip().rstrip(':').upper()
+                if potential_label not in _reserved_not_labels:
+                    pending_label = potential_label
+                    stripped = _label_strip_re.sub("", stripped, count=1).strip()
 
             # Check for DATA statement
             if stripped.upper().startswith("DATA "):
@@ -2878,15 +2900,16 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
             label_match = _label_re.match(line_content)
             if label_match:
                 label = label_match.group(1).strip().rstrip(':').upper()
-                if label: # Ensure label is not empty
+                # Don't treat BASIC keywords as labels (e.g., "DO:" is not a label "DO")
+                if label and label not in _reserved_not_labels:
                     if label in self.labels:
                         print(f"Warning: Duplicate label '{label}' at line {i+1}. Using first definition.")
                     else:
                         self.labels[label] = current_pc_index
-                # Strip the label part to get the actual command
-                line_content = _label_strip_re.sub("", line_content, count=1).strip()
-                if not line_content: # Line might have only been a label
-                    continue
+                    # Strip the label part to get the actual command
+                    line_content = _label_strip_re.sub("", line_content, count=1).strip()
+                    if not line_content: # Line might have only been a label
+                        continue
 
             # Split by colon (respecting strings) and add each statement as a separate entry
             # This ensures FOR loop_pc values are correct for nested loops
