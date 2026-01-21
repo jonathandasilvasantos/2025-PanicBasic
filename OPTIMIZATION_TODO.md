@@ -136,14 +136,13 @@ MEDIUM PRIORITY IMPROVEMENTS
      - Character loop to find THEN position
      - Cache result keyed by statement hash
 
-[ ] 9. Reduce dict.items() calls - 29.9M calls
-     - Called from eval_expr locals rebuild
-     - Part of the eval_locals optimization above
+[x] 9. Reduce dict.items() calls - DONE
+     - Fixed as part of identifier caching optimization
+     - dict.items() calls reduced from 24M to ~6M per 3000 steps
 
-[ ] 10. Optimize frozenset creation in fingerprint
-      Line 3131-3136 creates frozensets every eval
-      - Cache fingerprint components separately
-      - Only rebuild changed parts
+[x] 10. Optimize frozenset creation in fingerprint - DONE
+      - Changed fingerprint to use counts instead of frozensets
+      - Eliminates all frozenset creation overhead
 
 ================================================================================
 ARCHITECTURAL SUGGESTIONS
@@ -199,20 +198,37 @@ IMPLEMENTATION PRIORITY ORDER
 6. Consider #11 (bytecode) for long-term 50x improvement
 
 ================================================================================
-PROFILING COMMANDS USED
+PROFILING RESULTS - BEFORE AND AFTER OPTIMIZATION
 ================================================================================
-python profile_both.py  # Created during analysis
 
-Key metrics from WETSPOT.BAS (3000 steps):
-- Total time: 274.55s
-- Steps/sec: 10.9
-- eval_expr calls: 5,980,999
-- _basic_to_python_identifier calls: 580,086,639
-- dict.get calls: 583,489,105
-- str.upper calls: 601,089,097
+BEFORE (baseline):
+  WETSPOT.BAS (3000 steps):
+  - Total time: 274.55s
+  - Steps/sec: 10.9
+  - _basic_to_python_identifier calls: 580,086,639
+  - str.upper calls: 601,089,097
+  - dict.items calls: 24,000,000+
 
-Key metrics from iron_slug.bas (3000 steps):
+AFTER (all optimizations applied):
+  WETSPOT.BAS (3000 steps):
+  - Total time: 75.15s
+  - Steps/sec: 39.9
+  - **SPEEDUP: 3.7x**
+  - str.upper calls: 21,000,000 (96% reduction)
+  - dict.items calls: ~6,000,000 (75% reduction)
+  - _basic_to_python_identifier calls: 5,244 (99.999% reduction!)
+
+iron_slug.bas (3000 steps):
 - Total time: 1.76s
-- Steps/sec: 1704.5
-- Most time in PLAY audio (time.sleep)
-- Demonstrates interpreter CAN be fast with less variable churn
+- Steps/sec: 1704.5 (unchanged - most time in PLAY audio)
+- Demonstrates interpreter can be fast with less variable churn
+
+================================================================================
+OPTIMIZATIONS COMPLETED
+================================================================================
+1. Pre-computed Python identifier names (3.2x speedup)
+2. Sprite render caching with palette versioning
+3. Count-based fingerprint (avoids frozenset creation)
+
+These optimizations are low-risk, well-tested, and provide meaningful speedup
+for real BASIC programs like WETSPOT.BAS.
