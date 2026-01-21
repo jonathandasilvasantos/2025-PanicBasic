@@ -186,6 +186,9 @@ _err_re = re.compile(r'\bERR\b(?!\s*\()', re.IGNORECASE)  # ERR -> ERR()
 _erdev_str_re = re.compile(r'\bERDEV\$', re.IGNORECASE)  # ERDEV$ -> ERDEVSTR()
 _erdev_re = re.compile(r'\bERDEV\b(?!\s*\(|\$)', re.IGNORECASE)  # ERDEV -> ERDEV() (not followed by $ or ()
 _ioctl_str_re = re.compile(r'\bIOCTL\$\s*\(', re.IGNORECASE)  # IOCTL$(arg) -> IOCTLSTR(arg)
+# MS Binary Format conversion functions ($ -> STR)
+_mksmbf_str_re = re.compile(r'\bMKSMBF\$\s*\(', re.IGNORECASE)  # MKSMBF$(arg) -> MKSMBFSTR(arg)
+_mkdmbf_str_re = re.compile(r'\bMKDMBF\$\s*\(', re.IGNORECASE)  # MKDMBF$(arg) -> MKDMBFSTR(arg)
 
 # General pattern for NAME(...) or NAME$(...) which could be a function call or array access
 # Uses nested paren pattern to handle cases like func(a(), b) or arr(func(x))
@@ -539,6 +542,8 @@ _basic_function_names = {
     'FRE', 'PEEK', 'INP', 'FREEFILE', 'LOF', 'EOF', 'LOC',
     # Binary conversion functions
     'MKI', 'MKL', 'MKS', 'MKD', 'CVI', 'CVL', 'CVS', 'CVD',
+    # MS Binary Format conversion (legacy format)
+    'CVSMBF', 'CVDMBF', 'MKSMBFSTR', 'MKDMBFSTR',
     # Memory address functions (emulated)
     'VARPTR', 'VARSEG', 'SADD',
     # Music function (as callable)
@@ -789,6 +794,8 @@ def convert_basic_expr(expr: str, known_identifiers: Optional[set] = None) -> st
     expr = _erdev_str_re.sub("ERDEVSTR()", expr)  # ERDEV$ -> ERDEVSTR()
     expr = _erdev_re.sub("ERDEV()", expr)  # ERDEV -> ERDEV()
     expr = _ioctl_str_re.sub("IOCTLSTR(", expr)  # IOCTL$(arg) -> IOCTLSTR(arg)
+    expr = _mksmbf_str_re.sub("MKSMBFSTR(", expr)  # MKSMBF$(arg) -> MKSMBFSTR(arg)
+    expr = _mkdmbf_str_re.sub("MKDMBFSTR(", expr)  # MKDMBF$(arg) -> MKDMBFSTR(arg)
 
     # 1b. User-defined FN function calls: FN name(args) or FNname(args)
     expr = _fn_call_re.sub(_replace_fn_call, expr)
@@ -1113,6 +1120,11 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
             "CVL": self._basic_cvl,  # Convert 4-byte string to long
             "CVS": self._basic_cvs,  # Convert 4-byte string to single
             "CVD": self._basic_cvd,  # Convert 8-byte string to double
+            # MS Binary Format conversion (legacy format)
+            "CVSMBF": self._basic_cvsmbf,  # Convert MBF single to IEEE single
+            "CVDMBF": self._basic_cvdmbf,  # Convert MBF double to IEEE double
+            "MKSMBFSTR": self._basic_mksmbf,  # Convert IEEE single to MBF (MKSMBF$ -> MKSMBFSTR)
+            "MKDMBFSTR": self._basic_mkdmbf,  # Convert IEEE double to MBF (MKDMBF$ -> MKDMBFSTR)
             # Memory address functions (emulated)
             "VARPTR": self._basic_varptr,  # Get variable address
             "VARSEG": self._basic_varseg,  # Get variable segment
@@ -2030,6 +2042,126 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
         if len(s) < 8:
             s = s + '\0' * (8 - len(s))
         return struct.unpack('<d', s[:8].encode('latin-1'))[0]
+
+    def _basic_cvsmbf(self, s: str) -> float:
+        """CVSMBF(s$) - Convert 4-byte Microsoft Binary Format string to IEEE single.
+
+        MBF Single format (4 bytes):
+        - Byte 3: Exponent (biased by 128)
+        - Byte 2: Sign (bit 7) + high 7 bits of mantissa
+        - Bytes 1-0: Lower 16 bits of mantissa
+        """
+        if len(s) < 4:
+            s = s + '\0' * (4 - len(s))
+        data = s[:4].encode('latin-1')
+
+        exponent = data[3]
+        if exponent == 0:
+            return 0.0
+
+        # Extract sign bit (1 = negative)
+        sign = 1 if (data[2] & 0x80) == 0 else -1
+
+        # Build 24-bit mantissa with implied leading 1
+        # The sign bit position contains the implicit 1
+        mantissa = ((data[2] | 0x80) << 16) | (data[1] << 8) | data[0]
+
+        # In MBF, the value is: sign * (mantissa / 2^24) * 2^(exponent - 128)
+        # Which simplifies to: sign * mantissa * 2^(exponent - 152)
+        return sign * mantissa * (2.0 ** (exponent - 152))
+
+    def _basic_cvdmbf(self, s: str) -> float:
+        """CVDMBF(s$) - Convert 8-byte Microsoft Binary Format string to IEEE double.
+
+        MBF Double format (8 bytes):
+        - Byte 7: Exponent (biased by 128)
+        - Byte 6: Sign (bit 7) + high 7 bits of mantissa
+        - Bytes 5-0: Lower 48 bits of mantissa
+        """
+        if len(s) < 8:
+            s = s + '\0' * (8 - len(s))
+        data = s[:8].encode('latin-1')
+
+        exponent = data[7]
+        if exponent == 0:
+            return 0.0
+
+        sign = 1 if (data[6] & 0x80) == 0 else -1
+
+        # Build 56-bit mantissa with implied leading 1
+        mantissa = (data[6] | 0x80)
+        for i in range(5, -1, -1):
+            mantissa = (mantissa << 8) | data[i]
+
+        # Value is: sign * (mantissa / 2^56) * 2^(exponent - 128)
+        # = sign * mantissa * 2^(exponent - 184)
+        return sign * mantissa * (2.0 ** (exponent - 184))
+
+    def _basic_mksmbf(self, value: float) -> str:
+        """MKSMBF$(n) - Convert IEEE single to 4-byte Microsoft Binary Format string."""
+        import math
+
+        if value == 0.0:
+            return '\x00\x00\x00\x00'
+
+        # Get sign
+        sign = 0 if value >= 0 else 0x80
+        value = abs(value)
+
+        # Get exponent and mantissa using frexp
+        # frexp returns: value = mantissa * 2^exp where 0.5 <= mantissa < 1
+        mantissa, exp = math.frexp(value)
+
+        # MBF exponent is exp + 128
+        mbf_exp = exp + 128
+
+        # Clamp exponent to valid range
+        if mbf_exp < 1:
+            return '\x00\x00\x00\x00'  # Underflow to zero
+        if mbf_exp > 255:
+            mbf_exp = 255  # Overflow, saturate
+
+        # Convert mantissa to 24-bit integer
+        mantissa_int = int(mantissa * (1 << 24))
+
+        # Build bytes
+        byte0 = mantissa_int & 0xFF
+        byte1 = (mantissa_int >> 8) & 0xFF
+        byte2 = ((mantissa_int >> 16) & 0x7F) | sign  # Replace high bit with sign
+        byte3 = mbf_exp
+
+        return bytes([byte0, byte1, byte2, byte3]).decode('latin-1')
+
+    def _basic_mkdmbf(self, value: float) -> str:
+        """MKDMBF$(n) - Convert IEEE double to 8-byte Microsoft Binary Format string."""
+        import math
+
+        if value == 0.0:
+            return '\x00' * 8
+
+        sign = 0 if value >= 0 else 0x80
+        value = abs(value)
+
+        mantissa, exp = math.frexp(value)
+        mbf_exp = exp + 128
+
+        if mbf_exp < 1:
+            return '\x00' * 8
+        if mbf_exp > 255:
+            mbf_exp = 255
+
+        # Convert mantissa to 56-bit integer
+        mantissa_int = int(mantissa * (1 << 56))
+
+        # Build bytes
+        result = []
+        for i in range(6):
+            result.append(mantissa_int & 0xFF)
+            mantissa_int >>= 8
+        result.append((mantissa_int & 0x7F) | sign)  # Byte 6: sign + high mantissa
+        result.append(mbf_exp)  # Byte 7: exponent
+
+        return bytes(result).decode('latin-1')
 
     def _basic_varptr(self, var_name: Any) -> int:
         """VARPTR(variable) - Get variable address (emulated).

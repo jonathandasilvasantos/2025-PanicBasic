@@ -1904,6 +1904,139 @@ class TestIOCTLFunctions(unittest.TestCase):
         self.assertEqual(self.interp.variables.get("RESULT"), 1)
 
 
+class TestMBFConversionFunctions(unittest.TestCase):
+    """Test Microsoft Binary Format conversion functions (CVDMBF, CVSMBF, MKDMBF$, MKSMBF$)."""
+
+    def setUp(self):
+        """Create interpreter instance for testing."""
+        _expr_cache.clear()
+        _compiled_expr_cache.clear()
+        _identifier_cache.clear()
+        self.font = pygame.font.Font(None, 16)
+        self.interp = BasicInterpreter(self.font, 800, 600)
+
+    def test_cvsmbf_zero(self):
+        """Test CVSMBF with zero value."""
+        # Zero in MBF is all zero bytes
+        self.interp.reset([
+            'mbf$ = CHR$(0) + CHR$(0) + CHR$(0) + CHR$(0)',
+            'result = CVSMBF(mbf$)'
+        ])
+        while self.interp.running and self.interp.pc < len(self.interp.program_lines):
+            self.interp.step()
+        self.assertEqual(self.interp.variables.get("RESULT"), 0.0)
+
+    def test_cvsmbf_one(self):
+        """Test CVSMBF with value 1.0."""
+        # MBF for 1.0: mantissa=0x800000, exponent=129 (128+1)
+        # Bytes: [0x00, 0x00, 0x00, 0x81]
+        self.interp.reset([
+            'mbf$ = CHR$(0) + CHR$(0) + CHR$(0) + CHR$(129)',
+            'result = CVSMBF(mbf$)'
+        ])
+        while self.interp.running and self.interp.pc < len(self.interp.program_lines):
+            self.interp.step()
+        self.assertAlmostEqual(self.interp.variables.get("RESULT"), 1.0, places=5)
+
+    def test_cvdmbf_zero(self):
+        """Test CVDMBF with zero value."""
+        self.interp.reset([
+            'mbf$ = STRING$(8, 0)',
+            'result = CVDMBF(mbf$)'
+        ])
+        while self.interp.running and self.interp.pc < len(self.interp.program_lines):
+            self.interp.step()
+        self.assertEqual(self.interp.variables.get("RESULT"), 0.0)
+
+    def test_cvdmbf_one(self):
+        """Test CVDMBF with value 1.0."""
+        # MBF double for 1.0: mantissa=0x80..., exponent=129
+        self.interp.reset([
+            'mbf$ = STRING$(6, 0) + CHR$(0) + CHR$(129)',
+            'result = CVDMBF(mbf$)'
+        ])
+        while self.interp.running and self.interp.pc < len(self.interp.program_lines):
+            self.interp.step()
+        self.assertAlmostEqual(self.interp.variables.get("RESULT"), 1.0, places=10)
+
+    def test_mksmbf_zero(self):
+        """Test MKSMBF$ with zero value."""
+        self.interp.reset([
+            'result$ = MKSMBF$(0)',
+            'len_result = LEN(result$)'
+        ])
+        while self.interp.running and self.interp.pc < len(self.interp.program_lines):
+            self.interp.step()
+        # Should return 4 zero bytes
+        self.assertEqual(self.interp.variables.get("LEN_RESULT"), 4)
+        self.assertEqual(self.interp.variables.get("RESULT$"), '\x00\x00\x00\x00')
+
+    def test_mksmbf_roundtrip(self):
+        """Test MKSMBF$ and CVSMBF roundtrip."""
+        self.interp.reset([
+            'original = 3.14159',
+            'mbf$ = MKSMBF$(original)',
+            'result = CVSMBF(mbf$)'
+        ])
+        while self.interp.running and self.interp.pc < len(self.interp.program_lines):
+            self.interp.step()
+        original = self.interp.variables.get("ORIGINAL")
+        result = self.interp.variables.get("RESULT")
+        # MBF single has ~7 significant digits, allow some tolerance
+        self.assertAlmostEqual(result, original, places=5)
+
+    def test_mkdmbf_zero(self):
+        """Test MKDMBF$ with zero value."""
+        self.interp.reset([
+            'result$ = MKDMBF$(0)',
+            'len_result = LEN(result$)'
+        ])
+        while self.interp.running and self.interp.pc < len(self.interp.program_lines):
+            self.interp.step()
+        # Should return 8 zero bytes
+        self.assertEqual(self.interp.variables.get("LEN_RESULT"), 8)
+
+    def test_mkdmbf_roundtrip(self):
+        """Test MKDMBF$ and CVDMBF roundtrip."""
+        self.interp.reset([
+            'original# = 2.718281828459045#',
+            'mbf$ = MKDMBF$(original#)',
+            'result# = CVDMBF(mbf$)'
+        ])
+        while self.interp.running and self.interp.pc < len(self.interp.program_lines):
+            self.interp.step()
+        original = self.interp.variables.get("ORIGINAL#")
+        result = self.interp.variables.get("RESULT#")
+        # MBF double has ~15 significant digits
+        self.assertAlmostEqual(result, original, places=10)
+
+    def test_mksmbf_negative(self):
+        """Test MKSMBF$ with negative value."""
+        self.interp.reset([
+            'original = -42.5',
+            'mbf$ = MKSMBF$(original)',
+            'result = CVSMBF(mbf$)'
+        ])
+        while self.interp.running and self.interp.pc < len(self.interp.program_lines):
+            self.interp.step()
+        original = self.interp.variables.get("ORIGINAL")
+        result = self.interp.variables.get("RESULT")
+        self.assertAlmostEqual(result, original, places=5)
+
+    def test_mkdmbf_negative(self):
+        """Test MKDMBF$ with negative value."""
+        self.interp.reset([
+            'original# = -123.456789#',
+            'mbf$ = MKDMBF$(original#)',
+            'result# = CVDMBF(mbf$)'
+        ])
+        while self.interp.running and self.interp.pc < len(self.interp.program_lines):
+            self.interp.step()
+        original = self.interp.variables.get("ORIGINAL#")
+        result = self.interp.variables.get("RESULT#")
+        self.assertAlmostEqual(result, original, places=10)
+
+
 class TestClearStatement(unittest.TestCase):
     """Test CLEAR statement."""
 
