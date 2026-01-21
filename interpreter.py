@@ -549,7 +549,9 @@ _basic_function_names = {
     # Device error functions
     'ERDEV', 'ERDEVSTR',
     # File attribute function
-    'FILEATTR'
+    'FILEATTR',
+    # Memory function
+    'SETMEM'
 }
 
 # --- Expression Conversion Logic ---
@@ -1133,6 +1135,8 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
             "ERDEVSTR": self._basic_erdev_str,  # Device error name (ERDEV$ -> ERDEVSTR)
             # File attribute function
             "FILEATTR": self._basic_fileattr,  # File attributes (mode, handle)
+            # Memory function (emulated)
+            "SETMEM": self._basic_setmem,  # Adjust far heap memory
         }
 
         # Build command dispatch table for O(1) keyword lookup
@@ -2116,6 +2120,14 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
             return fnum * 100  # Emulated handle
         else:
             return 0  # Invalid attribute
+
+    def _basic_setmem(self, bytes_change: int) -> int:
+        """SETMEM(n) - Adjust far heap memory allocation.
+        In QBasic, this adjusts the size of the far heap by n bytes and returns
+        the previous far heap size. Since Python manages memory automatically,
+        we emulate this by returning a fixed large value (representing available memory)."""
+        # Return emulated far heap size (64KB - a typical QBasic far heap size)
+        return 65536
 
     def _init_joysticks(self) -> None:
         """Initialize joystick support."""
