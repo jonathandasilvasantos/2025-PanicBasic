@@ -2699,23 +2699,39 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
     def point(self, x_expr: Any, y_expr: Any) -> int:
         """Get the color number of a pixel at coordinates (x, y).
 
-        Uses a reverse color lookup dictionary for O(1) performance instead of
-        iterating through all colors.
+        In Screen 13 mode (256 colors), reads directly from the palette index
+        buffer for accurate color retrieval even after palette changes.
+        Falls back to RGB reverse lookup for other modes or edge cases.
 
         Args:
             x_expr: X coordinate (will be converted to int).
             y_expr: Y coordinate (will be converted to int).
 
         Returns:
-            Color number (0-15) if the pixel color matches a palette color,
-            -1 if coordinates are out of bounds or color not in palette.
+            Color number (palette index) if valid,
+            -1 if coordinates are out of bounds or color not found.
         """
         px, py = int(x_expr), int(y_expr)
         if self.surface:
             if 0 <= px < self.screen_width and 0 <= py < self.screen_height:
+                # In Screen 13 mode, use _pixel_indices for accurate palette index
+                if self._pixel_indices is not None:
+                    idx = py * self.screen_width + px
+                    if idx < len(self._pixel_indices):
+                        palette_idx = self._pixel_indices[idx]
+                        # Verify the _pixel_indices value is consistent with surface
+                        # (handles edge cases where surface was modified directly)
+                        if palette_idx == 0:
+                            pixel_tuple = self.surface.get_at((px, py))
+                            pixel_rgb = pixel_tuple[:3]
+                            expected_black = self.basic_color(0)
+                            # If pixel is not black but _pixel_indices says 0, use RGB lookup
+                            if pixel_rgb != expected_black:
+                                return self._reverse_colors.get(pixel_rgb, -1)
+                        return palette_idx
+                # Fallback to RGB reverse lookup for other modes
                 pixel_tuple = self.surface.get_at((px, py))
                 pixel_rgb = pixel_tuple[:3]
-                # O(1) lookup using reverse color dictionary
                 return self._reverse_colors.get(pixel_rgb, -1)
             return -1
         return -1
@@ -3954,6 +3970,9 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
 
                 if 0 <= px < self.screen_width and 0 <= py < self.screen_height:
                     self.surface.set_at((px, py), self.basic_color(color_idx))
+                    # Update _pixel_indices for Screen 13 mode
+                    if self._pixel_indices is not None:
+                        self._pixel_indices[py * self.screen_width + px] = color_idx
                     self.lpr = (px, py) # Update LPR
                     self.mark_dirty()
             except Exception as e:
@@ -3985,6 +4004,9 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
 
                 if 0 <= px < self.screen_width and 0 <= py < self.screen_height:
                     self.surface.set_at((px, py), self.basic_color(color_idx))
+                    # Update _pixel_indices for Screen 13 mode
+                    if self._pixel_indices is not None:
+                        self._pixel_indices[py * self.screen_width + px] = color_idx
                     self.lpr = (px, py) # Update LPR
                     self.mark_dirty()
             except Exception as e:
@@ -5949,10 +5971,16 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
             is_array_param = param.endswith('()')
             if is_array_param:
                 param_clean = re.sub(r'\(\)$', '', param)
+                is_string_param = '$' in param_clean
                 param_clean = re.sub(r'[\$%!#&]$', '', param_clean).upper()
+                if is_string_param:
+                    param_clean = param_clean + "_STR"
             else:
-                # Strip type suffix from parameter
+                # Convert type suffix to appropriate variable name suffix
+                is_string_param = param.endswith('$')
                 param_clean = re.sub(r'[\$%!#&]$', '', param).upper()
+                if is_string_param:
+                    param_clean = param_clean + "_STR"
 
             if is_array_param and i in array_refs:
                 # Array parameter: create alias to the passed array (stored in variables as list)
@@ -6005,7 +6033,10 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
             is_array_param = param.endswith('()')
             if is_array_param:
                 param_clean = re.sub(r'\(\)$', '', param)
+                is_string_param = '$' in param_clean
                 param_clean = re.sub(r'[\$%!#&]$', '', param_clean).upper()
+                if is_string_param:
+                    param_clean = param_clean + "_STR"
                 # Restore saved array state if any
                 saved_arrays = call_info.get('saved_arrays', {})
                 if param_clean in saved_arrays:
@@ -6014,7 +6045,10 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
                     # Only delete if it wasn't an alias
                     del self.variables[param_clean]
             else:
+                is_string_param = param.endswith('$')
                 param_clean = re.sub(r'[\$%!#&]$', '', param).upper()
+                if is_string_param:
+                    param_clean = param_clean + "_STR"
                 if param_clean in call_info['saved_vars']:
                     self.variables[param_clean] = call_info['saved_vars'][param_clean]
                 elif param_clean in self.variables:
@@ -6043,19 +6077,25 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
         # Save and set parameters
         saved_vars = {}
         for i, param in enumerate(proc['params']):
+            is_string_param = param.endswith('$')
             param_clean = re.sub(r'[\$%!#&]$', '', param).upper()
+            if is_string_param:
+                param_clean = param_clean + "_STR"
             if param_clean in self.variables:
                 saved_vars[param_clean] = self.variables[param_clean]
             if i < len(args):
                 self.variables[param_clean] = args[i]
             else:
-                self.variables[param_clean] = "" if param.endswith('$') else 0
+                self.variables[param_clean] = "" if is_string_param else 0
 
         # Initialize function return variable
+        is_string_func = name.endswith('$')
         func_name_clean = re.sub(r'[\$%!#&]$', '', name).upper()
+        if is_string_func:
+            func_name_clean = func_name_clean + "_STR"
         if func_name_clean in self.variables:
             saved_vars[func_name_clean] = self.variables[func_name_clean]
-        self.variables[func_name_clean] = "" if name.endswith('$') else 0
+        self.variables[func_name_clean] = "" if is_string_func else 0
 
         # Execute function body
         self.pc = proc['start_pc']
@@ -6090,7 +6130,10 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
 
         # Restore variables
         for param in proc['params']:
+            is_string_param = param.endswith('$')
             param_clean = re.sub(r'[\$%!#&]$', '', param).upper()
+            if is_string_param:
+                param_clean = param_clean + "_STR"
             if param_clean in saved_vars:
                 self.variables[param_clean] = saved_vars[param_clean]
             elif param_clean in self.variables:
