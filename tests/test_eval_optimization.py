@@ -14,6 +14,14 @@ pygame.font.init()
 
 def setup():
     """Create a BasicInterpreter instance for testing."""
+    # Ensure pygame is properly initialized (may be needed when running individual tests)
+    if not pygame.get_init():
+        pygame.init()
+    if not pygame.font.get_init():
+        pygame.font.init()
+    if not pygame.display.get_surface():
+        pygame.display.set_mode((800, 600))
+
     from interpreter import BasicInterpreter, FONT_SIZE
     font = pygame.font.Font(None, FONT_SIZE)
     interp = BasicInterpreter(font, 800, 600)
@@ -358,6 +366,65 @@ class TestSpriteCaching:
         interp._palette_version = 5  # Set non-zero version
         interp.reset(['X = 1'])
         assert interp._palette_version == 0
+
+
+class TestGetGraphicsOptimization:
+    """Test the GET graphics numpy/memoryview optimization."""
+
+    def test_get_captures_pixel_indices(self):
+        """Test that GET captures pixel indices correctly."""
+        interp = setup()
+        interp.reset([
+            'SCREEN 13',
+            # Draw a small rectangle with PSET
+            'PSET (10, 10), 5',
+            'PSET (11, 10), 6',
+            'PSET (10, 11), 7',
+            'PSET (11, 11), 8',
+            # Capture the 2x2 region
+            'GET (10, 10)-(11, 11), TestSprite'
+        ])
+        while interp.running and interp.pc < len(interp.program_lines):
+            interp.step()
+
+        # Check sprite was captured
+        assert 'TESTSPRITE' in interp._sprites
+        sprite = interp._sprites['TESTSPRITE']
+        assert sprite['width'] == 2
+        assert sprite['height'] == 2
+        # Check indices match what we drew
+        indices = sprite['indices']
+        assert indices[0] == 5  # (10, 10)
+        assert indices[1] == 6  # (11, 10)
+        assert indices[2] == 7  # (10, 11)
+        assert indices[3] == 8  # (11, 11)
+
+    def test_get_larger_region(self):
+        """Test GET with a larger region to ensure row-based copy works."""
+        interp = setup()
+        interp.reset([
+            'SCREEN 13',
+            # Draw a 4x4 pattern
+            'FOR Y = 0 TO 3',
+            '  FOR X = 0 TO 3',
+            '    PSET (X, Y), Y * 4 + X',
+            '  NEXT X',
+            'NEXT Y',
+            # Capture the 4x4 region
+            'GET (0, 0)-(3, 3), TestSprite'
+        ])
+        while interp.running and interp.pc < len(interp.program_lines):
+            interp.step()
+
+        sprite = interp._sprites['TESTSPRITE']
+        assert sprite['width'] == 4
+        assert sprite['height'] == 4
+        indices = sprite['indices']
+        # Verify all 16 pixels
+        for y in range(4):
+            for x in range(4):
+                expected = y * 4 + x
+                assert indices[y * 4 + x] == expected
 
 
 if __name__ == '__main__':
