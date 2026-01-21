@@ -77,7 +77,11 @@ class TestExpressionConversion(unittest.TestCase):
     def test_logical_not(self):
         """Test NOT converted to not."""
         result = convert_basic_expr("NOT x", None)
-        self.assertIn(" not ", result)
+        # NOT at start of expression becomes "not " (leading space stripped)
+        self.assertTrue(result.startswith("not "))
+        # Also test NOT in middle of expression where spaces are preserved
+        result2 = convert_basic_expr("x AND NOT y", None)
+        self.assertIn(" not ", result2)
 
     def test_mod_operator(self):
         """Test MOD converted to %."""
@@ -1098,10 +1102,12 @@ class TestStringHandling(unittest.TestCase):
     def test_string_with_colon_in_print(self):
         """Test PRINT with string containing colon."""
         # This should not split at the colon inside the string
-        self.interp.reset(['SCREEN 13', 'PRINT "Score: 100"'])
-        self.interp.step()  # SCREEN
-        self.interp.step()  # PRINT - should not error
-        self.assertTrue(self.interp.running)
+        # Add a final assignment to verify execution completed without error
+        self.interp.reset(['SCREEN 13', 'PRINT "Score: 100"', 'result = 1'])
+        while self.interp.running and self.interp.pc < len(self.interp.program_lines):
+            self.interp.step()
+        # If colon in string was handled correctly, result should be set
+        self.assertEqual(self.interp.variables.get("RESULT"), 1)
 
     def test_string_variable_assignment(self):
         """Test string variable assignment."""
