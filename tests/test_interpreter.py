@@ -77,7 +77,11 @@ class TestExpressionConversion(unittest.TestCase):
     def test_logical_not(self):
         """Test NOT converted to not."""
         result = convert_basic_expr("NOT x", None)
-        self.assertIn(" not ", result)
+        # NOT at start of expression becomes "not " (leading space stripped)
+        self.assertTrue(result.startswith("not "))
+        # Also test NOT in middle of expression where spaces are preserved
+        result2 = convert_basic_expr("x AND NOT y", None)
+        self.assertIn(" not ", result2)
 
     def test_mod_operator(self):
         """Test MOD converted to %."""
@@ -1098,10 +1102,12 @@ class TestStringHandling(unittest.TestCase):
     def test_string_with_colon_in_print(self):
         """Test PRINT with string containing colon."""
         # This should not split at the colon inside the string
-        self.interp.reset(['SCREEN 13', 'PRINT "Score: 100"'])
-        self.interp.step()  # SCREEN
-        self.interp.step()  # PRINT - should not error
-        self.assertTrue(self.interp.running)
+        # Add a final assignment to verify execution completed without error
+        self.interp.reset(['SCREEN 13', 'PRINT "Score: 100"', 'result = 1'])
+        while self.interp.running and self.interp.pc < len(self.interp.program_lines):
+            self.interp.step()
+        # If colon in string was handled correctly, result should be set
+        self.assertEqual(self.interp.variables.get("RESULT"), 1)
 
     def test_string_variable_assignment(self):
         """Test string variable assignment."""
@@ -1609,6 +1615,650 @@ class TestRuntimeErrorHelper(unittest.TestCase):
         self.assertFalse(self.interp.running)
         # x should not be set because execution stopped
         self.assertNotIn("X", self.interp.variables)
+
+
+class TestERLandERRFunctions(unittest.TestCase):
+    """Test ERL and ERR functions for error handling."""
+
+    def setUp(self):
+        """Create interpreter instance for testing."""
+        _expr_cache.clear()
+        _compiled_expr_cache.clear()
+        _identifier_cache.clear()
+        self.font = pygame.font.Font(None, 16)
+        self.interp = BasicInterpreter(self.font, 800, 600)
+
+    def test_erl_returns_error_line(self):
+        """Test ERL returns the line number where error occurred."""
+        self.interp.reset([
+            'ON ERROR GOTO handler',
+            'x = 1',
+            'ERROR 5',
+            'END',
+            'handler:',
+            'errorline = ERL',
+            'RESUME NEXT'
+        ])
+        while self.interp.running and self.interp.pc < len(self.interp.program_lines):
+            self.interp.step()
+
+        # ERL should return the line number where ERROR 5 was called (line 3)
+        self.assertEqual(self.interp.variables.get("ERRORLINE"), 3)
+
+    def test_err_returns_error_code(self):
+        """Test ERR returns the error code."""
+        self.interp.reset([
+            'ON ERROR GOTO handler',
+            'x = 1',
+            'ERROR 53',
+            'END',
+            'handler:',
+            'errorcode = ERR',
+            'RESUME NEXT'
+        ])
+        while self.interp.running and self.interp.pc < len(self.interp.program_lines):
+            self.interp.step()
+
+        # ERR should return 53 (File not found)
+        self.assertEqual(self.interp.variables.get("ERRORCODE"), 53)
+
+    def test_erl_and_err_together(self):
+        """Test ERL and ERR work together in error handler."""
+        self.interp.reset([
+            'ON ERROR GOTO handler',
+            'x = 1',
+            'y = 2',
+            'ERROR 11',
+            'z = 3',
+            'END',
+            'handler:',
+            'errline = ERL',
+            'errcode = ERR',
+            'RESUME NEXT'
+        ])
+        while self.interp.running and self.interp.pc < len(self.interp.program_lines):
+            self.interp.step()
+
+        # ERL should return line 4 (ERROR 11)
+        self.assertEqual(self.interp.variables.get("ERRLINE"), 4)
+        # ERR should return 11 (Division by zero)
+        self.assertEqual(self.interp.variables.get("ERRCODE"), 11)
+        # z should be set after RESUME NEXT
+        self.assertEqual(self.interp.variables.get("Z"), 3)
+
+    def test_erl_zero_without_error(self):
+        """Test ERL returns 0 when no error has occurred."""
+        self.interp.reset([
+            'errorline = ERL',
+            'errorcode = ERR'
+        ])
+        while self.interp.running and self.interp.pc < len(self.interp.program_lines):
+            self.interp.step()
+
+        # Without any error, ERL and ERR should return 0
+        self.assertEqual(self.interp.variables.get("ERRORLINE"), 0)
+        self.assertEqual(self.interp.variables.get("ERRORCODE"), 0)
+
+    def test_erl_in_expression(self):
+        """Test ERL can be used in expressions."""
+        self.interp.reset([
+            'ON ERROR GOTO handler',
+            'ERROR 5',
+            'END',
+            'handler:',
+            'result = ERL * 10 + ERR',
+            'RESUME NEXT'
+        ])
+        while self.interp.running and self.interp.pc < len(self.interp.program_lines):
+            self.interp.step()
+
+        # ERL=2, ERR=5, so result = 2*10 + 5 = 25
+        self.assertEqual(self.interp.variables.get("RESULT"), 25)
+
+    def test_multiple_errors(self):
+        """Test ERL and ERR update correctly for multiple errors."""
+        self.interp.reset([
+            'ON ERROR GOTO handler',
+            'ERROR 5',
+            'ERROR 11',
+            'END',
+            'handler:',
+            'errline = ERL',
+            'errcode = ERR',
+            'RESUME NEXT'
+        ])
+        while self.interp.running and self.interp.pc < len(self.interp.program_lines):
+            self.interp.step()
+
+        # After second error (ERROR 11 on line 3), ERL=3 and ERR=11
+        self.assertEqual(self.interp.variables.get("ERRLINE"), 3)
+        self.assertEqual(self.interp.variables.get("ERRCODE"), 11)
+
+
+class TestLPOSFunction(unittest.TestCase):
+    """Test LPOS printer function (emulated)."""
+
+    def setUp(self):
+        """Create interpreter instance for testing."""
+        _expr_cache.clear()
+        _compiled_expr_cache.clear()
+        _identifier_cache.clear()
+        self.font = pygame.font.Font(None, 16)
+        self.interp = BasicInterpreter(self.font, 800, 600)
+
+    def test_lpos_returns_one(self):
+        """Test LPOS returns 1 (emulated printer at start of line)."""
+        self.interp.reset([
+            'pos0 = LPOS(0)',
+            'pos1 = LPOS(1)'
+        ])
+        while self.interp.running and self.interp.pc < len(self.interp.program_lines):
+            self.interp.step()
+
+        # LPOS always returns 1 (emulated)
+        self.assertEqual(self.interp.variables.get("POS0"), 1)
+        self.assertEqual(self.interp.variables.get("POS1"), 1)
+
+
+class TestERDEVFunctions(unittest.TestCase):
+    """Test ERDEV and ERDEV$ device error functions (emulated)."""
+
+    def setUp(self):
+        """Create interpreter instance for testing."""
+        _expr_cache.clear()
+        _compiled_expr_cache.clear()
+        _identifier_cache.clear()
+        self.font = pygame.font.Font(None, 16)
+        self.interp = BasicInterpreter(self.font, 800, 600)
+
+    def test_erdev_returns_zero(self):
+        """Test ERDEV returns 0 (emulated - no device errors)."""
+        self.interp.reset([
+            'errcode = ERDEV'
+        ])
+        while self.interp.running and self.interp.pc < len(self.interp.program_lines):
+            self.interp.step()
+
+        # ERDEV always returns 0 (emulated)
+        self.assertEqual(self.interp.variables.get("ERRCODE"), 0)
+
+    def test_erdev_str_returns_empty(self):
+        """Test ERDEV$ returns empty string (emulated - no device errors)."""
+        self.interp.reset([
+            'errname$ = ERDEV$'
+        ])
+        while self.interp.running and self.interp.pc < len(self.interp.program_lines):
+            self.interp.step()
+
+        # ERDEV$ always returns empty string (emulated)
+        self.assertEqual(self.interp.variables.get("ERRNAME$"), "")
+
+
+class TestFILEATTRFunction(unittest.TestCase):
+    """Test FILEATTR file attribute function."""
+
+    def setUp(self):
+        """Create interpreter instance for testing."""
+        _expr_cache.clear()
+        _compiled_expr_cache.clear()
+        _identifier_cache.clear()
+        self.font = pygame.font.Font(None, 16)
+        self.interp = BasicInterpreter(self.font, 800, 600)
+        # Create a temp file for testing
+        import tempfile
+        self.temp_fd, self.temp_file = tempfile.mkstemp(suffix='.txt')
+        os.write(self.temp_fd, b'test data')
+        os.close(self.temp_fd)
+
+    def tearDown(self):
+        """Clean up temp file."""
+        try:
+            os.unlink(self.temp_file)
+        except:
+            pass
+
+    def test_fileattr_mode_input(self):
+        """Test FILEATTR returns 1 for INPUT mode."""
+        self.interp.reset([
+            f'OPEN "{self.temp_file}" FOR INPUT AS #1',
+            'mode = FILEATTR(1, 1)',
+            'CLOSE #1'
+        ])
+        while self.interp.running and self.interp.pc < len(self.interp.program_lines):
+            self.interp.step()
+
+        self.assertEqual(self.interp.variables.get("MODE"), 1)
+
+    def test_fileattr_handle(self):
+        """Test FILEATTR returns emulated file handle."""
+        self.interp.reset([
+            f'OPEN "{self.temp_file}" FOR INPUT AS #1',
+            'handle = FILEATTR(1, 2)',
+            'CLOSE #1'
+        ])
+        while self.interp.running and self.interp.pc < len(self.interp.program_lines):
+            self.interp.step()
+
+        self.assertEqual(self.interp.variables.get("HANDLE"), 100)
+
+    def test_fileattr_file_not_open(self):
+        """Test FILEATTR returns 0 for file not open."""
+        self.interp.reset([
+            'result = FILEATTR(99, 1)'
+        ])
+        while self.interp.running and self.interp.pc < len(self.interp.program_lines):
+            self.interp.step()
+
+        self.assertEqual(self.interp.variables.get("RESULT"), 0)
+
+
+class TestSETMEMFunction(unittest.TestCase):
+    """Test SETMEM memory function (emulated)."""
+
+    def setUp(self):
+        """Create interpreter instance for testing."""
+        _expr_cache.clear()
+        _compiled_expr_cache.clear()
+        _identifier_cache.clear()
+        self.font = pygame.font.Font(None, 16)
+        self.interp = BasicInterpreter(self.font, 800, 600)
+
+    def test_setmem_returns_emulated_size(self):
+        """Test SETMEM returns emulated far heap size."""
+        self.interp.reset([
+            'memsize = SETMEM(0)'
+        ])
+        while self.interp.running and self.interp.pc < len(self.interp.program_lines):
+            self.interp.step()
+
+        # SETMEM returns 65536 (emulated)
+        self.assertEqual(self.interp.variables.get("MEMSIZE"), 65536)
+
+
+class TestIOCTLFunctions(unittest.TestCase):
+    """Test IOCTL$ function and IOCTL statement (emulated)."""
+
+    def setUp(self):
+        """Create interpreter instance for testing."""
+        _expr_cache.clear()
+        _compiled_expr_cache.clear()
+        _identifier_cache.clear()
+        self.font = pygame.font.Font(None, 16)
+        self.interp = BasicInterpreter(self.font, 800, 600)
+
+    def test_ioctl_str_returns_empty(self):
+        """Test IOCTL$ returns empty string (emulated)."""
+        self.interp.reset([
+            'ctrl$ = IOCTL$(1)'
+        ])
+        while self.interp.running and self.interp.pc < len(self.interp.program_lines):
+            self.interp.step()
+
+        # IOCTL$ always returns empty string (emulated)
+        self.assertEqual(self.interp.variables.get("CTRL$"), "")
+
+    def test_ioctl_statement_no_error(self):
+        """Test IOCTL statement doesn't cause error (emulated no-op)."""
+        self.interp.reset([
+            'IOCTL #1, "test"',
+            'result = 1'
+        ])
+        while self.interp.running and self.interp.pc < len(self.interp.program_lines):
+            self.interp.step()
+
+        # IOCTL is a no-op, program should continue
+        self.assertEqual(self.interp.variables.get("RESULT"), 1)
+
+
+class TestMBFConversionFunctions(unittest.TestCase):
+    """Test Microsoft Binary Format conversion functions (CVDMBF, CVSMBF, MKDMBF$, MKSMBF$)."""
+
+    def setUp(self):
+        """Create interpreter instance for testing."""
+        _expr_cache.clear()
+        _compiled_expr_cache.clear()
+        _identifier_cache.clear()
+        self.font = pygame.font.Font(None, 16)
+        self.interp = BasicInterpreter(self.font, 800, 600)
+
+    def test_cvsmbf_zero(self):
+        """Test CVSMBF with zero value."""
+        # Zero in MBF is all zero bytes
+        self.interp.reset([
+            'mbf$ = CHR$(0) + CHR$(0) + CHR$(0) + CHR$(0)',
+            'result = CVSMBF(mbf$)'
+        ])
+        while self.interp.running and self.interp.pc < len(self.interp.program_lines):
+            self.interp.step()
+        self.assertEqual(self.interp.variables.get("RESULT"), 0.0)
+
+    def test_cvsmbf_one(self):
+        """Test CVSMBF with value 1.0."""
+        # MBF for 1.0: mantissa=0x800000, exponent=129 (128+1)
+        # Bytes: [0x00, 0x00, 0x00, 0x81]
+        self.interp.reset([
+            'mbf$ = CHR$(0) + CHR$(0) + CHR$(0) + CHR$(129)',
+            'result = CVSMBF(mbf$)'
+        ])
+        while self.interp.running and self.interp.pc < len(self.interp.program_lines):
+            self.interp.step()
+        self.assertAlmostEqual(self.interp.variables.get("RESULT"), 1.0, places=5)
+
+    def test_cvdmbf_zero(self):
+        """Test CVDMBF with zero value."""
+        self.interp.reset([
+            'mbf$ = STRING$(8, 0)',
+            'result = CVDMBF(mbf$)'
+        ])
+        while self.interp.running and self.interp.pc < len(self.interp.program_lines):
+            self.interp.step()
+        self.assertEqual(self.interp.variables.get("RESULT"), 0.0)
+
+    def test_cvdmbf_one(self):
+        """Test CVDMBF with value 1.0."""
+        # MBF double for 1.0: mantissa=0x80..., exponent=129
+        self.interp.reset([
+            'mbf$ = STRING$(6, 0) + CHR$(0) + CHR$(129)',
+            'result = CVDMBF(mbf$)'
+        ])
+        while self.interp.running and self.interp.pc < len(self.interp.program_lines):
+            self.interp.step()
+        self.assertAlmostEqual(self.interp.variables.get("RESULT"), 1.0, places=10)
+
+    def test_mksmbf_zero(self):
+        """Test MKSMBF$ with zero value."""
+        self.interp.reset([
+            'result$ = MKSMBF$(0)',
+            'len_result = LEN(result$)'
+        ])
+        while self.interp.running and self.interp.pc < len(self.interp.program_lines):
+            self.interp.step()
+        # Should return 4 zero bytes
+        self.assertEqual(self.interp.variables.get("LEN_RESULT"), 4)
+        self.assertEqual(self.interp.variables.get("RESULT$"), '\x00\x00\x00\x00')
+
+    def test_mksmbf_roundtrip(self):
+        """Test MKSMBF$ and CVSMBF roundtrip."""
+        self.interp.reset([
+            'original = 3.14159',
+            'mbf$ = MKSMBF$(original)',
+            'result = CVSMBF(mbf$)'
+        ])
+        while self.interp.running and self.interp.pc < len(self.interp.program_lines):
+            self.interp.step()
+        original = self.interp.variables.get("ORIGINAL")
+        result = self.interp.variables.get("RESULT")
+        # MBF single has ~7 significant digits, allow some tolerance
+        self.assertAlmostEqual(result, original, places=5)
+
+    def test_mkdmbf_zero(self):
+        """Test MKDMBF$ with zero value."""
+        self.interp.reset([
+            'result$ = MKDMBF$(0)',
+            'len_result = LEN(result$)'
+        ])
+        while self.interp.running and self.interp.pc < len(self.interp.program_lines):
+            self.interp.step()
+        # Should return 8 zero bytes
+        self.assertEqual(self.interp.variables.get("LEN_RESULT"), 8)
+
+    def test_mkdmbf_roundtrip(self):
+        """Test MKDMBF$ and CVDMBF roundtrip."""
+        self.interp.reset([
+            'original# = 2.718281828459045#',
+            'mbf$ = MKDMBF$(original#)',
+            'result# = CVDMBF(mbf$)'
+        ])
+        while self.interp.running and self.interp.pc < len(self.interp.program_lines):
+            self.interp.step()
+        original = self.interp.variables.get("ORIGINAL#")
+        result = self.interp.variables.get("RESULT#")
+        # MBF double has ~15 significant digits
+        self.assertAlmostEqual(result, original, places=10)
+
+    def test_mksmbf_negative(self):
+        """Test MKSMBF$ with negative value."""
+        self.interp.reset([
+            'original = -42.5',
+            'mbf$ = MKSMBF$(original)',
+            'result = CVSMBF(mbf$)'
+        ])
+        while self.interp.running and self.interp.pc < len(self.interp.program_lines):
+            self.interp.step()
+        original = self.interp.variables.get("ORIGINAL")
+        result = self.interp.variables.get("RESULT")
+        self.assertAlmostEqual(result, original, places=5)
+
+    def test_mkdmbf_negative(self):
+        """Test MKDMBF$ with negative value."""
+        self.interp.reset([
+            'original# = -123.456789#',
+            'mbf$ = MKDMBF$(original#)',
+            'result# = CVDMBF(mbf$)'
+        ])
+        while self.interp.running and self.interp.pc < len(self.interp.program_lines):
+            self.interp.step()
+        original = self.interp.variables.get("ORIGINAL#")
+        result = self.interp.variables.get("RESULT#")
+        self.assertAlmostEqual(result, original, places=10)
+
+
+class TestBSAVEStatement(unittest.TestCase):
+    """Test BSAVE statement for saving memory to binary file."""
+
+    def setUp(self):
+        """Create interpreter instance for testing."""
+        _expr_cache.clear()
+        _compiled_expr_cache.clear()
+        _identifier_cache.clear()
+        self.font = pygame.font.Font(None, 16)
+        self.interp = BasicInterpreter(self.font, 800, 600)
+        self.test_file = "/tmp/test_bsave.bin"
+
+    def tearDown(self):
+        """Clean up test files."""
+        import os
+        if os.path.exists(self.test_file):
+            os.remove(self.test_file)
+
+    def test_bsave_memory(self):
+        """Test BSAVE saves emulated memory correctly."""
+        self.interp.reset([
+            'DEF SEG = &H1000',
+            'POKE 0, 65',
+            'POKE 1, 66',
+            'POKE 2, 67',
+            'BSAVE "/tmp/test_bsave.bin", 0, 3'
+        ])
+        while self.interp.running and self.interp.pc < len(self.interp.program_lines):
+            self.interp.step()
+
+        # Verify file was created with correct header and data
+        import os
+        self.assertTrue(os.path.exists(self.test_file))
+
+        with open(self.test_file, 'rb') as f:
+            data = f.read()
+        # Header is 7 bytes + 3 bytes data = 10 bytes
+        self.assertEqual(len(data), 10)
+        # Check header magic byte
+        self.assertEqual(data[0], 0xFD)
+        # Check data bytes
+        self.assertEqual(data[7], 65)  # 'A'
+        self.assertEqual(data[8], 66)  # 'B'
+        self.assertEqual(data[9], 67)  # 'C'
+
+    def test_bsave_bload_roundtrip(self):
+        """Test BSAVE and BLOAD roundtrip."""
+        self.interp.reset([
+            'DEF SEG = &H2000',
+            'POKE 0, 100',
+            'POKE 1, 200',
+            'POKE 2, 50',
+            'BSAVE "/tmp/test_bsave.bin", 0, 3',
+            'POKE 0, 0',
+            'POKE 1, 0',
+            'POKE 2, 0',
+            'BLOAD "/tmp/test_bsave.bin", 0',
+            'a = PEEK(0)',
+            'b = PEEK(1)',
+            'c = PEEK(2)'
+        ])
+        while self.interp.running and self.interp.pc < len(self.interp.program_lines):
+            self.interp.step()
+
+        # Verify data was restored
+        self.assertEqual(self.interp.variables.get("A"), 100)
+        self.assertEqual(self.interp.variables.get("B"), 200)
+        self.assertEqual(self.interp.variables.get("C"), 50)
+
+
+class TestCOMStatements(unittest.TestCase):
+    """Test COM ON/OFF/STOP statements (emulated no-ops)."""
+
+    def setUp(self):
+        """Create interpreter instance for testing."""
+        _expr_cache.clear()
+        _compiled_expr_cache.clear()
+        _identifier_cache.clear()
+        self.font = pygame.font.Font(None, 16)
+        self.interp = BasicInterpreter(self.font, 800, 600)
+
+    def test_com_on_accepted(self):
+        """Test COM(n) ON is accepted without error."""
+        self.interp.reset([
+            'COM(1) ON',
+            'result = 1'
+        ])
+        while self.interp.running and self.interp.pc < len(self.interp.program_lines):
+            self.interp.step()
+        self.assertEqual(self.interp.variables.get("RESULT"), 1)
+
+    def test_com_off_accepted(self):
+        """Test COM(n) OFF is accepted without error."""
+        self.interp.reset([
+            'COM(2) OFF',
+            'result = 2'
+        ])
+        while self.interp.running and self.interp.pc < len(self.interp.program_lines):
+            self.interp.step()
+        self.assertEqual(self.interp.variables.get("RESULT"), 2)
+
+    def test_com_stop_accepted(self):
+        """Test COM(n) STOP is accepted without error."""
+        self.interp.reset([
+            'COM(1) STOP',
+            'result = 3'
+        ])
+        while self.interp.running and self.interp.pc < len(self.interp.program_lines):
+            self.interp.step()
+        self.assertEqual(self.interp.variables.get("RESULT"), 3)
+
+    def test_on_com_gosub_accepted(self):
+        """Test ON COM(n) GOSUB is accepted without error."""
+        self.interp.reset([
+            'ON COM(1) GOSUB ComHandler',
+            'result = 4',
+            'END',
+            'ComHandler:',
+            'RETURN'
+        ])
+        while self.interp.running and self.interp.pc < len(self.interp.program_lines):
+            self.interp.step()
+        self.assertEqual(self.interp.variables.get("RESULT"), 4)
+
+
+class TestINTERRUPTStatements(unittest.TestCase):
+    """Test INTERRUPT and INTERRUPTX statements (emulated no-ops)."""
+
+    def setUp(self):
+        """Create interpreter instance for testing."""
+        _expr_cache.clear()
+        _compiled_expr_cache.clear()
+        _identifier_cache.clear()
+        self.font = pygame.font.Font(None, 16)
+        self.interp = BasicInterpreter(self.font, 800, 600)
+
+    def test_call_interrupt_accepted(self):
+        """Test CALL INTERRUPT is accepted without error."""
+        self.interp.reset([
+            'CALL INTERRUPT(16, inregs, outregs)',
+            'result = 1'
+        ])
+        while self.interp.running and self.interp.pc < len(self.interp.program_lines):
+            self.interp.step()
+        self.assertEqual(self.interp.variables.get("RESULT"), 1)
+
+    def test_call_interruptx_accepted(self):
+        """Test CALL INTERRUPTX is accepted without error."""
+        self.interp.reset([
+            'CALL INTERRUPTX(33, inregs, outregs)',
+            'result = 2'
+        ])
+        while self.interp.running and self.interp.pc < len(self.interp.program_lines):
+            self.interp.step()
+        self.assertEqual(self.interp.variables.get("RESULT"), 2)
+
+
+class TestPMAPFunction(unittest.TestCase):
+    """Test PMAP function for coordinate mapping."""
+
+    def setUp(self):
+        """Create interpreter instance for testing."""
+        _expr_cache.clear()
+        _compiled_expr_cache.clear()
+        _identifier_cache.clear()
+        self.font = pygame.font.Font(None, 16)
+        self.interp = BasicInterpreter(self.font, 800, 600)
+
+    def test_pmap_no_window(self):
+        """Test PMAP without WINDOW returns same coordinate."""
+        self.interp.reset([
+            'result0 = PMAP(100, 0)',
+            'result1 = PMAP(100, 1)',
+            'result2 = PMAP(100, 2)',
+            'result3 = PMAP(100, 3)'
+        ])
+        while self.interp.running and self.interp.pc < len(self.interp.program_lines):
+            self.interp.step()
+        # Without WINDOW, logical = physical
+        self.assertEqual(self.interp.variables.get("RESULT0"), 100.0)
+        self.assertEqual(self.interp.variables.get("RESULT1"), 100.0)
+        self.assertEqual(self.interp.variables.get("RESULT2"), 100.0)
+        self.assertEqual(self.interp.variables.get("RESULT3"), 100.0)
+
+    def test_pmap_with_window(self):
+        """Test PMAP with WINDOW coordinate mapping."""
+        self.interp.reset([
+            'SCREEN 13',
+            'WINDOW (0, 0)-(100, 100)',
+            'physX = PMAP(50, 0)',
+            'physY = PMAP(50, 1)'
+        ])
+        while self.interp.running and self.interp.pc < len(self.interp.program_lines):
+            self.interp.step()
+        # Logical 50 should map to middle of screen (approximately)
+        physX = self.interp.variables.get("PHYSX")
+        physY = self.interp.variables.get("PHYSY")
+        # In SCREEN 13 (320x200), logical 50 out of 100 should be around middle
+        self.assertIsNotNone(physX)
+        self.assertIsNotNone(physY)
+
+    def test_pmap_roundtrip(self):
+        """Test PMAP roundtrip conversion."""
+        self.interp.reset([
+            'SCREEN 13',
+            'WINDOW (0, 0)-(100, 100)',
+            'logX = 25',
+            'physX = PMAP(logX, 0)',
+            'backX = PMAP(physX, 2)'
+        ])
+        while self.interp.running and self.interp.pc < len(self.interp.program_lines):
+            self.interp.step()
+        logX = self.interp.variables.get("LOGX")
+        backX = self.interp.variables.get("BACKX")
+        # Should round-trip back to original
+        self.assertAlmostEqual(backX, logX, places=2)
 
 
 class TestClearStatement(unittest.TestCase):

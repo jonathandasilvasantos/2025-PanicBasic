@@ -12,6 +12,8 @@ from typing import TYPE_CHECKING, Tuple, Any
 
 import pygame
 
+from constants import VGA_256_PALETTE
+
 if TYPE_CHECKING:
     from interpreter import BasicInterpreter
 
@@ -299,7 +301,7 @@ class GraphicsCommandsMixin:
             print(f"Error in DRAW at PC {pc}: {e}")
 
     def _do_get_graphics(self: 'BasicInterpreter', match: Any, pc: int) -> bool:
-        """Handle GET (x1, y1)-(x2, y2), array - capture screen region to array.
+        """Handle GET (x1, y1)-(x2, y2), array[(index)] - capture screen region to array.
 
         Args:
             match: Regex match object with coordinate and array groups.
@@ -313,10 +315,25 @@ class GraphicsCommandsMixin:
             y1 = int(self.eval_expr(match.group(2).strip()))
             x2 = int(self.eval_expr(match.group(3).strip()))
             y2 = int(self.eval_expr(match.group(4).strip()))
-            array_name = match.group(5).upper()
+            array_ref = match.group(5).strip()
 
             if not self.running:
                 return False
+
+            # Parse array reference to get base name and optional index
+            # Format: ArrayName[(index)] or ArrayName&[(index)]
+            paren_pos = array_ref.find('(')
+            if paren_pos != -1:
+                # Has index - evaluate to get unique key
+                array_name = array_ref[:paren_pos].upper()
+                index_expr = array_ref[paren_pos+1:-1]  # Remove outer parens
+                index = int(self.eval_expr(index_expr))
+                if not self.running:
+                    return False
+                sprite_key = f"{array_name}_{index}"
+            else:
+                array_name = array_ref.upper()
+                sprite_key = array_name
 
             # Ensure coordinates are in order
             if x1 > x2:
@@ -333,16 +350,36 @@ class GraphicsCommandsMixin:
             width = x2 - x1 + 1
             height = y2 - y1 + 1
 
-            # Capture the screen region as a pygame surface
+            # Capture the screen region
             if self.surface:
+                # Initialize sprites dict if not exists
+                if not hasattr(self, '_sprites'):
+                    self._sprites = {}
+
+                # Capture palette indices if available (Screen 13 mode)
+                indices = None
+                if hasattr(self, '_pixel_indices') and self._pixel_indices is not None:
+                    indices = bytearray(width * height)
+                    for py in range(height):
+                        for px in range(width):
+                            src_idx = (y1 + py) * self.screen_width + (x1 + px)
+                            if src_idx < len(self._pixel_indices):
+                                indices[py * width + px] = self._pixel_indices[src_idx]
+
+                # Also capture the current surface (for fallback/non-indexed modes)
                 captured = self.surface.subsurface((x1, y1, width, height)).copy()
-                # Store metadata and surface in a special format
-                self.variables[array_name] = {
+
+                # Store sprite with unique key based on array name and index
+                self._sprites[sprite_key] = {
                     '_sprite': True,
                     'width': width,
                     'height': height,
-                    'surface': captured
+                    'surface': captured,
+                    'indices': indices  # Palette indices for Screen 13
                 }
+                # Also store in variables for simple array name lookups
+                if paren_pos == -1:
+                    self.variables[array_name] = self._sprites[sprite_key]
 
             return False
         except Exception as e:
@@ -350,7 +387,7 @@ class GraphicsCommandsMixin:
             return False
 
     def _do_put_graphics(self: 'BasicInterpreter', match: Any, pc: int) -> bool:
-        """Handle PUT (x, y), array[, mode] - display sprite from array.
+        """Handle PUT (x, y), array[(index)][, mode] - display sprite from array.
 
         Modes:
         - PSET: Copy sprite directly
@@ -369,19 +406,59 @@ class GraphicsCommandsMixin:
         try:
             x = int(self.eval_expr(match.group(1).strip()))
             y = int(self.eval_expr(match.group(2).strip()))
-            array_name = match.group(3).upper()
+            array_ref = match.group(3).strip()
             mode = (match.group(4) or "XOR").upper()
 
             if not self.running:
                 return False
 
-            # Get the sprite data
-            sprite_data = self.variables.get(array_name)
+            # Parse array reference to get base name and optional index
+            paren_pos = array_ref.find('(')
+            if paren_pos != -1:
+                # Has index - evaluate to get unique key
+                array_name = array_ref[:paren_pos].upper()
+                index_expr = array_ref[paren_pos+1:-1]  # Remove outer parens
+                index = int(self.eval_expr(index_expr))
+                if not self.running:
+                    return False
+                sprite_key = f"{array_name}_{index}"
+            else:
+                array_name = array_ref.upper()
+                sprite_key = array_name
+
+            # Get the sprite data from _sprites dict or variables
+            sprite_data = None
+            if hasattr(self, '_sprites') and sprite_key in self._sprites:
+                sprite_data = self._sprites[sprite_key]
+            else:
+                sprite_data = self.variables.get(array_name)
+
             if not sprite_data or not isinstance(sprite_data, dict) or not sprite_data.get('_sprite'):
-                print(f"Error: Array '{array_name}' does not contain sprite data at PC {pc}")
+                # Silently skip if no sprite (common in games during initialization)
                 return False
 
-            sprite_surface = sprite_data['surface']
+            width = sprite_data['width']
+            height = sprite_data['height']
+            sprite_indices = sprite_data.get('indices')
+
+            # If we have palette indices, convert them to RGB using current palette
+            # This allows sprites captured at one palette state to display correctly
+            # when the palette has been changed (e.g., after PALETTE reset)
+            if sprite_indices is not None and self.surface:
+                # Create a fresh surface using current palette colors
+                sprite_surface = pygame.Surface((width, height)).convert()
+                sprite_surface.fill((0, 0, 0))  # Fill with transparent/black
+
+                for py in range(height):
+                    for px in range(width):
+                        idx = py * width + px
+                        if idx < len(sprite_indices):
+                            palette_idx = sprite_indices[idx]
+                            # Use current colors dict, fall back to VGA_256_PALETTE
+                            color = self.colors.get(palette_idx, VGA_256_PALETTE.get(palette_idx, (palette_idx, palette_idx, palette_idx)))
+                            sprite_surface.set_at((px, py), color)
+            else:
+                sprite_surface = sprite_data['surface']
 
             if self.surface and sprite_surface:
                 if mode == "PSET":
@@ -398,12 +475,17 @@ class GraphicsCommandsMixin:
                     self.surface.blit(sprite_surface, (x, y), special_flags=pygame.BLEND_RGB_ADD)
                 elif mode == "XOR":
                     # XOR mode - need to implement manually
-                    temp = self.surface.subsurface((x, y, sprite_data['width'], sprite_data['height'])).copy()
-                    arr1 = pygame.surfarray.pixels3d(temp)
-                    arr2 = pygame.surfarray.pixels3d(sprite_surface)
-                    arr1 ^= arr2
-                    del arr1, arr2
-                    self.surface.blit(temp, (x, y))
+                    # Check bounds to avoid errors
+                    if x >= 0 and y >= 0 and x + width <= self.screen_width and y + height <= self.screen_height:
+                        temp = self.surface.subsurface((x, y, width, height)).copy()
+                        arr1 = pygame.surfarray.pixels3d(temp)
+                        arr2 = pygame.surfarray.pixels3d(sprite_surface)
+                        arr1 ^= arr2
+                        del arr1, arr2
+                        self.surface.blit(temp, (x, y))
+                    else:
+                        # Fallback to simple blit for out-of-bounds
+                        self.surface.blit(sprite_surface, (x, y))
                 self.mark_dirty()
 
             return False

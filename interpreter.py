@@ -19,7 +19,7 @@ from constants import (
     DEFAULT_SCREEN_WIDTH, DEFAULT_SCREEN_HEIGHT, MAX_STEPS_PER_FRAME,
     PRINT_TAB_WIDTH, EXPR_CACHE_MAX_SIZE, COMPILED_CACHE_MAX_SIZE,
     IDENTIFIER_CACHE_MAX_SIZE, SCREEN_MODES, DEFAULT_COLORS,
-    DEFAULT_FG_COLOR, DEFAULT_BG_COLOR, DEFAULT_ARRAY_SIZE
+    DEFAULT_FG_COLOR, DEFAULT_BG_COLOR, DEFAULT_ARRAY_SIZE, VGA_256_PALETTE
 )
 from commands.audio import AudioCommandsMixin
 from commands.graphics import GraphicsCommandsMixin
@@ -36,9 +36,10 @@ except ImportError:
 # --- Custom Exceptions ---
 class BasicRuntimeError(Exception):
     """Exception raised during BASIC runtime that can be caught by ON ERROR GOTO."""
-    def __init__(self, message, error_type="runtime"):
+    def __init__(self, message, error_type="runtime", error_code=5):
         super().__init__(message)
         self.error_type = error_type
+        self.error_code = error_code  # Default to 5 (Illegal function call)
 
 
 # --- Custom dict for eval that returns 0 for undefined numeric variables ---
@@ -180,6 +181,14 @@ _rnd_bare_re = re.compile(r'\bRND\b(?!\s*\()', re.IGNORECASE)  # RND -> RND()
 _csrlin_re = re.compile(r'\bCSRLIN\b(?!\s*\()', re.IGNORECASE)  # CSRLIN -> CSRLIN()
 _command_re = re.compile(r'\bCOMMAND\$', re.IGNORECASE)  # COMMAND$ -> COMMAND()
 _freefile_re = re.compile(r'\bFREEFILE\b(?!\s*\()', re.IGNORECASE)  # FREEFILE -> FREEFILE()
+_erl_re = re.compile(r'\bERL\b(?!\s*\()', re.IGNORECASE)  # ERL -> ERL()
+_err_re = re.compile(r'\bERR\b(?!\s*\()', re.IGNORECASE)  # ERR -> ERR()
+_erdev_str_re = re.compile(r'\bERDEV\$', re.IGNORECASE)  # ERDEV$ -> ERDEVSTR()
+_erdev_re = re.compile(r'\bERDEV\b(?!\s*\(|\$)', re.IGNORECASE)  # ERDEV -> ERDEV() (not followed by $ or ()
+_ioctl_str_re = re.compile(r'\bIOCTL\$\s*\(', re.IGNORECASE)  # IOCTL$(arg) -> IOCTLSTR(arg)
+# MS Binary Format conversion functions ($ -> STR)
+_mksmbf_str_re = re.compile(r'\bMKSMBF\$\s*\(', re.IGNORECASE)  # MKSMBF$(arg) -> MKSMBFSTR(arg)
+_mkdmbf_str_re = re.compile(r'\bMKDMBF\$\s*\(', re.IGNORECASE)  # MKDMBF$(arg) -> MKDMBFSTR(arg)
 
 # General pattern for NAME(...) or NAME$(...) which could be a function call or array access
 # Uses nested paren pattern to handle cases like func(a(), b) or arr(func(x))
@@ -191,13 +200,14 @@ _func_or_array_re = re.compile(
 # General identifier pattern (variables, constants)
 # It should run after specific function/array patterns have transformed their part of the string.
 # Note: No trailing \b because $ and % are not word characters
-_identifier_re = re.compile(r'\b([a-zA-Z_][a-zA-Z0-9_]*[\$%#!&]?)')  # Match identifiers with optional type suffix
+_identifier_re = re.compile(r'\b([a-zA-Z_][a-zA-Z0-9_.]*[\$%#!&]?)')  # Match identifiers with optional type suffix (QBasic allows dots in names)
 
 
 # --- Command Parsing Patterns (mostly unchanged but reviewed) ---
 # Labels: numeric (100 PRINT), numeric with colon (1:), or identifier with colon (Start:)
-_label_re = re.compile(r"^\s*(\d+:?|[a-zA-Z_][a-zA-Z0-9_]*:)")
-_label_strip_re = re.compile(r"^\s*(\d+:?\s*|[a-zA-Z_][a-zA-Z0-9_]*:)\s*")
+# QBasic allows dots in label names (e.g., instruct.y.n:)
+_label_re = re.compile(r"^\s*(\d+:?|[a-zA-Z_][a-zA-Z0-9_.]*:)")
+_label_strip_re = re.compile(r"^\s*(\d+:?\s*|[a-zA-Z_][a-zA-Z0-9_.]*:)\s*")
 _for_re = re.compile(
     r'FOR\s+([a-zA-Z_][a-zA-Z0-9_]*[\$%!#&]?)\s*=\s*(.+?)\s+TO\s+(.+?)(?:\s+STEP\s+(.+))?$', re.IGNORECASE)
 _dim_re = re.compile(r'DIM\s+([a-zA-Z_][a-zA-Z0-9_]*[\$%!#&]?)\s*\(([^)]+)\)(?:\s+AS\s+(\w+))?', re.IGNORECASE)
@@ -206,7 +216,9 @@ _dim_as_re = re.compile(r'DIM\s+([a-zA-Z_][a-zA-Z0-9_]*)\s+AS\s+(\w+)', re.IGNOR
 # DIM var (simple scalar variable declaration without AS type or array)
 _dim_scalar_re = re.compile(r'DIM\s+([a-zA-Z_][a-zA-Z0-9_]*[\$%!#&]?)(?:\s*,\s*([a-zA-Z_][a-zA-Z0-9_]*[\$%!#&]?))*$', re.IGNORECASE)
 # Match: var = expr, var$ = expr, arr(i) = expr, p.X = expr, arr(i).X = expr, var# = expr
-_assign_re = re.compile(r'^(?:LET\s+)?([a-zA-Z_][a-zA-Z0-9_]*[\$%!#&]?(?:\s*\([^)]+\))?(?:\.[a-zA-Z_][a-zA-Z0-9_]*)?)\s*=(.*)$', re.IGNORECASE)
+# QBasic allows dots in variable names (e.g., Flicker.Control, instruct.y.n)
+# The pattern now supports: arr(i).member = expr (type member access on array element)
+_assign_re = re.compile(r'^(?:LET\s+)?([a-zA-Z_][a-zA-Z0-9_.]*[\$%!#&]?(?:\s*\([^)]+\))?(?:\.[a-zA-Z_][a-zA-Z0-9_]*)?)\s*=(.*)$', re.IGNORECASE)
 # Pattern to extract array name and indices from LHS like "ARR(1, 2)"
 _assign_lhs_array_re = re.compile(r'([a-zA-Z_][a-zA-Z0-9_]*[\$%!#&]?)\s*\(([^)]+)\)')
 
@@ -232,12 +244,12 @@ _screen_re = re.compile(r"SCREEN\s+(.+)", re.IGNORECASE)
 _cls_re = re.compile(r"CLS", re.IGNORECASE)
 _end_re = re.compile(r"END", re.IGNORECASE)
 _randomize_re = re.compile(r"RANDOMIZE(?:\s+(.*))?", re.IGNORECASE)
-_next_re = re.compile(r"NEXT(?:\s+([a-zA-Z_][a-zA-Z0-9_]*[\$%!#&]?))?", re.IGNORECASE)
+_next_re = re.compile(r"NEXT(?:\s+(.+))?", re.IGNORECASE)
 _delay_re = re.compile(r"(?:_DELAY|SLEEP)\s+(.*)", re.IGNORECASE)
 _do_re = re.compile(r"DO(?:\s+(WHILE|UNTIL)\s+(.+))?", re.IGNORECASE)
 _loop_re = re.compile(r"LOOP(?:\s+(WHILE|UNTIL)\s+(.+))?", re.IGNORECASE)
-_const_re = re.compile(r"CONST\s+([a-zA-Z_][a-zA-Z0-9_]*\$?)\s*=(.*)", re.IGNORECASE)
-_color_re = re.compile(r"COLOR(?:\s*([^,]+))?(?:\s*,\s*(.+))?", re.IGNORECASE)
+_const_re = re.compile(r"CONST\s+(.*)", re.IGNORECASE)
+_color_re = re.compile(r"COLOR\b(?:\s*([^,]+))?(?:\s*,\s*(.+))?", re.IGNORECASE)
 _rem_re = re.compile(r"REM\b.*", re.IGNORECASE)
 _exit_do_re = re.compile(r"EXIT\s+DO", re.IGNORECASE)
 _exit_for_re = re.compile(r"EXIT\s+FOR", re.IGNORECASE)
@@ -331,6 +343,12 @@ _on_strig_re = LazyPattern(r"ON\s+STRIG\s*\((\d+)\)\s+GOSUB\s+([a-zA-Z0-9_]+)", 
 # STRIG(n) ON/OFF/STOP - Enable/disable joystick button events (lazy - rarely used)
 _strig_on_off_re = LazyPattern(r"STRIG\s*\((\d+)\)\s+(ON|OFF|STOP)", re.IGNORECASE)
 
+# ON COM(n) GOSUB - Serial port event handler (lazy - rarely used, emulated no-op)
+_on_com_re = LazyPattern(r"ON\s+COM\s*\((\d+)\)\s+GOSUB\s+([a-zA-Z0-9_]+)", re.IGNORECASE)
+
+# COM(n) ON/OFF/STOP - Enable/disable serial port events (lazy - rarely used, emulated no-op)
+_com_on_off_re = LazyPattern(r"COM\s*\((\d+)\)\s+(ON|OFF|STOP)", re.IGNORECASE)
+
 # ON PEN GOSUB - Light pen event handler (lazy - rarely used)
 _on_pen_re = LazyPattern(r"ON\s+PEN\s+GOSUB\s+([a-zA-Z0-9_]+)", re.IGNORECASE)
 
@@ -373,6 +391,11 @@ _def_seg_re = LazyPattern(r"DEF\s+SEG(?:\s*=\s*(.+))?", re.IGNORECASE)
 # POKE - Write to memory (lazy - rarely used, emulated)
 _poke_re = LazyPattern(r"POKE\s+([^,]+)\s*,\s*(.+)", re.IGNORECASE)
 
+# BLOAD - Load binary file to memory (lazy - rarely used)
+_bload_re = LazyPattern(r"BLOAD\s+(.+)", re.IGNORECASE)
+# BSAVE - Save memory block to binary file (lazy - rarely used)
+_bsave_re = LazyPattern(r"BSAVE\s+(.+)", re.IGNORECASE)
+
 # COMMON SHARED - Global variable declaration (lazy - rarely used)
 _common_shared_re = LazyPattern(r"COMMON\s+SHARED\s+(.+)", re.IGNORECASE)
 
@@ -383,13 +406,14 @@ _common_re = LazyPattern(r"COMMON\s+(?!SHARED\s)(.+)", re.IGNORECASE)
 _dim_shared_re = re.compile(r"DIM\s+SHARED\s+(.+)", re.IGNORECASE)
 
 # Coordinate expression pattern - handles nested function calls like Scl(15)
-_coord_expr = r'(?:[^(),]+|\([^()]*\))+'
+# Updated to handle 2 levels of nesting for expressions like (Block(B).y * 16)
+_coord_expr = r'(?:[^(),]+|\((?:[^()]+|\([^()]*\))*\))+'
 
-# GET (graphics) - Capture screen region (array name can have type suffix like &)
-_get_gfx_re = re.compile(rf"GET\s*\(\s*({_coord_expr})\s*,\s*({_coord_expr})\s*\)\s*-\s*\(\s*({_coord_expr})\s*,\s*({_coord_expr})\s*\)\s*,\s*([a-zA-Z_][a-zA-Z0-9_]*[\$%!#&]?)", re.IGNORECASE)
+# GET (graphics) - Capture screen region (array name can have type suffix like & and optional index)
+_get_gfx_re = re.compile(rf"GET\s*\(\s*({_coord_expr})\s*,\s*({_coord_expr})\s*\)\s*-\s*\(\s*({_coord_expr})\s*,\s*({_coord_expr})\s*\)\s*,\s*(.+)", re.IGNORECASE)
 
-# PUT (graphics) - Display sprite (array name can have type suffix like &)
-_put_gfx_re = re.compile(rf"PUT\s*\(\s*({_coord_expr})\s*,\s*({_coord_expr})\s*\)\s*,\s*([a-zA-Z_][a-zA-Z0-9_]*[\$%!#&]?)(?:\s*,\s*(PSET|PRESET|AND|OR|XOR))?", re.IGNORECASE)
+# PUT (graphics) - Display sprite (array name can have type suffix like & and optional index)
+_put_gfx_re = re.compile(rf"PUT\s*\(\s*({_coord_expr})\s*,\s*({_coord_expr})\s*\)\s*,\s*([^,]+)(?:\s*,\s*(PSET|PRESET|AND|OR|XOR))?", re.IGNORECASE)
 
 # ON ERROR GOTO - Error handler
 _on_error_re = re.compile(r"ON\s+ERROR\s+GOTO\s+([a-zA-Z0-9_]+)", re.IGNORECASE)
@@ -496,7 +520,8 @@ _time_assign_re = re.compile(r"TIME\$\s*=\s*(.+)", re.IGNORECASE)
 
 # Expression caches using LRU to prevent unbounded memory growth
 _expr_cache: LRUCache = LRUCache(maxsize=EXPR_CACHE_MAX_SIZE)  # Cache for BASIC to Python expression conversion
-_identifier_cache: LRUCache = LRUCache(maxsize=IDENTIFIER_CACHE_MAX_SIZE)  # Cache for identifier name conversions
+# Use simple dict for identifier cache - identifiers are bounded in number and LRU eviction is unnecessary
+_identifier_cache: Dict[str, str] = {}  # Cache for identifier name conversions (no LRU overhead)
 _python_keywords = {'and', 'or', 'not', 'in', 'is', 'lambda', 'if', 'else', 'elif', 'while', 'for', 'try', 'except', 'finally', 'with', 'as', 'def', 'class', 'import', 'from', 'pass', 'break', 'continue', 'return', 'yield', 'global', 'nonlocal', 'assert', 'del', 'True', 'False', 'None'}
 # Python builtins used in generated code (for array indexing) - keep lowercase
 _python_builtins_used = {'int'}
@@ -525,10 +550,26 @@ _basic_function_names = {
     'FRE', 'PEEK', 'INP', 'FREEFILE', 'LOF', 'EOF', 'LOC',
     # Binary conversion functions
     'MKI', 'MKL', 'MKS', 'MKD', 'CVI', 'CVL', 'CVS', 'CVD',
+    # MS Binary Format conversion (legacy format)
+    'CVSMBF', 'CVDMBF', 'MKSMBFSTR', 'MKDMBFSTR',
+    # Coordinate mapping function
+    'PMAP',
     # Memory address functions (emulated)
     'VARPTR', 'VARSEG', 'SADD',
     # Music function (as callable)
-    'PLAY'
+    'PLAY',
+    # Error handling functions
+    'ERL', 'ERR',
+    # Printer functions
+    'LPOS',
+    # Device error functions
+    'ERDEV', 'ERDEVSTR',
+    # File attribute function
+    'FILEATTR',
+    # Memory function
+    'SETMEM',
+    # Device control function
+    'IOCTLSTR'
 }
 
 # --- Expression Conversion Logic ---
@@ -539,14 +580,19 @@ def _basic_to_python_identifier(basic_name_str: str) -> str:
     Results are cached for performance since this function is called frequently
     during expression evaluation. The cache is case-insensitive to avoid storing
     redundant entries for 'Var', 'VAR', and 'var' which all produce the same result.
+
+    Handles:
+    - Type suffixes ($, %, #, !, &)
+    - Dots in variable names (QBasic allows them, e.g., Flicker.Control)
     """
     # Normalize to uppercase for case-insensitive caching
     # This avoids storing separate cache entries for 'Var', 'VAR', 'var', etc.
     normalized = basic_name_str.upper()
 
-    # Check cache first using normalized key
-    if normalized in _identifier_cache:
-        return _identifier_cache[normalized]
+    # Check cache first using dict.get() for single lookup (faster than __contains__ + __getitem__)
+    cached = _identifier_cache.get(normalized)
+    if cached is not None:
+        return cached
 
     # Compute result based on type suffix
     if normalized.endswith('$'):
@@ -561,6 +607,10 @@ def _basic_to_python_identifier(basic_name_str: str) -> str:
         result = normalized[:-1] + "_LNG"  # Long integer
     else:
         result = normalized
+
+    # Convert dots to underscores for valid Python identifier
+    # QBasic allows dots in variable names (e.g., Flicker.Control)
+    result = result.replace('.', '_DOT_')
 
     # Store in cache using normalized key
     _identifier_cache[normalized] = result
@@ -708,8 +758,20 @@ def _protect_strings(expr: str) -> Tuple[str, List[str]]:
     return ''.join(result), strings
 
 def _restore_strings(expr: str, strings: List[str]) -> str:
-    """Restore string literals from placeholders."""
+    """Restore string literals from placeholders.
+
+    Also escapes backslashes in string content so Python interprets them
+    correctly. BASIC string "\" becomes Python string "\\" to represent
+    a literal backslash.
+    """
     for i, s in enumerate(strings):
+        # Escape backslashes in string content for Python
+        # The string s includes quotes, e.g., "text" or "\"
+        if len(s) >= 2 and s.startswith('"') and s.endswith('"'):
+            # Extract content, escape backslashes, put quotes back
+            content = s[1:-1]
+            escaped_content = content.replace('\\', '\\\\')
+            s = '"' + escaped_content + '"'
         expr = expr.replace(f"__STR{i}__", s)
     return expr
 
@@ -737,6 +799,13 @@ def convert_basic_expr(expr: str, known_identifiers: Optional[set] = None) -> st
     expr = _csrlin_re.sub("CSRLIN()", expr)
     expr = _command_re.sub("COMMAND()", expr)
     expr = _freefile_re.sub("FREEFILE()", expr)
+    expr = _erl_re.sub("ERL()", expr)
+    expr = _err_re.sub("ERR()", expr)
+    expr = _erdev_str_re.sub("ERDEVSTR()", expr)  # ERDEV$ -> ERDEVSTR()
+    expr = _erdev_re.sub("ERDEV()", expr)  # ERDEV -> ERDEV()
+    expr = _ioctl_str_re.sub("IOCTLSTR(", expr)  # IOCTL$(arg) -> IOCTLSTR(arg)
+    expr = _mksmbf_str_re.sub("MKSMBFSTR(", expr)  # MKSMBF$(arg) -> MKSMBFSTR(arg)
+    expr = _mkdmbf_str_re.sub("MKDMBFSTR(", expr)  # MKDMBF$(arg) -> MKDMBFSTR(arg)
 
     # 1b. User-defined FN function calls: FN name(args) or FNname(args)
     expr = _fn_call_re.sub(_replace_fn_call, expr)
@@ -769,7 +838,7 @@ def convert_basic_expr(expr: str, known_identifiers: Optional[set] = None) -> st
     # Clean up any leading/trailing whitespace that might cause syntax errors
     expr = expr.strip()
 
-    # 3.5 Handle type member access
+    # 3.5 Handle type member access for arrays (arr(i).member)
     # First handle array element member access: arr[i].member -> arr[i]['MEMBER']
     # After array conversion, we have square brackets, not parentheses
     expr = re.sub(r'\]\.([a-zA-Z_][a-zA-Z0-9_]*)',
@@ -777,9 +846,10 @@ def convert_basic_expr(expr: str, known_identifiers: Optional[set] = None) -> st
     # Also handle unconverted form (with parentheses): arr(i).member -> arr(i)['MEMBER']
     expr = re.sub(r'\)\.([a-zA-Z_][a-zA-Z0-9_]*)',
                   lambda m: f")['{m.group(1).upper()}']", expr)
-    # Then handle simple type member access: p.X -> P['X']
-    expr = re.sub(r'([a-zA-Z_][a-zA-Z0-9_]*)\.([a-zA-Z_][a-zA-Z0-9_]*)',
-                  lambda m: f"{m.group(1).upper()}['{m.group(2).upper()}']", expr)
+    # NOTE: Simple type member access (p.X -> P['X']) is NOT converted here
+    # because QBasic also allows dots in regular variable names (e.g., Flicker.Control)
+    # The _identifier_re pattern now includes dots, so player1.score -> PLAYER1_DOT_SCORE
+    # User-defined type access with simple variables must be handled via explicit DIM AS TYPE
 
     # 4. Remaining identifiers (variables, constants not part of function calls)
     expr = _identifier_re.sub(_convert_identifier_in_expr, expr)
@@ -850,6 +920,9 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
         self._cached_scaled_surface: Optional[pygame.Surface] = None
         self.last_rnd_value: Optional[float] = None
 
+        # Source file directory for resolving relative paths
+        self.source_dir: str = os.getcwd()
+
         # INPUT statement state
         self.input_mode: bool = False
         self.input_buffer: str = ""
@@ -892,6 +965,8 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
         self.error_handler_label: Optional[str] = None
         self.error_resume_pc: int = -1
         self.in_error_handler: bool = False
+        self.error_line: int = -1  # Line number where last error occurred (for ERL), -1 = no error
+        self.error_code: int = 0  # Error code of last error (for ERR)
 
         # SUB/FUNCTION definitions: name -> (params, body_start_pc, body_end_pc, is_static)
         self.procedures: Dict[str, Dict[str, Any]] = {}
@@ -923,6 +998,10 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
         self.draw_y: float = 0
         self.draw_angle: int = 0  # 0=right, 90=down, 180=left, 270=up
         self.draw_pen_down: bool = True
+
+        # Screen 13 (256-color) mode state
+        self._screen_mode: int = 0  # Current screen mode
+        self._pixel_indices: Optional[bytearray] = None  # Raw palette indices for SCREEN 13
 
         # VIEW - graphics viewport (physical screen coordinates)
         self.view_x1: int = 0
@@ -1051,6 +1130,13 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
             "CVL": self._basic_cvl,  # Convert 4-byte string to long
             "CVS": self._basic_cvs,  # Convert 4-byte string to single
             "CVD": self._basic_cvd,  # Convert 8-byte string to double
+            # MS Binary Format conversion (legacy format)
+            "CVSMBF": self._basic_cvsmbf,  # Convert MBF single to IEEE single
+            "CVDMBF": self._basic_cvdmbf,  # Convert MBF double to IEEE double
+            "MKSMBFSTR": self._basic_mksmbf,  # Convert IEEE single to MBF (MKSMBF$ -> MKSMBFSTR)
+            "MKDMBFSTR": self._basic_mkdmbf,  # Convert IEEE double to MBF (MKDMBF$ -> MKDMBFSTR)
+            # Coordinate mapping function
+            "PMAP": self._basic_pmap,  # Map between physical and logical coordinates
             # Memory address functions (emulated)
             "VARPTR": self._basic_varptr,  # Get variable address
             "VARSEG": self._basic_varseg,  # Get variable segment
@@ -1067,6 +1153,20 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
             "MULTIKEY": self._basic_keydown,  # Alias for KEYDOWN (compatibility)
             # Array access with lower bound adjustment
             "_ARRGET_": self._array_get,  # Access array element with bounds check
+            # Error handling functions
+            "ERL": self._basic_erl,  # Get error line number
+            "ERR": self._basic_err,  # Get error code
+            # Printer functions (emulated)
+            "LPOS": self._basic_lpos,  # Printer head position
+            # Device error functions (emulated)
+            "ERDEV": self._basic_erdev,  # Device error code
+            "ERDEVSTR": self._basic_erdev_str,  # Device error name (ERDEV$ -> ERDEVSTR)
+            # File attribute function
+            "FILEATTR": self._basic_fileattr,  # File attributes (mode, handle)
+            # Memory function (emulated)
+            "SETMEM": self._basic_setmem,  # Adjust far heap memory
+            # Device control function (emulated)
+            "IOCTLSTR": self._basic_ioctl_str,  # IOCTL$ -> IOCTLSTR
         }
 
         # Build command dispatch table for O(1) keyword lookup
@@ -1132,6 +1232,7 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
             "CHDIR": self._cmd_chdir,
             "FILES": self._cmd_files,
             "SEEK": self._cmd_seek,
+            "IOCTL": self._cmd_ioctl,
             # Data
             "DATA": self._cmd_data,
             "READ": self._cmd_read,
@@ -1518,6 +1619,12 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
     def _cmd_seek(self, statement: str, pc: int) -> Optional[bool]:
         """Handle SEEK statement - delegated to original logic for now."""
         return None
+
+    def _cmd_ioctl(self, statement: str, pc: int) -> Optional[bool]:
+        """Handle IOCTL statement - sends control string to device driver.
+        Since we don't have actual device drivers, this is a no-op."""
+        # IOCTL #file_num, control_string$ - ignored (no real device drivers)
+        return False  # Statement handled, no PC change
 
     def _cmd_data(self, statement: str, pc: int) -> Optional[bool]:
         """Handle DATA statement - delegated to original logic for now."""
@@ -1948,6 +2055,182 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
             s = s + '\0' * (8 - len(s))
         return struct.unpack('<d', s[:8].encode('latin-1'))[0]
 
+    def _basic_cvsmbf(self, s: str) -> float:
+        """CVSMBF(s$) - Convert 4-byte Microsoft Binary Format string to IEEE single.
+
+        MBF Single format (4 bytes):
+        - Byte 3: Exponent (biased by 128)
+        - Byte 2: Sign (bit 7) + high 7 bits of mantissa
+        - Bytes 1-0: Lower 16 bits of mantissa
+        """
+        if len(s) < 4:
+            s = s + '\0' * (4 - len(s))
+        data = s[:4].encode('latin-1')
+
+        exponent = data[3]
+        if exponent == 0:
+            return 0.0
+
+        # Extract sign bit (1 = negative)
+        sign = 1 if (data[2] & 0x80) == 0 else -1
+
+        # Build 24-bit mantissa with implied leading 1
+        # The sign bit position contains the implicit 1
+        mantissa = ((data[2] | 0x80) << 16) | (data[1] << 8) | data[0]
+
+        # In MBF, the value is: sign * (mantissa / 2^24) * 2^(exponent - 128)
+        # Which simplifies to: sign * mantissa * 2^(exponent - 152)
+        return sign * mantissa * (2.0 ** (exponent - 152))
+
+    def _basic_cvdmbf(self, s: str) -> float:
+        """CVDMBF(s$) - Convert 8-byte Microsoft Binary Format string to IEEE double.
+
+        MBF Double format (8 bytes):
+        - Byte 7: Exponent (biased by 128)
+        - Byte 6: Sign (bit 7) + high 7 bits of mantissa
+        - Bytes 5-0: Lower 48 bits of mantissa
+        """
+        if len(s) < 8:
+            s = s + '\0' * (8 - len(s))
+        data = s[:8].encode('latin-1')
+
+        exponent = data[7]
+        if exponent == 0:
+            return 0.0
+
+        sign = 1 if (data[6] & 0x80) == 0 else -1
+
+        # Build 56-bit mantissa with implied leading 1
+        mantissa = (data[6] | 0x80)
+        for i in range(5, -1, -1):
+            mantissa = (mantissa << 8) | data[i]
+
+        # Value is: sign * (mantissa / 2^56) * 2^(exponent - 128)
+        # = sign * mantissa * 2^(exponent - 184)
+        return sign * mantissa * (2.0 ** (exponent - 184))
+
+    def _basic_mksmbf(self, value: float) -> str:
+        """MKSMBF$(n) - Convert IEEE single to 4-byte Microsoft Binary Format string."""
+        import math
+
+        if value == 0.0:
+            return '\x00\x00\x00\x00'
+
+        # Get sign
+        sign = 0 if value >= 0 else 0x80
+        value = abs(value)
+
+        # Get exponent and mantissa using frexp
+        # frexp returns: value = mantissa * 2^exp where 0.5 <= mantissa < 1
+        mantissa, exp = math.frexp(value)
+
+        # MBF exponent is exp + 128
+        mbf_exp = exp + 128
+
+        # Clamp exponent to valid range
+        if mbf_exp < 1:
+            return '\x00\x00\x00\x00'  # Underflow to zero
+        if mbf_exp > 255:
+            mbf_exp = 255  # Overflow, saturate
+
+        # Convert mantissa to 24-bit integer
+        mantissa_int = int(mantissa * (1 << 24))
+
+        # Build bytes
+        byte0 = mantissa_int & 0xFF
+        byte1 = (mantissa_int >> 8) & 0xFF
+        byte2 = ((mantissa_int >> 16) & 0x7F) | sign  # Replace high bit with sign
+        byte3 = mbf_exp
+
+        return bytes([byte0, byte1, byte2, byte3]).decode('latin-1')
+
+    def _basic_mkdmbf(self, value: float) -> str:
+        """MKDMBF$(n) - Convert IEEE double to 8-byte Microsoft Binary Format string."""
+        import math
+
+        if value == 0.0:
+            return '\x00' * 8
+
+        sign = 0 if value >= 0 else 0x80
+        value = abs(value)
+
+        mantissa, exp = math.frexp(value)
+        mbf_exp = exp + 128
+
+        if mbf_exp < 1:
+            return '\x00' * 8
+        if mbf_exp > 255:
+            mbf_exp = 255
+
+        # Convert mantissa to 56-bit integer
+        mantissa_int = int(mantissa * (1 << 56))
+
+        # Build bytes
+        result = []
+        for i in range(6):
+            result.append(mantissa_int & 0xFF)
+            mantissa_int >>= 8
+        result.append((mantissa_int & 0x7F) | sign)  # Byte 6: sign + high mantissa
+        result.append(mbf_exp)  # Byte 7: exponent
+
+        return bytes(result).decode('latin-1')
+
+    def _basic_pmap(self, coordinate: float, function: int) -> float:
+        """PMAP(coordinate, function) - Map between physical and logical coordinates.
+
+        Function values:
+        0: Maps logical x-coordinate to physical x-coordinate
+        1: Maps logical y-coordinate to physical y-coordinate
+        2: Maps physical x-coordinate to logical x-coordinate
+        3: Maps physical y-coordinate to logical y-coordinate
+        """
+        function = int(function)
+
+        # Get viewport bounds
+        vx1 = self.view_x1
+        vy1 = self.view_y1
+        vx2 = self.view_x2 if self.view_x2 is not None else self.screen_width - 1
+        vy2 = self.view_y2 if self.view_y2 is not None else self.screen_height - 1
+
+        # If no WINDOW set, logical = physical
+        if self.window_x1 is None:
+            return float(coordinate)
+
+        # Viewport and window dimensions
+        vw = vx2 - vx1
+        vh = vy2 - vy1
+        ww = self.window_x2 - self.window_x1
+        wh = self.window_y2 - self.window_y1
+
+        if ww == 0 or wh == 0:
+            return float(coordinate)
+
+        if function == 0:
+            # Logical X to physical X
+            px = vx1 + (coordinate - self.window_x1) * vw / ww
+            return px
+        elif function == 1:
+            # Logical Y to physical Y
+            if self.window_screen_mode:
+                py = vy1 + (coordinate - self.window_y1) * vh / wh
+            else:
+                py = vy2 - (coordinate - self.window_y1) * vh / wh
+            return py
+        elif function == 2:
+            # Physical X to logical X
+            lx = self.window_x1 + (coordinate - vx1) * ww / vw
+            return lx
+        elif function == 3:
+            # Physical Y to logical Y
+            if self.window_screen_mode:
+                ly = self.window_y1 + (coordinate - vy1) * wh / vh
+            else:
+                ly = self.window_y1 + (vy2 - coordinate) * wh / vh
+            return ly
+        else:
+            # Invalid function, return coordinate unchanged
+            return float(coordinate)
+
     def _basic_varptr(self, var_name: Any) -> int:
         """VARPTR(variable) - Get variable address (emulated).
         Returns a unique emulated address for the variable."""
@@ -1978,6 +2261,92 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
         # In QBasic, PLAY(n) returns the number of notes in the background
         # music buffer. We don't implement background music, so return 0.
         return 0
+
+    def _basic_erl(self) -> int:
+        """ERL - Returns the line number where the last error occurred.
+        Returns 0 if no error has occurred.
+        Note: Returns 1-indexed line numbers for QBasic compatibility."""
+        # Return 1-indexed line number (add 1 to internal 0-indexed line)
+        # error_line is -1 when no error, otherwise it's the 0-indexed line number
+        if self.error_line < 0:
+            return 0  # No error has occurred
+        return self.error_line + 1
+
+    def _basic_err(self) -> int:
+        """ERR - Returns the error code of the last error.
+        Returns 0 if no error has occurred."""
+        return self.error_code
+
+    def _basic_lpos(self, printer_num: int = 0) -> int:
+        """LPOS(n) - Returns the current horizontal position of the printer head.
+        In QBasic, n specifies the printer number (0 for LPT1).
+        Since we don't have actual printer support, this returns 1 (start of line)."""
+        # LPOS returns 1-based column position
+        # Return 1 to indicate start of line (emulated)
+        return 1
+
+    def _basic_erdev(self) -> int:
+        """ERDEV - Returns device error code.
+        In QBasic, this returns the device driver error code from the last device error.
+        Since we don't have actual device drivers, this returns 0 (no error)."""
+        return 0
+
+    def _basic_erdev_str(self) -> str:
+        """ERDEV$ - Returns device error name.
+        In QBasic, this returns the name of the device that caused the last error.
+        Since we don't have actual device drivers, this returns an empty string."""
+        return ""
+
+    def _basic_fileattr(self, file_num: int, attribute: int) -> int:
+        """FILEATTR(file_num, attribute) - Returns file attributes.
+
+        attribute = 1: Returns file mode
+            1 = INPUT, 2 = OUTPUT, 4 = RANDOM, 8 = APPEND, 32 = BINARY
+        attribute = 2: Returns DOS file handle (emulated as file_num * 100)
+
+        Returns 0 if file is not open or invalid attribute."""
+        fnum = int(file_num)
+        attr = int(attribute)
+
+        if fnum not in self.file_handles:
+            return 0  # File not open
+
+        fh = self.file_handles[fnum]
+
+        if attr == 1:
+            # Return file mode
+            mode = getattr(fh, 'mode', 'r')
+            if mode == 'r':
+                return 1  # INPUT
+            elif mode == 'w':
+                return 2  # OUTPUT
+            elif mode in ('r+b', 'w+b'):
+                return 4  # RANDOM
+            elif mode == 'a':
+                return 8  # APPEND
+            elif mode == 'rb':
+                return 32  # BINARY
+            else:
+                return 1  # Default to INPUT
+        elif attr == 2:
+            # Return emulated DOS file handle
+            return fnum * 100  # Emulated handle
+        else:
+            return 0  # Invalid attribute
+
+    def _basic_setmem(self, bytes_change: int) -> int:
+        """SETMEM(n) - Adjust far heap memory allocation.
+        In QBasic, this adjusts the size of the far heap by n bytes and returns
+        the previous far heap size. Since Python manages memory automatically,
+        we emulate this by returning a fixed large value (representing available memory)."""
+        # Return emulated far heap size (64KB - a typical QBasic far heap size)
+        return 65536
+
+    def _basic_ioctl_str(self, file_num: int) -> str:
+        """IOCTL$(n) - Returns device control string from driver.
+        In QBasic, this retrieves control information from a device driver.
+        Since we don't have actual device drivers, this returns an empty string."""
+        return ""
 
     def _init_joysticks(self) -> None:
         """Initialize joystick support."""
@@ -2257,12 +2626,18 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
         """Mark the rendering surface as dirty and requiring redraw."""
         self._dirty = True
 
-    def reset(self, program_lines: List[str]) -> None:
+    def reset(self, program_lines: List[str], source_path: Optional[str] = None) -> None:
         """Reset interpreter state and load a new program.
 
         Args:
             program_lines: List of BASIC program lines to execute.
+            source_path: Optional path to the source file (for resolving relative paths).
         """
+        # Set source directory for resolving relative paths
+        if source_path:
+            self.source_dir = os.path.dirname(os.path.abspath(source_path))
+        else:
+            self.source_dir = os.getcwd()
         self.program_lines = []
         self.labels.clear()
         self.variables.clear()
@@ -2341,6 +2716,8 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
         self.error_handler_label = None
         self.error_resume_pc = -1
         self.in_error_handler = False
+        self.error_line = -1  # -1 means no error
+        self.error_code = 0
 
         # Close any open files
         for fh in self.file_handles.values():
@@ -2360,8 +2737,18 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
             stripped = line_content.strip()
 
             # Strip comments for DATA label detection
+            # But only if the apostrophe is OUTSIDE of string literals
             if "'" in stripped:
-                stripped = stripped.split("'", 1)[0].strip()
+                in_string = False
+                comment_pos = -1
+                for j, ch in enumerate(stripped):
+                    if ch == '"':
+                        in_string = not in_string
+                    elif ch == "'" and not in_string:
+                        comment_pos = j
+                        break
+                if comment_pos >= 0:
+                    stripped = stripped[:comment_pos].strip()
 
             # Check for label
             label_match = _label_re.match(stripped)
@@ -2386,9 +2773,20 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
         for i, line_content in enumerate(program_lines):
             original_line = line_content
             # Handle apostrophe comments on the physical line first
+            # But only if the apostrophe is OUTSIDE of string literals
             if "'" in line_content:
-                line_content = line_content.split("'", 1)[0]
-            
+                # Find apostrophe that's outside quotes
+                in_string = False
+                comment_pos = -1
+                for j, ch in enumerate(line_content):
+                    if ch == '"':
+                        in_string = not in_string
+                    elif ch == "'" and not in_string:
+                        comment_pos = j
+                        break
+                if comment_pos >= 0:
+                    line_content = line_content[:comment_pos]
+
             line_content = line_content.strip()
             if not line_content: continue
 
@@ -2407,10 +2805,26 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
                 # Strip the label part to get the actual command
                 line_content = _label_strip_re.sub("", line_content, count=1).strip()
                 if not line_content: # Line might have only been a label
-                    continue 
-            
-            self.program_lines.append((current_pc_index, original_line, line_content))
-            current_pc_index += 1
+                    continue
+
+            # Split by colon (respecting strings) and add each statement as a separate entry
+            # This ensures FOR loop_pc values are correct for nested loops
+            # EXCEPTION: Single-line IF statements should NOT be split - the entire
+            # IF...THEN...ELSE block is one logical unit where all statements after THEN
+            # execute conditionally
+            if self._is_single_line_if(line_content):
+                # Keep the entire single-line IF as one statement
+                stmt = line_content.strip()
+                if stmt and not _rem_re.match(stmt) and not stmt.startswith("'"):
+                    self.program_lines.append((current_pc_index, original_line, stmt))
+                    current_pc_index += 1
+            else:
+                statements = self._split_statements(line_content)
+                for stmt in statements:
+                    stmt = stmt.strip()
+                    if stmt and not _rem_re.match(stmt) and not stmt.startswith("'"):
+                        self.program_lines.append((current_pc_index, original_line, stmt))
+                        current_pc_index += 1
 
         # Third pass: pre-parse SUB and FUNCTION definitions
         self._preparse_procedures()
@@ -2622,23 +3036,39 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
     def point(self, x_expr: Any, y_expr: Any) -> int:
         """Get the color number of a pixel at coordinates (x, y).
 
-        Uses a reverse color lookup dictionary for O(1) performance instead of
-        iterating through all colors.
+        In Screen 13 mode (256 colors), reads directly from the palette index
+        buffer for accurate color retrieval even after palette changes.
+        Falls back to RGB reverse lookup for other modes or edge cases.
 
         Args:
             x_expr: X coordinate (will be converted to int).
             y_expr: Y coordinate (will be converted to int).
 
         Returns:
-            Color number (0-15) if the pixel color matches a palette color,
-            -1 if coordinates are out of bounds or color not in palette.
+            Color number (palette index) if valid,
+            -1 if coordinates are out of bounds or color not found.
         """
         px, py = int(x_expr), int(y_expr)
         if self.surface:
             if 0 <= px < self.screen_width and 0 <= py < self.screen_height:
+                # In Screen 13 mode, use _pixel_indices for accurate palette index
+                if self._pixel_indices is not None:
+                    idx = py * self.screen_width + px
+                    if idx < len(self._pixel_indices):
+                        palette_idx = self._pixel_indices[idx]
+                        # Verify the _pixel_indices value is consistent with surface
+                        # (handles edge cases where surface was modified directly)
+                        if palette_idx == 0:
+                            pixel_tuple = self.surface.get_at((px, py))
+                            pixel_rgb = pixel_tuple[:3]
+                            expected_black = self.basic_color(0)
+                            # If pixel is not black but _pixel_indices says 0, use RGB lookup
+                            if pixel_rgb != expected_black:
+                                return self._reverse_colors.get(pixel_rgb, -1)
+                        return palette_idx
+                # Fallback to RGB reverse lookup for other modes
                 pixel_tuple = self.surface.get_at((px, py))
                 pixel_rgb = pixel_tuple[:3]
-                # O(1) lookup using reverse color dictionary
                 return self._reverse_colors.get(pixel_rgb, -1)
             return -1
         return -1
@@ -3024,7 +3454,19 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
             # Minimal parsing to keep track of block nesting while skipping
             if up_stmt.startswith("FOR "): self.for_stack.append({"placeholder": True, "pc": current_pc_num})
             elif up_stmt.startswith("NEXT"):
-                if self.for_stack and self.for_stack[-1].get("placeholder"): self.for_stack.pop()
+                # NEXT can close multiple loops: NEXT i, j, k
+                # Count the number of variables (commas + 1, or 1 if no variable)
+                next_rest = up_stmt[4:].strip()
+                if next_rest:
+                    # Count comma-separated variables
+                    num_vars = next_rest.count(',') + 1
+                else:
+                    # NEXT without variable closes one loop
+                    num_vars = 1
+                # Pop that many placeholders
+                for _ in range(num_vars):
+                    if self.for_stack and self.for_stack[-1].get("placeholder"):
+                        self.for_stack.pop()
             elif up_stmt.startswith("DO"): self.loop_stack.append({"placeholder": True, "pc": current_pc_num})
             elif up_stmt.startswith("LOOP"):
                 if self.loop_stack and self.loop_stack[-1].get("placeholder"): self.loop_stack.pop()
@@ -3113,6 +3555,7 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
         if m_screen:
             mode = int(self.eval_expr(m_screen.group(1).strip()))  # Evaluate expression for mode
             if not self.running: return False
+            self._screen_mode = mode  # Track current screen mode
             # QBasic screen modes - use SCREEN_MODES from constants module
             if mode in SCREEN_MODES:
                 self.screen_width, self.screen_height = SCREEN_MODES[mode]
@@ -3129,6 +3572,12 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
                  self.surface = pygame.Surface((self.screen_width, self.screen_height)).convert()
                  self._cached_scaled_surface = None # Force rescale
 
+            # Initialize pixel index buffer for SCREEN 13 (256-color mode)
+            if mode == 13:
+                self._pixel_indices = bytearray(self.screen_width * self.screen_height)
+            else:
+                self._pixel_indices = None
+
             self.surface.fill(self.basic_color(self.current_bg_color)) #SCREEN implies CLS
             self.text_cursor = (1,1)
             self.lpr = (self.screen_width // 2, self.screen_height // 2) # Reset LPR
@@ -3137,19 +3586,63 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
 
         m_const = _const_re.fullmatch(statement)
         if m_const:
-             var_name, val_expr = m_const.group(1).strip().upper(), m_const.group(2).strip()
-             if var_name in self.variables or var_name in self.constants:
-                 print(f"Error: Identifier '{var_name}' redefined at PC {current_pc_num}"); self.running = False; return False
-             
-             val = self.eval_expr(val_expr)
-             if not self.running: return False # Eval error
-             self.constants[var_name] = val
-             return False
+            const_content = m_const.group(1).strip()
+            # Parse multiple constant definitions: CONST A = 1, B = 2, C = NOT B
+            # Split by comma at top level (not inside parentheses or strings)
+            definitions = []
+            current = ""
+            paren_depth = 0
+            in_string = False
+            for ch in const_content:
+                if ch == '"' and not in_string:
+                    in_string = True
+                    current += ch
+                elif ch == '"' and in_string:
+                    in_string = False
+                    current += ch
+                elif in_string:
+                    current += ch
+                elif ch == '(':
+                    paren_depth += 1
+                    current += ch
+                elif ch == ')':
+                    paren_depth -= 1
+                    current += ch
+                elif ch == ',' and paren_depth == 0:
+                    if current.strip():
+                        definitions.append(current.strip())
+                    current = ""
+                else:
+                    current += ch
+            if current.strip():
+                definitions.append(current.strip())
+
+            # Process each definition: NAME = value
+            for defn in definitions:
+                eq_pos = defn.find('=')
+                if eq_pos == -1:
+                    print(f"Error: Invalid CONST syntax '{defn}' at PC {current_pc_num}")
+                    self.running = False
+                    return False
+                var_name = defn[:eq_pos].strip().upper()
+                val_expr = defn[eq_pos+1:].strip()
+                if var_name in self.variables or var_name in self.constants:
+                    print(f"Error: Identifier '{var_name}' redefined at PC {current_pc_num}")
+                    self.running = False
+                    return False
+                val = self.eval_expr(val_expr)
+                if not self.running:
+                    return False
+                self.constants[var_name] = val
+            return False
 
         # --- DIM statement handler (handles all DIM forms including complex expressions) ---
         # Use smart parser that can handle nested parentheses
         if up_stmt.startswith("DIM "):
             dim_content = statement[4:].strip()  # Remove "DIM "
+            # Handle DIM SHARED - strip the SHARED keyword
+            if dim_content.upper().startswith("SHARED "):
+                dim_content = dim_content[7:].strip()  # Remove "SHARED "
             return self._handle_multi_dim(dim_content, current_pc_num)
 
         # --- DIM var AS type (simple typed variable or user-defined type) ---
@@ -3183,14 +3676,15 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
             # Re-parse manually to get all comma-separated variables
             dim_content = statement[3:].strip()  # Remove "DIM "
             for var_spec in dim_content.split(','):
-                var_name = var_spec.strip().upper()
-                if var_name:
+                var_name_raw = var_spec.strip()
+                if var_name_raw:
+                    var_name = _basic_to_python_identifier(var_name_raw)
                     if var_name in self.constants:
-                        print(f"Error: Cannot DIM constant '{var_name}' at PC {current_pc_num}")
+                        print(f"Error: Cannot DIM constant '{var_name_raw}' at PC {current_pc_num}")
                         self.running = False
                         return False
                     # Initialize with default value based on type suffix
-                    if var_name.endswith('$'):
+                    if var_name_raw.upper().endswith('$'):
                         self.variables[var_name] = ""
                     else:
                         self.variables[var_name] = 0
@@ -3200,9 +3694,9 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
         if m_dim:
             var_name_orig, idx_str = m_dim.group(1).strip(), m_dim.group(2).strip()
             type_name = (m_dim.group(3) or "").upper().strip()
-            var_name = var_name_orig.upper()
+            var_name = _basic_to_python_identifier(var_name_orig)
             if var_name in self.constants:
-                print(f"Error: Cannot DIM constant '{var_name}' at PC {current_pc_num}"); self.running = False; return False
+                print(f"Error: Cannot DIM constant '{var_name_orig}' at PC {current_pc_num}"); self.running = False; return False
 
             try:
                 # Parse array dimensions - supports both "DIM A(10)" and "DIM A(0 TO 10)" syntax
@@ -3237,7 +3731,7 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
                         for field_name, field_type in self.type_definitions[type_name].items():
                             instance[field_name] = "" if field_type == 'STRING' else 0
                         return instance
-                    elif var_name.endswith("$") or type_name == 'STRING':
+                    elif var_name_orig.upper().endswith("$") or type_name == 'STRING':
                         return ""
                     else:
                         return 0
@@ -3286,38 +3780,45 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
 
         m_next = _next_re.fullmatch(statement)
         if m_next:
-             next_var_orig = m_next.group(1).strip() if m_next.group(1) else None
-             next_var = next_var_orig.upper() if next_var_orig else None
+            next_vars_str = m_next.group(1).strip() if m_next.group(1) else None
 
-             if not self.for_stack:
-                 return self._runtime_error("NEXT without FOR", current_pc_num)
+            # Handle multiple variables: NEXT ii, i (closes inner loop first, then outer)
+            if next_vars_str:
+                next_vars = [v.strip().upper() for v in next_vars_str.split(',')]
+            else:
+                next_vars = [None]  # NEXT without variable
 
-             loop_info = self.for_stack[-1]
-             if loop_info.get("placeholder"): # Should not happen if _should_execute is true
-                 self.for_stack.pop()
-                 return self._runtime_error("NEXT encountered placeholder FOR loop info", current_pc_num)
+            # Process each variable in order
+            for next_var in next_vars:
+                if not self.for_stack:
+                    return self._runtime_error("NEXT without FOR", current_pc_num)
 
-             active_for_var = loop_info["var"]
-             if next_var and next_var != active_for_var:
-                 return self._runtime_error(f"NEXT variable '{next_var_orig}' does not match FOR variable '{active_for_var}'", current_pc_num)
-            
-             current_val = self.variables.get(active_for_var, 0) # Default to 0 if var somehow missing
-             new_val = current_val + loop_info["step"]
-             self.variables[active_for_var] = new_val
+                loop_info = self.for_stack[-1]
+                if loop_info.get("placeholder"):
+                    self.for_stack.pop()
+                    return self._runtime_error("NEXT encountered placeholder FOR loop info", current_pc_num)
 
-             continue_loop = False
-             if loop_info["step"] > 0:
-                 continue_loop = new_val <= loop_info["end"]
-             elif loop_info["step"] < 0:
-                 continue_loop = new_val >= loop_info["end"]
-             # If step is 0, loop continues if it started (handled at FOR)
+                active_for_var = loop_info["var"]
+                if next_var and next_var != active_for_var:
+                    return self._runtime_error(f"NEXT variable '{next_var}' does not match FOR variable '{active_for_var}'", current_pc_num)
 
-             if continue_loop:
-                 self.pc = loop_info["loop_pc"] # Jump back to FOR statement's PC + 1 (handled by main loop)
-                 return True # PC changed
-             else:
-                 self.for_stack.pop() # End of loop
-             return False
+                current_val = self.variables.get(active_for_var, 0)
+                new_val = current_val + loop_info["step"]
+                self.variables[active_for_var] = new_val
+
+                continue_loop = False
+                if loop_info["step"] > 0:
+                    continue_loop = new_val <= loop_info["end"]
+                elif loop_info["step"] < 0:
+                    continue_loop = new_val >= loop_info["end"]
+
+                if continue_loop:
+                    self.pc = loop_info["loop_pc"]
+                    return True  # PC changed - loop back
+                else:
+                    self.for_stack.pop()  # End of this loop, continue to next variable
+
+            return False
 
         # EXIT FOR - break out of innermost FOR loop
         if _exit_for_re.fullmatch(statement):
@@ -3375,7 +3876,7 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
 
             if lhs_array_match:
                 var_name_orig, idx_str = lhs_array_match.group(1), lhs_array_match.group(2)
-                var_name = var_name_orig.upper()
+                var_name = _basic_to_python_identifier(var_name_orig)
 
                 if var_name in self.constants:
                     print(f"Error: Cannot assign to constant array '{var_name_orig}' at PC {current_pc_num}"); self.running = False; return False
@@ -3439,14 +3940,21 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
                     else:
                         print(f"Error: '{var_name}' is not an array at PC {current_pc_num}"); self.running = False; return False
                 else:
-                    # Simple type member assignment (p.X = value)
+                    # Simple type member assignment (p.X = value) or dotted variable name
                     parts = lhs.upper().split('.', 1)
                     var_name = parts[0]
                     member_name = parts[1]
                     if var_name in self.variables and isinstance(self.variables[var_name], dict):
+                        # User-defined type member access
                         self.variables[var_name][member_name] = val_to_assign
                     else:
-                        print(f"Error: '{var_name}' is not a user-defined type at PC {current_pc_num}"); self.running = False; return False
+                        # QBasic allows dots in variable names (e.g., Flicker.Control)
+                        # Treat the full dotted name as a simple variable
+                        # Use Python-compatible name for storage so eval can find it
+                        full_var_name = _basic_to_python_identifier(lhs)
+                        if full_var_name in self.constants:
+                            print(f"Error: Cannot assign to constant '{lhs}' at PC {current_pc_num}"); self.running = False; return False
+                        self.variables[full_var_name] = val_to_assign
             else: # Scalar assignment
                 var_name = lhs.upper()
                 if var_name in self.constants:
@@ -3799,6 +4307,9 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
 
                 if 0 <= px < self.screen_width and 0 <= py < self.screen_height:
                     self.surface.set_at((px, py), self.basic_color(color_idx))
+                    # Update _pixel_indices for Screen 13 mode
+                    if self._pixel_indices is not None:
+                        self._pixel_indices[py * self.screen_width + px] = color_idx
                     self.lpr = (px, py) # Update LPR
                     self.mark_dirty()
             except Exception as e:
@@ -3830,6 +4341,9 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
 
                 if 0 <= px < self.screen_width and 0 <= py < self.screen_height:
                     self.surface.set_at((px, py), self.basic_color(color_idx))
+                    # Update _pixel_indices for Screen 13 mode
+                    if self._pixel_indices is not None:
+                        self._pixel_indices[py * self.screen_width + px] = color_idx
                     self.lpr = (px, py) # Update LPR
                     self.mark_dirty()
             except Exception as e:
@@ -3862,7 +4376,7 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
             
             self.loop_stack.append({
                 "type": "DO",
-                "start_pc": self.pc,  # PC of the line AFTER DO (loop body start)
+                "start_pc": self.pc,  # PC of the line AFTER DO (loop body start) - pc already advanced by step_line
                 "pre_cond_expr": cond_expr,
                 "pre_cond_type": loop_type
             })
@@ -3904,7 +4418,7 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
                 if loop_info["pre_cond_type"] == "UNTIL" and pre_cond_met: continue_this_loop = False
             
             if continue_this_loop:
-                self.pc = loop_info["start_pc"] # Jump to DO statement's PC
+                self.pc = loop_info["start_pc"] # Jump to loop body start
                 return True # PC changed
             else:
                 self.loop_stack.pop() # Loop terminates
@@ -3965,7 +4479,7 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
 
             self.loop_stack.append({
                 "type": "WHILE",
-                "start_pc": self.pc,  # PC of the line AFTER WHILE
+                "start_pc": self.pc,  # PC of the line AFTER WHILE - pc already advanced by step_line
                 "cond_expr": cond_expr
             })
 
@@ -4054,7 +4568,25 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
         m_read = _read_re.fullmatch(statement)
         if m_read:
             var_list = m_read.group(1).strip()
-            var_names = [v.strip() for v in var_list.split(',')]
+            # Split by comma, but respect parentheses (for array indices)
+            var_names = []
+            current = ""
+            paren_depth = 0
+            for ch in var_list:
+                if ch == '(':
+                    paren_depth += 1
+                    current += ch
+                elif ch == ')':
+                    paren_depth -= 1
+                    current += ch
+                elif ch == ',' and paren_depth == 0:
+                    if current.strip():
+                        var_names.append(current.strip())
+                    current = ""
+                else:
+                    current += ch
+            if current.strip():
+                var_names.append(current.strip())
             for var_name in var_names:
                 if self.data_pointer >= len(self.data_values):
                     print(f"Error: Out of DATA at PC {current_pc_num}")
@@ -4150,6 +4682,20 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
                 elif mode == "OFF":
                     self.strig_enabled[strig_num] = False
                 # STOP suspends but remembers events (we treat as OFF for simplicity)
+            return False
+
+        # --- ON COM(n) GOSUB statement (emulated no-op, serial ports not available) ---
+        m_on_com = _on_com_re.fullmatch(statement)
+        if m_on_com:
+            # Serial port event handlers are accepted but not functional
+            # (no serial ports available in this environment)
+            return False
+
+        # --- COM(n) ON/OFF/STOP statement (emulated no-op, serial ports not available) ---
+        m_com_on_off = _com_on_off_re.fullmatch(statement)
+        if m_com_on_off:
+            # Serial port event control is accepted but not functional
+            # (no serial ports available in this environment)
             return False
 
         # --- ON PEN GOSUB statement ---
@@ -4462,8 +5008,44 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
         # --- PALETTE statement ---
         m_palette = _palette_re.fullmatch(statement)
         if m_palette:
-            # For now, just accept and ignore palette changes
-            # Full implementation would modify self.colors
+            using_array = m_palette.group(1)
+            attr_expr = m_palette.group(2)
+            color_expr = m_palette.group(3)
+
+            if attr_expr is not None and color_expr is not None:
+                # PALETTE attribute, color - set specific color
+                attr = int(self.eval_expr(attr_expr.strip()))
+                if not self.running:
+                    return False
+                color_val = int(self.eval_expr(color_expr.strip()))
+                if not self.running:
+                    return False
+
+                # Convert QBasic color value to RGB
+                # QBasic uses: blue + green*256 + red*65536 (each component 0-63)
+                # We need to scale 0-63 to 0-255
+                if color_val == -1:
+                    # -1 means reset this attribute to default
+                    if attr in VGA_256_PALETTE:
+                        self.colors[attr] = VGA_256_PALETTE[attr]
+                else:
+                    blue = (color_val & 0x3F) * 4
+                    green = ((color_val >> 8) & 0x3F) * 4
+                    red = ((color_val >> 16) & 0x3F) * 4
+                    self.colors[attr] = (red, green, blue)
+            elif using_array is not None:
+                # PALETTE USING array - set multiple colors from array
+                # Not implemented yet, just ignore
+                pass
+            else:
+                # PALETTE without arguments - reset to default palette
+                self.colors = dict(DEFAULT_COLORS)
+                # For Screen 13, also restore VGA 256-color palette
+                if self._screen_mode == 13:
+                    self.colors.update(VGA_256_PALETTE)
+
+            # Update reverse lookup for POINT function
+            self._reverse_colors = {rgb: num for num, rgb in self.colors.items()}
             return False
 
         # --- PCOPY statement (copy video pages) ---
@@ -4535,6 +5117,16 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
             full_addr = (self.memory_segment << 4) + address
             self.emulated_memory[full_addr] = value & 0xFF
             return False
+
+        # --- BLOAD statement (load binary file to memory/screen) ---
+        m_bload = _bload_re.fullmatch(statement)
+        if m_bload:
+            return self._handle_bload(m_bload.group(1).strip(), current_pc_num)
+
+        # --- BSAVE statement (save memory block to binary file) ---
+        m_bsave = _bsave_re.fullmatch(statement)
+        if m_bsave:
+            return self._handle_bsave(m_bsave.group(1).strip(), current_pc_num)
 
         # --- COMMON SHARED statement ---
         m_common_shared = _common_shared_re.fullmatch(statement)
@@ -5263,7 +5855,7 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
 
     def _do_redim(self, var_name: str, dims_str: str, pc: int) -> None:
         """Execute REDIM command - redimension a dynamic array."""
-        var_name_upper = var_name.upper()
+        var_name_py = _basic_to_python_identifier(var_name)
 
         try:
             # Parse dimensions - supports both "REDIM A(10)" and "REDIM A(0 TO 10)" syntax
@@ -5288,23 +5880,23 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
                     lower_bounds.append(self.option_base)
 
             # Store lower bounds for this array (for runtime index adjustment)
-            self.array_bounds[var_name_upper] = tuple(lower_bounds)
+            self.array_bounds[var_name_py] = tuple(lower_bounds)
 
             # Determine default value based on variable type
-            default_val = "" if var_name.endswith("$") else 0
+            default_val = "" if var_name.upper().endswith("$") else 0
 
             # Create new array (overwrite any existing)
             if len(dims) == 1:
-                self.variables[var_name_upper] = [default_val] * dims[0]
+                self.variables[var_name_py] = [default_val] * dims[0]
             elif len(dims) == 2:
-                self.variables[var_name_upper] = [[default_val] * dims[1] for _ in range(dims[0])]
+                self.variables[var_name_py] = [[default_val] * dims[1] for _ in range(dims[0])]
             else:
                 # For higher dimensions, create nested lists
                 def create_nd_list(dims, default):
                     if len(dims) == 1:
                         return [default] * dims[0]
                     return [create_nd_list(dims[1:], default) for _ in range(dims[0])]
-                self.variables[var_name_upper] = create_nd_list(dims, default_val)
+                self.variables[var_name_py] = create_nd_list(dims, default_val)
 
         except Exception as e:
             print(f"Error in REDIM at PC {pc}: {e}")
@@ -5375,7 +5967,8 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
 
         if paren_start > 0:
             # Array declaration
-            var_name = decl[:paren_start].strip().upper()
+            var_name_raw = decl[:paren_start].strip()
+            var_name = _basic_to_python_identifier(var_name_raw)
             # Extract bounds - find matching closing paren
             paren_depth = 0
             bounds_str = ""
@@ -5393,7 +5986,7 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
                     bounds_str += char
 
             if var_name in self.constants:
-                print(f"Error: Cannot DIM constant '{var_name}' at PC {pc}")
+                print(f"Error: Cannot DIM constant '{var_name_raw}' at PC {pc}")
                 self.running = False
                 return False
 
@@ -5427,7 +6020,7 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
                         for field_name, field_type in self.type_definitions[type_name].items():
                             instance[field_name] = "" if field_type == 'STRING' else 0
                         return instance
-                    elif var_name.endswith("$") or type_name == 'STRING':
+                    elif var_name_raw.upper().endswith("$") or type_name == 'STRING':
                         return ""
                     else:
                         return 0
@@ -5445,9 +6038,10 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
                 return False
         else:
             # Scalar declaration
-            var_name = decl.strip().upper()
+            var_name_raw = decl.strip()
+            var_name = _basic_to_python_identifier(var_name_raw)
             if var_name in self.constants:
-                print(f"Error: Cannot DIM constant '{var_name}' at PC {pc}")
+                print(f"Error: Cannot DIM constant '{var_name_raw}' at PC {pc}")
                 self.running = False
                 return False
 
@@ -5456,7 +6050,7 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
                 for field_name, field_type in self.type_definitions[type_name].items():
                     instance[field_name] = "" if field_type == 'STRING' else 0
                 self.variables[var_name] = instance
-            elif var_name.endswith('$') or type_name == 'STRING':
+            elif var_name_raw.upper().endswith('$') or type_name == 'STRING':
                 self.variables[var_name] = ""
             else:
                 self.variables[var_name] = 0
@@ -5682,6 +6276,15 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
         """Handle CALL subname[(args)] - call a subroutine."""
         sub_name = match.group(1).upper()
         args_str = match.group(2) or ""
+
+        # Special handling for INTERRUPT and INTERRUPTX (DOS interrupt calls)
+        # These are emulated as no-ops since we can't call real DOS/BIOS interrupts
+        if sub_name == "INTERRUPT" or sub_name == "INTERRUPTX":
+            # Accept the statement but do nothing (DOS interrupts not available)
+            # Syntax: CALL INTERRUPT(intnum, inregs, outregs)
+            # Syntax: CALL INTERRUPTX(intnum, inregs, outregs)
+            return False
+
         return self._handle_call_sub(sub_name, args_str, pc)
 
     def _handle_call_sub(self, sub_name: str, args_str: str, pc: int) -> bool:
@@ -5733,10 +6336,16 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
             is_array_param = param.endswith('()')
             if is_array_param:
                 param_clean = re.sub(r'\(\)$', '', param)
+                is_string_param = '$' in param_clean
                 param_clean = re.sub(r'[\$%!#&]$', '', param_clean).upper()
+                if is_string_param:
+                    param_clean = param_clean + "_STR"
             else:
-                # Strip type suffix from parameter
+                # Convert type suffix to appropriate variable name suffix
+                is_string_param = param.endswith('$')
                 param_clean = re.sub(r'[\$%!#&]$', '', param).upper()
+                if is_string_param:
+                    param_clean = param_clean + "_STR"
 
             if is_array_param and i in array_refs:
                 # Array parameter: create alias to the passed array (stored in variables as list)
@@ -5789,7 +6398,10 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
             is_array_param = param.endswith('()')
             if is_array_param:
                 param_clean = re.sub(r'\(\)$', '', param)
+                is_string_param = '$' in param_clean
                 param_clean = re.sub(r'[\$%!#&]$', '', param_clean).upper()
+                if is_string_param:
+                    param_clean = param_clean + "_STR"
                 # Restore saved array state if any
                 saved_arrays = call_info.get('saved_arrays', {})
                 if param_clean in saved_arrays:
@@ -5798,7 +6410,10 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
                     # Only delete if it wasn't an alias
                     del self.variables[param_clean]
             else:
+                is_string_param = param.endswith('$')
                 param_clean = re.sub(r'[\$%!#&]$', '', param).upper()
+                if is_string_param:
+                    param_clean = param_clean + "_STR"
                 if param_clean in call_info['saved_vars']:
                     self.variables[param_clean] = call_info['saved_vars'][param_clean]
                 elif param_clean in self.variables:
@@ -5827,19 +6442,25 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
         # Save and set parameters
         saved_vars = {}
         for i, param in enumerate(proc['params']):
+            is_string_param = param.endswith('$')
             param_clean = re.sub(r'[\$%!#&]$', '', param).upper()
+            if is_string_param:
+                param_clean = param_clean + "_STR"
             if param_clean in self.variables:
                 saved_vars[param_clean] = self.variables[param_clean]
             if i < len(args):
                 self.variables[param_clean] = args[i]
             else:
-                self.variables[param_clean] = "" if param.endswith('$') else 0
+                self.variables[param_clean] = "" if is_string_param else 0
 
         # Initialize function return variable
+        is_string_func = name.endswith('$')
         func_name_clean = re.sub(r'[\$%!#&]$', '', name).upper()
+        if is_string_func:
+            func_name_clean = func_name_clean + "_STR"
         if func_name_clean in self.variables:
             saved_vars[func_name_clean] = self.variables[func_name_clean]
-        self.variables[func_name_clean] = "" if name.endswith('$') else 0
+        self.variables[func_name_clean] = "" if is_string_func else 0
 
         # Execute function body
         self.pc = proc['start_pc']
@@ -5874,7 +6495,10 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
 
         # Restore variables
         for param in proc['params']:
+            is_string_param = param.endswith('$')
             param_clean = re.sub(r'[\$%!#&]$', '', param).upper()
+            if is_string_param:
+                param_clean = param_clean + "_STR"
             if param_clean in saved_vars:
                 self.variables[param_clean] = saved_vars[param_clean]
             elif param_clean in self.variables:
@@ -5903,6 +6527,233 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
     # File IO handlers (_handle_open, _handle_close, _handle_input_file, etc.)
     # are now provided by IOCommandsMixin
 
+    def _handle_bload(self, args_str: str, pc: int) -> bool:
+        """Handle BLOAD "filename"[, offset] - load binary file to memory.
+
+        When memory segment is 0xA000 (VGA video memory), loads directly to screen.
+        BSAVE/BLOAD files have a 7-byte header: FD segment(2) offset(2) length(2)
+        """
+        try:
+            # Parse arguments: "filename"[, offset]
+            parts = []
+            current = ""
+            in_string = False
+            for ch in args_str:
+                if ch == '"':
+                    in_string = not in_string
+                    current += ch
+                elif ch == ',' and not in_string:
+                    parts.append(current.strip())
+                    current = ""
+                else:
+                    current += ch
+            if current.strip():
+                parts.append(current.strip())
+
+            # Get filename
+            filename_expr = parts[0]
+            # Check if it's a simple string literal (no + or concatenation operators)
+            # A simple literal starts and ends with quotes AND has no + outside quotes
+            is_simple_literal = False
+            if filename_expr.startswith('"') and filename_expr.endswith('"'):
+                # Check if there's a + operator outside of string quotes
+                in_str = False
+                has_operator = False
+                for ch in filename_expr:
+                    if ch == '"':
+                        in_str = not in_str
+                    elif not in_str and ch == '+':
+                        has_operator = True
+                        break
+                is_simple_literal = not has_operator
+
+            if is_simple_literal:
+                filename = filename_expr[1:-1]
+            else:
+                filename = str(self.eval_expr(filename_expr))
+                if not self.running:
+                    return False
+
+            # Resolve filename relative to source directory
+            if not os.path.isabs(filename):
+                filename = os.path.join(self.source_dir, filename)
+
+            # Get optional offset (default 0)
+            offset = 0
+            if len(parts) > 1:
+                offset = int(self.eval_expr(parts[1]))
+                if not self.running:
+                    return False
+
+            # Read the BSAVE file
+            with open(filename, 'rb') as f:
+                header = f.read(7)
+                if len(header) < 7 or header[0] != 0xFD:
+                    print(f"Error: Invalid BSAVE file format at PC {pc}")
+                    self.running = False
+                    return False
+
+                # Parse header (little-endian)
+                file_segment = header[1] | (header[2] << 8)
+                file_offset = header[3] | (header[4] << 8)
+                data_length = header[5] | (header[6] << 8)
+
+                # Read the data
+                data = f.read(data_length)
+
+            # Check if loading to video memory (segment 0xA000 for Screen 13)
+            if self.memory_segment == 0xA000:
+                # Load directly to screen surface
+                # Screen 13 is 320x200 with 256 colors (1 byte per pixel)
+                screen_width = 320
+                screen_height = 200
+
+                # Ensure surface exists
+                if self.surface is None:
+                    self.surface = pygame.Surface((self.screen_width, self.screen_height)).convert()
+
+                # Ensure pixel index buffer exists for Screen 13
+                if self._pixel_indices is None:
+                    self._pixel_indices = bytearray(self.screen_width * self.screen_height)
+
+                for i, byte in enumerate(data):
+                    pixel_index = offset + i
+                    x = pixel_index % screen_width
+                    y = pixel_index // screen_width
+                    if 0 <= x < self.screen_width and 0 <= y < self.screen_height:
+                        # Store palette index in buffer
+                        self._pixel_indices[y * self.screen_width + x] = byte
+                        # Use 256-color VGA palette, with fallback to colors dict
+                        color = self.colors.get(byte, VGA_256_PALETTE.get(byte, (byte, byte, byte)))
+                        self.surface.set_at((x, y), color)
+
+                self.mark_dirty()
+            else:
+                # Load to emulated memory
+                base_addr = (self.memory_segment << 4) + offset
+                for i, byte in enumerate(data):
+                    self.emulated_memory[base_addr + i] = byte
+
+            return False
+        except FileNotFoundError:
+            print(f"Error: File not found in BLOAD at PC {pc}: {filename}")
+            self.running = False
+            return False
+        except Exception as e:
+            print(f"Error in BLOAD at PC {pc}: {e}")
+            self.running = False
+            return False
+
+    def _handle_bsave(self, args_str: str, pc: int) -> bool:
+        """Handle BSAVE "filename", offset, length - save memory block to binary file.
+
+        When memory segment is 0xA000 (VGA video memory), saves from screen.
+        BSAVE/BLOAD files have a 7-byte header: FD segment(2) offset(2) length(2)
+        """
+        try:
+            # Parse arguments: "filename", offset, length
+            parts = []
+            current = ""
+            in_string = False
+            for ch in args_str:
+                if ch == '"':
+                    in_string = not in_string
+                    current += ch
+                elif ch == ',' and not in_string:
+                    parts.append(current.strip())
+                    current = ""
+                else:
+                    current += ch
+            if current.strip():
+                parts.append(current.strip())
+
+            if len(parts) < 3:
+                print(f"Error: BSAVE requires filename, offset, and length at PC {pc}")
+                self.running = False
+                return False
+
+            # Get filename
+            filename_expr = parts[0]
+            is_simple_literal = False
+            if filename_expr.startswith('"') and filename_expr.endswith('"'):
+                in_str = False
+                has_operator = False
+                for ch in filename_expr:
+                    if ch == '"':
+                        in_str = not in_str
+                    elif not in_str and ch == '+':
+                        has_operator = True
+                        break
+                is_simple_literal = not has_operator
+
+            if is_simple_literal:
+                filename = filename_expr[1:-1]
+            else:
+                filename = str(self.eval_expr(filename_expr))
+                if not self.running:
+                    return False
+
+            # Resolve filename relative to source directory
+            if not os.path.isabs(filename):
+                filename = os.path.join(self.source_dir, filename)
+
+            # Get offset and length
+            offset = int(self.eval_expr(parts[1]))
+            if not self.running:
+                return False
+            length = int(self.eval_expr(parts[2]))
+            if not self.running:
+                return False
+
+            # Collect the data to save
+            data = bytearray()
+
+            # Check if saving from video memory (segment 0xA000 for Screen 13)
+            if self.memory_segment == 0xA000:
+                # Save from screen surface
+                screen_width = 320
+                screen_height = 200
+
+                # Ensure pixel index buffer exists
+                if self._pixel_indices is None:
+                    self._pixel_indices = bytearray(self.screen_width * self.screen_height)
+
+                for i in range(length):
+                    pixel_index = offset + i
+                    x = pixel_index % screen_width
+                    y = pixel_index // screen_width
+                    if 0 <= x < self.screen_width and 0 <= y < self.screen_height:
+                        # Get palette index from buffer
+                        data.append(self._pixel_indices[y * self.screen_width + x])
+                    else:
+                        data.append(0)
+            else:
+                # Save from emulated memory
+                base_addr = (self.memory_segment << 4) + offset
+                for i in range(length):
+                    data.append(self.emulated_memory.get(base_addr + i, 0))
+
+            # Write the BSAVE file with header
+            with open(filename, 'wb') as f:
+                # Write 7-byte header: FD segment(2) offset(2) length(2)
+                header = bytearray(7)
+                header[0] = 0xFD
+                segment = self.memory_segment if self.memory_segment else 0
+                header[1] = segment & 0xFF
+                header[2] = (segment >> 8) & 0xFF
+                header[3] = offset & 0xFF
+                header[4] = (offset >> 8) & 0xFF
+                header[5] = length & 0xFF
+                header[6] = (length >> 8) & 0xFF
+                f.write(header)
+                f.write(data)
+
+            return False
+        except Exception as e:
+            print(f"Error in BSAVE at PC {pc}: {e}")
+            self.running = False
+            return False
+
     def _handle_error(self, error_num_expr: str, pc: int) -> bool:
         """Handle ERROR n - trigger a runtime error."""
         try:
@@ -5910,7 +6761,7 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
             if not self.running: return False
 
             # Raise a runtime error that can be caught by ON ERROR GOTO
-            raise BasicRuntimeError(f"Error {error_num} triggered by ERROR statement", "user")
+            raise BasicRuntimeError(f"Error {error_num} triggered by ERROR statement", "user", error_num)
         except BasicRuntimeError:
             raise  # Re-raise to be caught by step_line
         except Exception as e:
@@ -6267,7 +7118,7 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
         array_match = _assign_lhs_array_re.fullmatch(var_str)
         if array_match:
             var_name_orig, idx_str = array_match.group(1), array_match.group(2)
-            var_name = var_name_orig.upper()
+            var_name = _basic_to_python_identifier(var_name_orig)
             if var_name in self.constants:
                 print(f"Error: Cannot assign to constant array '{var_name_orig}' at PC {pc}")
                 self.running = False
@@ -6288,7 +7139,7 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
                 self.running = False
         else:
             # Scalar variable
-            var_name = var_str.upper()
+            var_name = _basic_to_python_identifier(var_str)
             if var_name in self.constants:
                 print(f"Error: Cannot assign to constant '{var_str}' at PC {pc}")
                 self.running = False
@@ -6364,6 +7215,9 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
         try:
             return self.execute_logical_line(logical_line_content, pc_of_this_line)
         except BasicRuntimeError as e:
+            # Track error information for ERL and ERR functions
+            self.error_line = pc_of_this_line
+            self.error_code = getattr(e, 'error_code', 5)  # Default to 5 (Illegal function call)
             # Handle runtime error with ON ERROR GOTO handler
             if self.error_handler_label:
                 self.error_resume_pc = pc_of_this_line
@@ -6381,6 +7235,61 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
                 self.running = False
                 return False
 
+
+    def _is_single_line_if(self, line_content: str) -> bool:
+        """Check if a line is a single-line IF statement (IF...THEN with action on same line).
+
+        Single-line IF statements like 'IF x = 1 THEN y = 2: z = 3' should NOT be
+        split by colons because all statements after THEN are conditional.
+
+        Multi-line IF (block IF) starts with 'IF...THEN' but has no action after THEN,
+        and those should NOT match this function.
+
+        Args:
+            line_content: The line to check.
+
+        Returns:
+            True if this is a single-line IF that should not be split by colons.
+        """
+        upper_line = line_content.upper().strip()
+
+        # Must start with IF
+        if not upper_line.startswith('IF '):
+            return False
+
+        # Find THEN outside of strings
+        in_string = False
+        then_pos = -1
+        for i in range(len(upper_line) - 4):  # -4 for 'THEN'
+            if upper_line[i] == '"':
+                in_string = not in_string
+            elif not in_string and upper_line[i:i+4] == 'THEN':
+                then_pos = i
+                break
+
+        if then_pos < 0:
+            return False  # No THEN found (probably invalid, but not our concern here)
+
+        # Check what comes after THEN
+        after_then = line_content[then_pos + 4:].strip()
+
+        # If nothing after THEN, it's a block IF (multi-line), not single-line
+        if not after_then:
+            return False
+
+        # If only a label/line number after THEN (goto), it's handled differently
+        # But if there are actual statements, it's a single-line IF
+        # Check if there's a colon in the statement (which would be split incorrectly)
+        for i, char in enumerate(after_then):
+            if char == '"':
+                in_string = not in_string
+            elif char == ':' and not in_string:
+                # There's a colon - this is a multi-statement single-line IF
+                return True
+
+        # No colon found, but still a single-line IF (just one statement after THEN)
+        # In this case, no splitting would happen anyway, but we return True for safety
+        return True
 
     def _split_statements(self, line_content: str) -> List[str]:
         """Split line by colons while respecting string literals."""
@@ -6415,6 +7324,15 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
                 elif char == "'" and not in_string:
                     line_content = line_content[:i]
                     break
+
+        # Single-line IF statements should NOT be split - they are handled atomically
+        # by _execute_single_statement which processes the IF condition and executes
+        # the THEN part only if condition is true
+        if self._is_single_line_if(line_content):
+            stmt_text = line_content.strip()
+            if stmt_text:
+                return self._execute_single_statement(stmt_text, pc_of_line)
+            return False
 
         statements = self._split_statements(line_content)
         for stmt_text in statements:
@@ -6517,8 +7435,34 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
         target_surface.blit(self._cached_scaled_surface, (0, 0))
         self._dirty = False
 
+# --- Screenshot Helper Function ---
+def save_screenshot(surface: pygame.Surface, filename_prefix: str = "screenshot") -> str:
+    """Save a screenshot of the current surface.
+
+    Args:
+        surface: The pygame surface to save
+        filename_prefix: Prefix for the screenshot filename
+
+    Returns:
+        The path to the saved screenshot
+    """
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    screenshot_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "screenshots")
+    os.makedirs(screenshot_dir, exist_ok=True)
+    screenshot_path = os.path.join(screenshot_dir, f"{filename_prefix}_{timestamp}.png")
+    pygame.image.save(surface, screenshot_path)
+    print(f"Screenshot saved: {screenshot_path}")
+    return screenshot_path
+
 # --- Main Program Execution ---
-def run_interpreter(filename: str) -> None:
+def run_interpreter(filename: str, auto_screenshot: bool = False, max_frames: int = 0) -> None:
+    """Run the BASIC interpreter.
+
+    Args:
+        filename: Path to the BASIC file to run
+        auto_screenshot: If True, automatically save screenshot when program ends
+        max_frames: If > 0, automatically exit after this many frames (for testing)
+    """
     pygame.init()
     pygame.font.init()
 
@@ -6559,11 +7503,13 @@ def run_interpreter(filename: str) -> None:
         return
 
     print(f"Loading file: {filename}")
-    interpreter.reset(lines)
+    interpreter.reset(lines, source_path=filename)
 
     clock = pygame.time.Clock()
     application_running = True
     bg_color = (30, 30, 30)
+    frame_count = 0
+    base_name = os.path.splitext(os.path.basename(filename))[0]
 
     while application_running:
         # Process events
@@ -6578,6 +7524,10 @@ def run_interpreter(filename: str) -> None:
                     screen = pygame.display.set_mode((event.w, event.h), display_flags)
                 interpreter.handle_event(event)
                 interpreter.mark_dirty()
+            elif event.type == KEYDOWN and event.key == pygame.K_F12:
+                # F12 - Save screenshot
+                if interpreter.surface:
+                    save_screenshot(interpreter.surface, base_name)
             else:
                 interpreter.handle_event(event)
 
@@ -6594,13 +7544,27 @@ def run_interpreter(filename: str) -> None:
         interpreter.draw(screen)
         pygame.display.flip()
 
+        frame_count += 1
         clock.tick(60)
+
+        # Auto-exit after max_frames if specified (for testing)
+        if max_frames > 0 and frame_count >= max_frames:
+            application_running = False
+
+    # Auto-save screenshot on exit if enabled
+    if auto_screenshot and interpreter.surface:
+        save_screenshot(interpreter.surface, f"{base_name}_exit")
 
     print("Exiting PyBASIC Interpreter.")
     pygame.quit()
 
 if __name__ == '__main__':
-    if len(sys.argv) > 1:
-        run_interpreter(sys.argv[1])
-    else:
-        print("Usage: python interpreter.py <your_basic_file.bas>")
+    import argparse
+    parser = argparse.ArgumentParser(description='Run BASIC interpreter')
+    parser.add_argument('file', help='BASIC file to run')
+    parser.add_argument('--screenshot', '-s', action='store_true',
+                       help='Auto-save screenshot on exit')
+    parser.add_argument('--frames', '-f', type=int, default=0,
+                       help='Exit after N frames (for testing)')
+    args = parser.parse_args()
+    run_interpreter(args.file, auto_screenshot=args.screenshot, max_frames=args.frames)
