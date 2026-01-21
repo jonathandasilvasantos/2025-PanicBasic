@@ -183,6 +183,8 @@ _command_re = re.compile(r'\bCOMMAND\$', re.IGNORECASE)  # COMMAND$ -> COMMAND()
 _freefile_re = re.compile(r'\bFREEFILE\b(?!\s*\()', re.IGNORECASE)  # FREEFILE -> FREEFILE()
 _erl_re = re.compile(r'\bERL\b(?!\s*\()', re.IGNORECASE)  # ERL -> ERL()
 _err_re = re.compile(r'\bERR\b(?!\s*\()', re.IGNORECASE)  # ERR -> ERR()
+_erdev_str_re = re.compile(r'\bERDEV\$', re.IGNORECASE)  # ERDEV$ -> ERDEVSTR()
+_erdev_re = re.compile(r'\bERDEV\b(?!\s*\(|\$)', re.IGNORECASE)  # ERDEV -> ERDEV() (not followed by $ or ()
 
 # General pattern for NAME(...) or NAME$(...) which could be a function call or array access
 # Uses nested paren pattern to handle cases like func(a(), b) or arr(func(x))
@@ -543,7 +545,9 @@ _basic_function_names = {
     # Error handling functions
     'ERL', 'ERR',
     # Printer functions
-    'LPOS'
+    'LPOS',
+    # Device error functions
+    'ERDEV', 'ERDEVSTR'
 }
 
 # --- Expression Conversion Logic ---
@@ -775,6 +779,8 @@ def convert_basic_expr(expr: str, known_identifiers: Optional[set] = None) -> st
     expr = _freefile_re.sub("FREEFILE()", expr)
     expr = _erl_re.sub("ERL()", expr)
     expr = _err_re.sub("ERR()", expr)
+    expr = _erdev_str_re.sub("ERDEVSTR()", expr)  # ERDEV$ -> ERDEVSTR()
+    expr = _erdev_re.sub("ERDEV()", expr)  # ERDEV -> ERDEV()
 
     # 1b. User-defined FN function calls: FN name(args) or FNname(args)
     expr = _fn_call_re.sub(_replace_fn_call, expr)
@@ -1120,6 +1126,9 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
             "ERR": self._basic_err,  # Get error code
             # Printer functions (emulated)
             "LPOS": self._basic_lpos,  # Printer head position
+            # Device error functions (emulated)
+            "ERDEV": self._basic_erdev,  # Device error code
+            "ERDEVSTR": self._basic_erdev_str,  # Device error name (ERDEV$ -> ERDEVSTR)
         }
 
         # Build command dispatch table for O(1) keyword lookup
@@ -2054,6 +2063,18 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
         # LPOS returns 1-based column position
         # Return 1 to indicate start of line (emulated)
         return 1
+
+    def _basic_erdev(self) -> int:
+        """ERDEV - Returns device error code.
+        In QBasic, this returns the device driver error code from the last device error.
+        Since we don't have actual device drivers, this returns 0 (no error)."""
+        return 0
+
+    def _basic_erdev_str(self) -> str:
+        """ERDEV$ - Returns device error name.
+        In QBasic, this returns the name of the device that caused the last error.
+        Since we don't have actual device drivers, this returns an empty string."""
+        return ""
 
     def _init_joysticks(self) -> None:
         """Initialize joystick support."""

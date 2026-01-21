@@ -1754,6 +1754,40 @@ class TestLPOSFunction(unittest.TestCase):
         self.assertEqual(self.interp.variables.get("POS1"), 1)
 
 
+class TestERDEVFunctions(unittest.TestCase):
+    """Test ERDEV and ERDEV$ device error functions (emulated)."""
+
+    def setUp(self):
+        """Create interpreter instance for testing."""
+        _expr_cache.clear()
+        _compiled_expr_cache.clear()
+        _identifier_cache.clear()
+        self.font = pygame.font.Font(None, 16)
+        self.interp = BasicInterpreter(self.font, 800, 600)
+
+    def test_erdev_returns_zero(self):
+        """Test ERDEV returns 0 (emulated - no device errors)."""
+        self.interp.reset([
+            'errcode = ERDEV'
+        ])
+        while self.interp.running and self.interp.pc < len(self.interp.program_lines):
+            self.interp.step()
+
+        # ERDEV always returns 0 (emulated)
+        self.assertEqual(self.interp.variables.get("ERRCODE"), 0)
+
+    def test_erdev_str_returns_empty(self):
+        """Test ERDEV$ returns empty string (emulated - no device errors)."""
+        self.interp.reset([
+            'errname$ = ERDEV$'
+        ])
+        while self.interp.running and self.interp.pc < len(self.interp.program_lines):
+            self.interp.step()
+
+        # ERDEV$ always returns empty string (emulated)
+        self.assertEqual(self.interp.variables.get("ERRNAME$"), "")
+
+
 class TestClearStatement(unittest.TestCase):
     """Test CLEAR statement."""
 
