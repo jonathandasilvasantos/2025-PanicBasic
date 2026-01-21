@@ -1788,6 +1788,64 @@ class TestERDEVFunctions(unittest.TestCase):
         self.assertEqual(self.interp.variables.get("ERRNAME$"), "")
 
 
+class TestFILEATTRFunction(unittest.TestCase):
+    """Test FILEATTR file attribute function."""
+
+    def setUp(self):
+        """Create interpreter instance for testing."""
+        _expr_cache.clear()
+        _compiled_expr_cache.clear()
+        _identifier_cache.clear()
+        self.font = pygame.font.Font(None, 16)
+        self.interp = BasicInterpreter(self.font, 800, 600)
+        # Create a temp file for testing
+        import tempfile
+        self.temp_fd, self.temp_file = tempfile.mkstemp(suffix='.txt')
+        os.write(self.temp_fd, b'test data')
+        os.close(self.temp_fd)
+
+    def tearDown(self):
+        """Clean up temp file."""
+        try:
+            os.unlink(self.temp_file)
+        except:
+            pass
+
+    def test_fileattr_mode_input(self):
+        """Test FILEATTR returns 1 for INPUT mode."""
+        self.interp.reset([
+            f'OPEN "{self.temp_file}" FOR INPUT AS #1',
+            'mode = FILEATTR(1, 1)',
+            'CLOSE #1'
+        ])
+        while self.interp.running and self.interp.pc < len(self.interp.program_lines):
+            self.interp.step()
+
+        self.assertEqual(self.interp.variables.get("MODE"), 1)
+
+    def test_fileattr_handle(self):
+        """Test FILEATTR returns emulated file handle."""
+        self.interp.reset([
+            f'OPEN "{self.temp_file}" FOR INPUT AS #1',
+            'handle = FILEATTR(1, 2)',
+            'CLOSE #1'
+        ])
+        while self.interp.running and self.interp.pc < len(self.interp.program_lines):
+            self.interp.step()
+
+        self.assertEqual(self.interp.variables.get("HANDLE"), 100)
+
+    def test_fileattr_file_not_open(self):
+        """Test FILEATTR returns 0 for file not open."""
+        self.interp.reset([
+            'result = FILEATTR(99, 1)'
+        ])
+        while self.interp.running and self.interp.pc < len(self.interp.program_lines):
+            self.interp.step()
+
+        self.assertEqual(self.interp.variables.get("RESULT"), 0)
+
+
 class TestClearStatement(unittest.TestCase):
     """Test CLEAR statement."""
 

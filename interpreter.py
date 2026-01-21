@@ -547,7 +547,9 @@ _basic_function_names = {
     # Printer functions
     'LPOS',
     # Device error functions
-    'ERDEV', 'ERDEVSTR'
+    'ERDEV', 'ERDEVSTR',
+    # File attribute function
+    'FILEATTR'
 }
 
 # --- Expression Conversion Logic ---
@@ -1129,6 +1131,8 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
             # Device error functions (emulated)
             "ERDEV": self._basic_erdev,  # Device error code
             "ERDEVSTR": self._basic_erdev_str,  # Device error name (ERDEV$ -> ERDEVSTR)
+            # File attribute function
+            "FILEATTR": self._basic_fileattr,  # File attributes (mode, handle)
         }
 
         # Build command dispatch table for O(1) keyword lookup
@@ -2075,6 +2079,43 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
         In QBasic, this returns the name of the device that caused the last error.
         Since we don't have actual device drivers, this returns an empty string."""
         return ""
+
+    def _basic_fileattr(self, file_num: int, attribute: int) -> int:
+        """FILEATTR(file_num, attribute) - Returns file attributes.
+
+        attribute = 1: Returns file mode
+            1 = INPUT, 2 = OUTPUT, 4 = RANDOM, 8 = APPEND, 32 = BINARY
+        attribute = 2: Returns DOS file handle (emulated as file_num * 100)
+
+        Returns 0 if file is not open or invalid attribute."""
+        fnum = int(file_num)
+        attr = int(attribute)
+
+        if fnum not in self.file_handles:
+            return 0  # File not open
+
+        fh = self.file_handles[fnum]
+
+        if attr == 1:
+            # Return file mode
+            mode = getattr(fh, 'mode', 'r')
+            if mode == 'r':
+                return 1  # INPUT
+            elif mode == 'w':
+                return 2  # OUTPUT
+            elif mode in ('r+b', 'w+b'):
+                return 4  # RANDOM
+            elif mode == 'a':
+                return 8  # APPEND
+            elif mode == 'rb':
+                return 32  # BINARY
+            else:
+                return 1  # Default to INPUT
+        elif attr == 2:
+            # Return emulated DOS file handle
+            return fnum * 100  # Emulated handle
+        else:
+            return 0  # Invalid attribute
 
     def _init_joysticks(self) -> None:
         """Initialize joystick support."""
