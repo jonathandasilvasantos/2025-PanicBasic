@@ -2037,6 +2037,76 @@ class TestMBFConversionFunctions(unittest.TestCase):
         self.assertAlmostEqual(result, original, places=10)
 
 
+class TestBSAVEStatement(unittest.TestCase):
+    """Test BSAVE statement for saving memory to binary file."""
+
+    def setUp(self):
+        """Create interpreter instance for testing."""
+        _expr_cache.clear()
+        _compiled_expr_cache.clear()
+        _identifier_cache.clear()
+        self.font = pygame.font.Font(None, 16)
+        self.interp = BasicInterpreter(self.font, 800, 600)
+        self.test_file = "/tmp/test_bsave.bin"
+
+    def tearDown(self):
+        """Clean up test files."""
+        import os
+        if os.path.exists(self.test_file):
+            os.remove(self.test_file)
+
+    def test_bsave_memory(self):
+        """Test BSAVE saves emulated memory correctly."""
+        self.interp.reset([
+            'DEF SEG = &H1000',
+            'POKE 0, 65',
+            'POKE 1, 66',
+            'POKE 2, 67',
+            'BSAVE "/tmp/test_bsave.bin", 0, 3'
+        ])
+        while self.interp.running and self.interp.pc < len(self.interp.program_lines):
+            self.interp.step()
+
+        # Verify file was created with correct header and data
+        import os
+        self.assertTrue(os.path.exists(self.test_file))
+
+        with open(self.test_file, 'rb') as f:
+            data = f.read()
+        # Header is 7 bytes + 3 bytes data = 10 bytes
+        self.assertEqual(len(data), 10)
+        # Check header magic byte
+        self.assertEqual(data[0], 0xFD)
+        # Check data bytes
+        self.assertEqual(data[7], 65)  # 'A'
+        self.assertEqual(data[8], 66)  # 'B'
+        self.assertEqual(data[9], 67)  # 'C'
+
+    def test_bsave_bload_roundtrip(self):
+        """Test BSAVE and BLOAD roundtrip."""
+        self.interp.reset([
+            'DEF SEG = &H2000',
+            'POKE 0, 100',
+            'POKE 1, 200',
+            'POKE 2, 50',
+            'BSAVE "/tmp/test_bsave.bin", 0, 3',
+            'POKE 0, 0',
+            'POKE 1, 0',
+            'POKE 2, 0',
+            'BLOAD "/tmp/test_bsave.bin", 0',
+            'a = PEEK(0)',
+            'b = PEEK(1)',
+            'c = PEEK(2)'
+        ])
+        while self.interp.running and self.interp.pc < len(self.interp.program_lines):
+            self.interp.step()
+
+        # Verify data was restored
+        self.assertEqual(self.interp.variables.get("A"), 100)
+        self.assertEqual(self.interp.variables.get("B"), 200)
+        self.assertEqual(self.interp.variables.get("C"), 50)
+
+
 class TestPMAPFunction(unittest.TestCase):
     """Test PMAP function for coordinate mapping."""
 

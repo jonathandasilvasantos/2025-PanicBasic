@@ -387,6 +387,8 @@ _poke_re = LazyPattern(r"POKE\s+([^,]+)\s*,\s*(.+)", re.IGNORECASE)
 
 # BLOAD - Load binary file to memory (lazy - rarely used)
 _bload_re = LazyPattern(r"BLOAD\s+(.+)", re.IGNORECASE)
+# BSAVE - Save memory block to binary file (lazy - rarely used)
+_bsave_re = LazyPattern(r"BSAVE\s+(.+)", re.IGNORECASE)
 
 # COMMON SHARED - Global variable declaration (lazy - rarely used)
 _common_shared_re = LazyPattern(r"COMMON\s+SHARED\s+(.+)", re.IGNORECASE)
@@ -5101,6 +5103,11 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
         if m_bload:
             return self._handle_bload(m_bload.group(1).strip(), current_pc_num)
 
+        # --- BSAVE statement (save memory block to binary file) ---
+        m_bsave = _bsave_re.fullmatch(statement)
+        if m_bsave:
+            return self._handle_bsave(m_bsave.group(1).strip(), current_pc_num)
+
         # --- COMMON SHARED statement ---
         m_common_shared = _common_shared_re.fullmatch(statement)
         if m_common_shared:
@@ -6605,6 +6612,116 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
             return False
         except Exception as e:
             print(f"Error in BLOAD at PC {pc}: {e}")
+            self.running = False
+            return False
+
+    def _handle_bsave(self, args_str: str, pc: int) -> bool:
+        """Handle BSAVE "filename", offset, length - save memory block to binary file.
+
+        When memory segment is 0xA000 (VGA video memory), saves from screen.
+        BSAVE/BLOAD files have a 7-byte header: FD segment(2) offset(2) length(2)
+        """
+        try:
+            # Parse arguments: "filename", offset, length
+            parts = []
+            current = ""
+            in_string = False
+            for ch in args_str:
+                if ch == '"':
+                    in_string = not in_string
+                    current += ch
+                elif ch == ',' and not in_string:
+                    parts.append(current.strip())
+                    current = ""
+                else:
+                    current += ch
+            if current.strip():
+                parts.append(current.strip())
+
+            if len(parts) < 3:
+                print(f"Error: BSAVE requires filename, offset, and length at PC {pc}")
+                self.running = False
+                return False
+
+            # Get filename
+            filename_expr = parts[0]
+            is_simple_literal = False
+            if filename_expr.startswith('"') and filename_expr.endswith('"'):
+                in_str = False
+                has_operator = False
+                for ch in filename_expr:
+                    if ch == '"':
+                        in_str = not in_str
+                    elif not in_str and ch == '+':
+                        has_operator = True
+                        break
+                is_simple_literal = not has_operator
+
+            if is_simple_literal:
+                filename = filename_expr[1:-1]
+            else:
+                filename = str(self.eval_expr(filename_expr))
+                if not self.running:
+                    return False
+
+            # Resolve filename relative to source directory
+            if not os.path.isabs(filename):
+                filename = os.path.join(self.source_dir, filename)
+
+            # Get offset and length
+            offset = int(self.eval_expr(parts[1]))
+            if not self.running:
+                return False
+            length = int(self.eval_expr(parts[2]))
+            if not self.running:
+                return False
+
+            # Collect the data to save
+            data = bytearray()
+
+            # Check if saving from video memory (segment 0xA000 for Screen 13)
+            if self.memory_segment == 0xA000:
+                # Save from screen surface
+                screen_width = 320
+                screen_height = 200
+
+                # Ensure pixel index buffer exists
+                if self._pixel_indices is None:
+                    self._pixel_indices = bytearray(self.screen_width * self.screen_height)
+
+                for i in range(length):
+                    pixel_index = offset + i
+                    x = pixel_index % screen_width
+                    y = pixel_index // screen_width
+                    if 0 <= x < self.screen_width and 0 <= y < self.screen_height:
+                        # Get palette index from buffer
+                        data.append(self._pixel_indices[y * self.screen_width + x])
+                    else:
+                        data.append(0)
+            else:
+                # Save from emulated memory
+                base_addr = (self.memory_segment << 4) + offset
+                for i in range(length):
+                    data.append(self.emulated_memory.get(base_addr + i, 0))
+
+            # Write the BSAVE file with header
+            with open(filename, 'wb') as f:
+                # Write 7-byte header: FD segment(2) offset(2) length(2)
+                header = bytearray(7)
+                header[0] = 0xFD
+                segment = self.memory_segment if self.memory_segment else 0
+                header[1] = segment & 0xFF
+                header[2] = (segment >> 8) & 0xFF
+                header[3] = offset & 0xFF
+                header[4] = (offset >> 8) & 0xFF
+                header[5] = length & 0xFF
+                header[6] = (length >> 8) & 0xFF
+                f.write(header)
+                f.write(data)
+
+            return False
+        except Exception as e:
+            print(f"Error in BSAVE at PC {pc}: {e}")
             self.running = False
             return False
 
