@@ -2107,6 +2107,61 @@ class TestBSAVEStatement(unittest.TestCase):
         self.assertEqual(self.interp.variables.get("C"), 50)
 
 
+class TestCOMStatements(unittest.TestCase):
+    """Test COM ON/OFF/STOP statements (emulated no-ops)."""
+
+    def setUp(self):
+        """Create interpreter instance for testing."""
+        _expr_cache.clear()
+        _compiled_expr_cache.clear()
+        _identifier_cache.clear()
+        self.font = pygame.font.Font(None, 16)
+        self.interp = BasicInterpreter(self.font, 800, 600)
+
+    def test_com_on_accepted(self):
+        """Test COM(n) ON is accepted without error."""
+        self.interp.reset([
+            'COM(1) ON',
+            'result = 1'
+        ])
+        while self.interp.running and self.interp.pc < len(self.interp.program_lines):
+            self.interp.step()
+        self.assertEqual(self.interp.variables.get("RESULT"), 1)
+
+    def test_com_off_accepted(self):
+        """Test COM(n) OFF is accepted without error."""
+        self.interp.reset([
+            'COM(2) OFF',
+            'result = 2'
+        ])
+        while self.interp.running and self.interp.pc < len(self.interp.program_lines):
+            self.interp.step()
+        self.assertEqual(self.interp.variables.get("RESULT"), 2)
+
+    def test_com_stop_accepted(self):
+        """Test COM(n) STOP is accepted without error."""
+        self.interp.reset([
+            'COM(1) STOP',
+            'result = 3'
+        ])
+        while self.interp.running and self.interp.pc < len(self.interp.program_lines):
+            self.interp.step()
+        self.assertEqual(self.interp.variables.get("RESULT"), 3)
+
+    def test_on_com_gosub_accepted(self):
+        """Test ON COM(n) GOSUB is accepted without error."""
+        self.interp.reset([
+            'ON COM(1) GOSUB ComHandler',
+            'result = 4',
+            'END',
+            'ComHandler:',
+            'RETURN'
+        ])
+        while self.interp.running and self.interp.pc < len(self.interp.program_lines):
+            self.interp.step()
+        self.assertEqual(self.interp.variables.get("RESULT"), 4)
+
+
 class TestPMAPFunction(unittest.TestCase):
     """Test PMAP function for coordinate mapping."""
 

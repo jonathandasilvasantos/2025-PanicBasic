@@ -343,6 +343,12 @@ _on_strig_re = LazyPattern(r"ON\s+STRIG\s*\((\d+)\)\s+GOSUB\s+([a-zA-Z0-9_]+)", 
 # STRIG(n) ON/OFF/STOP - Enable/disable joystick button events (lazy - rarely used)
 _strig_on_off_re = LazyPattern(r"STRIG\s*\((\d+)\)\s+(ON|OFF|STOP)", re.IGNORECASE)
 
+# ON COM(n) GOSUB - Serial port event handler (lazy - rarely used, emulated no-op)
+_on_com_re = LazyPattern(r"ON\s+COM\s*\((\d+)\)\s+GOSUB\s+([a-zA-Z0-9_]+)", re.IGNORECASE)
+
+# COM(n) ON/OFF/STOP - Enable/disable serial port events (lazy - rarely used, emulated no-op)
+_com_on_off_re = LazyPattern(r"COM\s*\((\d+)\)\s+(ON|OFF|STOP)", re.IGNORECASE)
+
 # ON PEN GOSUB - Light pen event handler (lazy - rarely used)
 _on_pen_re = LazyPattern(r"ON\s+PEN\s+GOSUB\s+([a-zA-Z0-9_]+)", re.IGNORECASE)
 
@@ -4676,6 +4682,20 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
                 elif mode == "OFF":
                     self.strig_enabled[strig_num] = False
                 # STOP suspends but remembers events (we treat as OFF for simplicity)
+            return False
+
+        # --- ON COM(n) GOSUB statement (emulated no-op, serial ports not available) ---
+        m_on_com = _on_com_re.fullmatch(statement)
+        if m_on_com:
+            # Serial port event handlers are accepted but not functional
+            # (no serial ports available in this environment)
+            return False
+
+        # --- COM(n) ON/OFF/STOP statement (emulated no-op, serial ports not available) ---
+        m_com_on_off = _com_on_off_re.fullmatch(statement)
+        if m_com_on_off:
+            # Serial port event control is accepted but not functional
+            # (no serial ports available in this environment)
             return False
 
         # --- ON PEN GOSUB statement ---
