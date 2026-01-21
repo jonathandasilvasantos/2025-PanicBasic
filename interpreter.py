@@ -36,9 +36,10 @@ except ImportError:
 # --- Custom Exceptions ---
 class BasicRuntimeError(Exception):
     """Exception raised during BASIC runtime that can be caught by ON ERROR GOTO."""
-    def __init__(self, message, error_type="runtime"):
+    def __init__(self, message, error_type="runtime", error_code=5):
         super().__init__(message)
         self.error_type = error_type
+        self.error_code = error_code  # Default to 5 (Illegal function call)
 
 
 # --- Custom dict for eval that returns 0 for undefined numeric variables ---
@@ -180,6 +181,8 @@ _rnd_bare_re = re.compile(r'\bRND\b(?!\s*\()', re.IGNORECASE)  # RND -> RND()
 _csrlin_re = re.compile(r'\bCSRLIN\b(?!\s*\()', re.IGNORECASE)  # CSRLIN -> CSRLIN()
 _command_re = re.compile(r'\bCOMMAND\$', re.IGNORECASE)  # COMMAND$ -> COMMAND()
 _freefile_re = re.compile(r'\bFREEFILE\b(?!\s*\()', re.IGNORECASE)  # FREEFILE -> FREEFILE()
+_erl_re = re.compile(r'\bERL\b(?!\s*\()', re.IGNORECASE)  # ERL -> ERL()
+_err_re = re.compile(r'\bERR\b(?!\s*\()', re.IGNORECASE)  # ERR -> ERR()
 
 # General pattern for NAME(...) or NAME$(...) which could be a function call or array access
 # Uses nested paren pattern to handle cases like func(a(), b) or arr(func(x))
@@ -536,7 +539,9 @@ _basic_function_names = {
     # Memory address functions (emulated)
     'VARPTR', 'VARSEG', 'SADD',
     # Music function (as callable)
-    'PLAY'
+    'PLAY',
+    # Error handling functions
+    'ERL', 'ERR'
 }
 
 # --- Expression Conversion Logic ---
@@ -766,6 +771,8 @@ def convert_basic_expr(expr: str, known_identifiers: Optional[set] = None) -> st
     expr = _csrlin_re.sub("CSRLIN()", expr)
     expr = _command_re.sub("COMMAND()", expr)
     expr = _freefile_re.sub("FREEFILE()", expr)
+    expr = _erl_re.sub("ERL()", expr)
+    expr = _err_re.sub("ERR()", expr)
 
     # 1b. User-defined FN function calls: FN name(args) or FNname(args)
     expr = _fn_call_re.sub(_replace_fn_call, expr)
@@ -925,6 +932,8 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
         self.error_handler_label: Optional[str] = None
         self.error_resume_pc: int = -1
         self.in_error_handler: bool = False
+        self.error_line: int = -1  # Line number where last error occurred (for ERL), -1 = no error
+        self.error_code: int = 0  # Error code of last error (for ERR)
 
         # SUB/FUNCTION definitions: name -> (params, body_start_pc, body_end_pc, is_static)
         self.procedures: Dict[str, Dict[str, Any]] = {}
@@ -1104,6 +1113,9 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
             "MULTIKEY": self._basic_keydown,  # Alias for KEYDOWN (compatibility)
             # Array access with lower bound adjustment
             "_ARRGET_": self._array_get,  # Access array element with bounds check
+            # Error handling functions
+            "ERL": self._basic_erl,  # Get error line number
+            "ERR": self._basic_err,  # Get error code
         }
 
         # Build command dispatch table for O(1) keyword lookup
@@ -2016,6 +2028,21 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
         # music buffer. We don't implement background music, so return 0.
         return 0
 
+    def _basic_erl(self) -> int:
+        """ERL - Returns the line number where the last error occurred.
+        Returns 0 if no error has occurred.
+        Note: Returns 1-indexed line numbers for QBasic compatibility."""
+        # Return 1-indexed line number (add 1 to internal 0-indexed line)
+        # error_line is -1 when no error, otherwise it's the 0-indexed line number
+        if self.error_line < 0:
+            return 0  # No error has occurred
+        return self.error_line + 1
+
+    def _basic_err(self) -> int:
+        """ERR - Returns the error code of the last error.
+        Returns 0 if no error has occurred."""
+        return self.error_code
+
     def _init_joysticks(self) -> None:
         """Initialize joystick support."""
         try:
@@ -2384,6 +2411,8 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
         self.error_handler_label = None
         self.error_resume_pc = -1
         self.in_error_handler = False
+        self.error_line = -1  # -1 means no error
+        self.error_code = 0
 
         # Close any open files
         for fh in self.file_handles.values():
@@ -6289,7 +6318,7 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
             if not self.running: return False
 
             # Raise a runtime error that can be caught by ON ERROR GOTO
-            raise BasicRuntimeError(f"Error {error_num} triggered by ERROR statement", "user")
+            raise BasicRuntimeError(f"Error {error_num} triggered by ERROR statement", "user", error_num)
         except BasicRuntimeError:
             raise  # Re-raise to be caught by step_line
         except Exception as e:
@@ -6743,6 +6772,9 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
         try:
             return self.execute_logical_line(logical_line_content, pc_of_this_line)
         except BasicRuntimeError as e:
+            # Track error information for ERL and ERR functions
+            self.error_line = pc_of_this_line
+            self.error_code = getattr(e, 'error_code', 5)  # Default to 5 (Illegal function call)
             # Handle runtime error with ON ERROR GOTO handler
             if self.error_handler_label:
                 self.error_resume_pc = pc_of_this_line

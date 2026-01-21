@@ -1611,6 +1611,124 @@ class TestRuntimeErrorHelper(unittest.TestCase):
         self.assertNotIn("X", self.interp.variables)
 
 
+class TestERLandERRFunctions(unittest.TestCase):
+    """Test ERL and ERR functions for error handling."""
+
+    def setUp(self):
+        """Create interpreter instance for testing."""
+        _expr_cache.clear()
+        _compiled_expr_cache.clear()
+        _identifier_cache.clear()
+        self.font = pygame.font.Font(None, 16)
+        self.interp = BasicInterpreter(self.font, 800, 600)
+
+    def test_erl_returns_error_line(self):
+        """Test ERL returns the line number where error occurred."""
+        self.interp.reset([
+            'ON ERROR GOTO handler',
+            'x = 1',
+            'ERROR 5',
+            'END',
+            'handler:',
+            'errorline = ERL',
+            'RESUME NEXT'
+        ])
+        while self.interp.running and self.interp.pc < len(self.interp.program_lines):
+            self.interp.step()
+
+        # ERL should return the line number where ERROR 5 was called (line 3)
+        self.assertEqual(self.interp.variables.get("ERRORLINE"), 3)
+
+    def test_err_returns_error_code(self):
+        """Test ERR returns the error code."""
+        self.interp.reset([
+            'ON ERROR GOTO handler',
+            'x = 1',
+            'ERROR 53',
+            'END',
+            'handler:',
+            'errorcode = ERR',
+            'RESUME NEXT'
+        ])
+        while self.interp.running and self.interp.pc < len(self.interp.program_lines):
+            self.interp.step()
+
+        # ERR should return 53 (File not found)
+        self.assertEqual(self.interp.variables.get("ERRORCODE"), 53)
+
+    def test_erl_and_err_together(self):
+        """Test ERL and ERR work together in error handler."""
+        self.interp.reset([
+            'ON ERROR GOTO handler',
+            'x = 1',
+            'y = 2',
+            'ERROR 11',
+            'z = 3',
+            'END',
+            'handler:',
+            'errline = ERL',
+            'errcode = ERR',
+            'RESUME NEXT'
+        ])
+        while self.interp.running and self.interp.pc < len(self.interp.program_lines):
+            self.interp.step()
+
+        # ERL should return line 4 (ERROR 11)
+        self.assertEqual(self.interp.variables.get("ERRLINE"), 4)
+        # ERR should return 11 (Division by zero)
+        self.assertEqual(self.interp.variables.get("ERRCODE"), 11)
+        # z should be set after RESUME NEXT
+        self.assertEqual(self.interp.variables.get("Z"), 3)
+
+    def test_erl_zero_without_error(self):
+        """Test ERL returns 0 when no error has occurred."""
+        self.interp.reset([
+            'errorline = ERL',
+            'errorcode = ERR'
+        ])
+        while self.interp.running and self.interp.pc < len(self.interp.program_lines):
+            self.interp.step()
+
+        # Without any error, ERL and ERR should return 0
+        self.assertEqual(self.interp.variables.get("ERRORLINE"), 0)
+        self.assertEqual(self.interp.variables.get("ERRORCODE"), 0)
+
+    def test_erl_in_expression(self):
+        """Test ERL can be used in expressions."""
+        self.interp.reset([
+            'ON ERROR GOTO handler',
+            'ERROR 5',
+            'END',
+            'handler:',
+            'result = ERL * 10 + ERR',
+            'RESUME NEXT'
+        ])
+        while self.interp.running and self.interp.pc < len(self.interp.program_lines):
+            self.interp.step()
+
+        # ERL=2, ERR=5, so result = 2*10 + 5 = 25
+        self.assertEqual(self.interp.variables.get("RESULT"), 25)
+
+    def test_multiple_errors(self):
+        """Test ERL and ERR update correctly for multiple errors."""
+        self.interp.reset([
+            'ON ERROR GOTO handler',
+            'ERROR 5',
+            'ERROR 11',
+            'END',
+            'handler:',
+            'errline = ERL',
+            'errcode = ERR',
+            'RESUME NEXT'
+        ])
+        while self.interp.running and self.interp.pc < len(self.interp.program_lines):
+            self.interp.step()
+
+        # After second error (ERROR 11 on line 3), ERL=3 and ERR=11
+        self.assertEqual(self.interp.variables.get("ERRLINE"), 3)
+        self.assertEqual(self.interp.variables.get("ERRCODE"), 11)
+
+
 class TestClearStatement(unittest.TestCase):
     """Test CLEAR statement."""
 
