@@ -47,3 +47,5 @@ codebase.sh
 # Third-party games
 third-party/
 
+# Development TODO file
+TODO.txt

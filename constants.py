@@ -63,6 +63,44 @@ DEFAULT_COLORS: Dict[int, Tuple[int, int, int]] = {
     15: (255, 255, 255),  # White
 }
 
+# --- VGA 256-Color Palette (Screen 13) ---
+# Standard VGA palette: colors 0-15 are the same as EGA, 16-31 grayscale,
+# 32-255 are RGB color ranges
+def _generate_vga_256_palette() -> Dict[int, Tuple[int, int, int]]:
+    """Generate the standard VGA 256-color palette."""
+    palette: Dict[int, Tuple[int, int, int]] = {}
+
+    # Colors 0-15: Standard 16-color EGA palette
+    for i in range(16):
+        palette[i] = DEFAULT_COLORS[i]
+
+    # Colors 16-31: Grayscale ramp
+    for i in range(16):
+        gray = i * 17  # 0, 17, 34, ..., 255
+        palette[16 + i] = (gray, gray, gray)
+
+    # Colors 32-255: Color cube (6x6x6 = 216 colors) + extras
+    # Standard VGA uses 6 levels: 0, 51, 102, 153, 204, 255
+    levels = [0, 51, 102, 153, 204, 255]
+    idx = 32
+    for r in levels:
+        for g in levels:
+            for b in levels:
+                if idx < 256:
+                    palette[idx] = (r, g, b)
+                    idx += 1
+
+    # Fill remaining with grayscale
+    while idx < 256:
+        gray = ((idx - 232) * 10 + 8) if idx >= 232 else (idx * 4)
+        gray = min(255, max(0, gray))
+        palette[idx] = (gray, gray, gray)
+        idx += 1
+
+    return palette
+
+VGA_256_PALETTE: Dict[int, Tuple[int, int, int]] = _generate_vga_256_palette()
+
 # --- Default Foreground/Background Colors ---
 DEFAULT_FG_COLOR: int = 7  # Light Gray
 DEFAULT_BG_COLOR: int = 0  # Black

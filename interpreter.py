@@ -19,7 +19,7 @@ from constants import (
     DEFAULT_SCREEN_WIDTH, DEFAULT_SCREEN_HEIGHT, MAX_STEPS_PER_FRAME,
     PRINT_TAB_WIDTH, EXPR_CACHE_MAX_SIZE, COMPILED_CACHE_MAX_SIZE,
     IDENTIFIER_CACHE_MAX_SIZE, SCREEN_MODES, DEFAULT_COLORS,
-    DEFAULT_FG_COLOR, DEFAULT_BG_COLOR, DEFAULT_ARRAY_SIZE
+    DEFAULT_FG_COLOR, DEFAULT_BG_COLOR, DEFAULT_ARRAY_SIZE, VGA_256_PALETTE
 )
 from commands.audio import AudioCommandsMixin
 from commands.graphics import GraphicsCommandsMixin
@@ -234,11 +234,11 @@ _screen_re = re.compile(r"SCREEN\s+(.+)", re.IGNORECASE)
 _cls_re = re.compile(r"CLS", re.IGNORECASE)
 _end_re = re.compile(r"END", re.IGNORECASE)
 _randomize_re = re.compile(r"RANDOMIZE(?:\s+(.*))?", re.IGNORECASE)
-_next_re = re.compile(r"NEXT(?:\s+([a-zA-Z_][a-zA-Z0-9_]*[\$%!#&]?))?", re.IGNORECASE)
+_next_re = re.compile(r"NEXT(?:\s+(.+))?", re.IGNORECASE)
 _delay_re = re.compile(r"(?:_DELAY|SLEEP)\s+(.*)", re.IGNORECASE)
 _do_re = re.compile(r"DO(?:\s+(WHILE|UNTIL)\s+(.+))?", re.IGNORECASE)
 _loop_re = re.compile(r"LOOP(?:\s+(WHILE|UNTIL)\s+(.+))?", re.IGNORECASE)
-_const_re = re.compile(r"CONST\s+([a-zA-Z_][a-zA-Z0-9_]*\$?)\s*=(.*)", re.IGNORECASE)
+_const_re = re.compile(r"CONST\s+(.*)", re.IGNORECASE)
 _color_re = re.compile(r"COLOR\b(?:\s*([^,]+))?(?:\s*,\s*(.+))?", re.IGNORECASE)
 _rem_re = re.compile(r"REM\b.*", re.IGNORECASE)
 _exit_do_re = re.compile(r"EXIT\s+DO", re.IGNORECASE)
@@ -375,6 +375,9 @@ _def_seg_re = LazyPattern(r"DEF\s+SEG(?:\s*=\s*(.+))?", re.IGNORECASE)
 # POKE - Write to memory (lazy - rarely used, emulated)
 _poke_re = LazyPattern(r"POKE\s+([^,]+)\s*,\s*(.+)", re.IGNORECASE)
 
+# BLOAD - Load binary file to memory (lazy - rarely used)
+_bload_re = LazyPattern(r"BLOAD\s+(.+)", re.IGNORECASE)
+
 # COMMON SHARED - Global variable declaration (lazy - rarely used)
 _common_shared_re = LazyPattern(r"COMMON\s+SHARED\s+(.+)", re.IGNORECASE)
 
@@ -387,11 +390,11 @@ _dim_shared_re = re.compile(r"DIM\s+SHARED\s+(.+)", re.IGNORECASE)
 # Coordinate expression pattern - handles nested function calls like Scl(15)
 _coord_expr = r'(?:[^(),]+|\([^()]*\))+'
 
-# GET (graphics) - Capture screen region (array name can have type suffix like &)
-_get_gfx_re = re.compile(rf"GET\s*\(\s*({_coord_expr})\s*,\s*({_coord_expr})\s*\)\s*-\s*\(\s*({_coord_expr})\s*,\s*({_coord_expr})\s*\)\s*,\s*([a-zA-Z_][a-zA-Z0-9_]*[\$%!#&]?)", re.IGNORECASE)
+# GET (graphics) - Capture screen region (array name can have type suffix like & and optional index)
+_get_gfx_re = re.compile(rf"GET\s*\(\s*({_coord_expr})\s*,\s*({_coord_expr})\s*\)\s*-\s*\(\s*({_coord_expr})\s*,\s*({_coord_expr})\s*\)\s*,\s*(.+)", re.IGNORECASE)
 
-# PUT (graphics) - Display sprite (array name can have type suffix like &)
-_put_gfx_re = re.compile(rf"PUT\s*\(\s*({_coord_expr})\s*,\s*({_coord_expr})\s*\)\s*,\s*([a-zA-Z_][a-zA-Z0-9_]*[\$%!#&]?)(?:\s*,\s*(PSET|PRESET|AND|OR|XOR))?", re.IGNORECASE)
+# PUT (graphics) - Display sprite (array name can have type suffix like & and optional index)
+_put_gfx_re = re.compile(rf"PUT\s*\(\s*({_coord_expr})\s*,\s*({_coord_expr})\s*\)\s*,\s*([^,]+)(?:\s*,\s*(PSET|PRESET|AND|OR|XOR))?", re.IGNORECASE)
 
 # ON ERROR GOTO - Error handler
 _on_error_re = re.compile(r"ON\s+ERROR\s+GOTO\s+([a-zA-Z0-9_]+)", re.IGNORECASE)
@@ -860,6 +863,9 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
         self._dirty = True
         self._cached_scaled_surface: Optional[pygame.Surface] = None
         self.last_rnd_value: Optional[float] = None
+
+        # Source file directory for resolving relative paths
+        self.source_dir: str = os.getcwd()
 
         # INPUT statement state
         self.input_mode: bool = False
@@ -2268,12 +2274,18 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
         """Mark the rendering surface as dirty and requiring redraw."""
         self._dirty = True
 
-    def reset(self, program_lines: List[str]) -> None:
+    def reset(self, program_lines: List[str], source_path: Optional[str] = None) -> None:
         """Reset interpreter state and load a new program.
 
         Args:
             program_lines: List of BASIC program lines to execute.
+            source_path: Optional path to the source file (for resolving relative paths).
         """
+        # Set source directory for resolving relative paths
+        if source_path:
+            self.source_dir = os.path.dirname(os.path.abspath(source_path))
+        else:
+            self.source_dir = os.getcwd()
         self.program_lines = []
         self.labels.clear()
         self.variables.clear()
@@ -2439,10 +2451,16 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
                 # Strip the label part to get the actual command
                 line_content = _label_strip_re.sub("", line_content, count=1).strip()
                 if not line_content: # Line might have only been a label
-                    continue 
-            
-            self.program_lines.append((current_pc_index, original_line, line_content))
-            current_pc_index += 1
+                    continue
+
+            # Split by colon (respecting strings) and add each statement as a separate entry
+            # This ensures FOR loop_pc values are correct for nested loops
+            statements = self._split_statements(line_content)
+            for stmt in statements:
+                stmt = stmt.strip()
+                if stmt and not _rem_re.match(stmt) and not stmt.startswith("'"):
+                    self.program_lines.append((current_pc_index, original_line, stmt))
+                    current_pc_index += 1
 
         # Third pass: pre-parse SUB and FUNCTION definitions
         self._preparse_procedures()
@@ -3169,14 +3187,55 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
 
         m_const = _const_re.fullmatch(statement)
         if m_const:
-             var_name, val_expr = m_const.group(1).strip().upper(), m_const.group(2).strip()
-             if var_name in self.variables or var_name in self.constants:
-                 print(f"Error: Identifier '{var_name}' redefined at PC {current_pc_num}"); self.running = False; return False
-             
-             val = self.eval_expr(val_expr)
-             if not self.running: return False # Eval error
-             self.constants[var_name] = val
-             return False
+            const_content = m_const.group(1).strip()
+            # Parse multiple constant definitions: CONST A = 1, B = 2, C = NOT B
+            # Split by comma at top level (not inside parentheses or strings)
+            definitions = []
+            current = ""
+            paren_depth = 0
+            in_string = False
+            for ch in const_content:
+                if ch == '"' and not in_string:
+                    in_string = True
+                    current += ch
+                elif ch == '"' and in_string:
+                    in_string = False
+                    current += ch
+                elif in_string:
+                    current += ch
+                elif ch == '(':
+                    paren_depth += 1
+                    current += ch
+                elif ch == ')':
+                    paren_depth -= 1
+                    current += ch
+                elif ch == ',' and paren_depth == 0:
+                    if current.strip():
+                        definitions.append(current.strip())
+                    current = ""
+                else:
+                    current += ch
+            if current.strip():
+                definitions.append(current.strip())
+
+            # Process each definition: NAME = value
+            for defn in definitions:
+                eq_pos = defn.find('=')
+                if eq_pos == -1:
+                    print(f"Error: Invalid CONST syntax '{defn}' at PC {current_pc_num}")
+                    self.running = False
+                    return False
+                var_name = defn[:eq_pos].strip().upper()
+                val_expr = defn[eq_pos+1:].strip()
+                if var_name in self.variables or var_name in self.constants:
+                    print(f"Error: Identifier '{var_name}' redefined at PC {current_pc_num}")
+                    self.running = False
+                    return False
+                val = self.eval_expr(val_expr)
+                if not self.running:
+                    return False
+                self.constants[var_name] = val
+            return False
 
         # --- DIM statement handler (handles all DIM forms including complex expressions) ---
         # Use smart parser that can handle nested parentheses
@@ -3319,38 +3378,45 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
 
         m_next = _next_re.fullmatch(statement)
         if m_next:
-             next_var_orig = m_next.group(1).strip() if m_next.group(1) else None
-             next_var = next_var_orig.upper() if next_var_orig else None
+            next_vars_str = m_next.group(1).strip() if m_next.group(1) else None
 
-             if not self.for_stack:
-                 return self._runtime_error("NEXT without FOR", current_pc_num)
+            # Handle multiple variables: NEXT ii, i (closes inner loop first, then outer)
+            if next_vars_str:
+                next_vars = [v.strip().upper() for v in next_vars_str.split(',')]
+            else:
+                next_vars = [None]  # NEXT without variable
 
-             loop_info = self.for_stack[-1]
-             if loop_info.get("placeholder"): # Should not happen if _should_execute is true
-                 self.for_stack.pop()
-                 return self._runtime_error("NEXT encountered placeholder FOR loop info", current_pc_num)
+            # Process each variable in order
+            for next_var in next_vars:
+                if not self.for_stack:
+                    return self._runtime_error("NEXT without FOR", current_pc_num)
 
-             active_for_var = loop_info["var"]
-             if next_var and next_var != active_for_var:
-                 return self._runtime_error(f"NEXT variable '{next_var_orig}' does not match FOR variable '{active_for_var}'", current_pc_num)
-            
-             current_val = self.variables.get(active_for_var, 0) # Default to 0 if var somehow missing
-             new_val = current_val + loop_info["step"]
-             self.variables[active_for_var] = new_val
+                loop_info = self.for_stack[-1]
+                if loop_info.get("placeholder"):
+                    self.for_stack.pop()
+                    return self._runtime_error("NEXT encountered placeholder FOR loop info", current_pc_num)
 
-             continue_loop = False
-             if loop_info["step"] > 0:
-                 continue_loop = new_val <= loop_info["end"]
-             elif loop_info["step"] < 0:
-                 continue_loop = new_val >= loop_info["end"]
-             # If step is 0, loop continues if it started (handled at FOR)
+                active_for_var = loop_info["var"]
+                if next_var and next_var != active_for_var:
+                    return self._runtime_error(f"NEXT variable '{next_var}' does not match FOR variable '{active_for_var}'", current_pc_num)
 
-             if continue_loop:
-                 self.pc = loop_info["loop_pc"] # Jump back to FOR statement's PC + 1 (handled by main loop)
-                 return True # PC changed
-             else:
-                 self.for_stack.pop() # End of loop
-             return False
+                current_val = self.variables.get(active_for_var, 0)
+                new_val = current_val + loop_info["step"]
+                self.variables[active_for_var] = new_val
+
+                continue_loop = False
+                if loop_info["step"] > 0:
+                    continue_loop = new_val <= loop_info["end"]
+                elif loop_info["step"] < 0:
+                    continue_loop = new_val >= loop_info["end"]
+
+                if continue_loop:
+                    self.pc = loop_info["loop_pc"]
+                    return True  # PC changed - loop back
+                else:
+                    self.for_stack.pop()  # End of this loop, continue to next variable
+
+            return False
 
         # EXIT FOR - break out of innermost FOR loop
         if _exit_for_re.fullmatch(statement):
@@ -4593,6 +4659,11 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
             full_addr = (self.memory_segment << 4) + address
             self.emulated_memory[full_addr] = value & 0xFF
             return False
+
+        # --- BLOAD statement (load binary file to memory/screen) ---
+        m_bload = _bload_re.fullmatch(statement)
+        if m_bload:
+            return self._handle_bload(m_bload.group(1).strip(), current_pc_num)
 
         # --- COMMON SHARED statement ---
         m_common_shared = _common_shared_re.fullmatch(statement)
@@ -5963,6 +6034,102 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
     # File IO handlers (_handle_open, _handle_close, _handle_input_file, etc.)
     # are now provided by IOCommandsMixin
 
+    def _handle_bload(self, args_str: str, pc: int) -> bool:
+        """Handle BLOAD "filename"[, offset] - load binary file to memory.
+
+        When memory segment is 0xA000 (VGA video memory), loads directly to screen.
+        BSAVE/BLOAD files have a 7-byte header: FD segment(2) offset(2) length(2)
+        """
+        try:
+            # Parse arguments: "filename"[, offset]
+            parts = []
+            current = ""
+            in_string = False
+            for ch in args_str:
+                if ch == '"':
+                    in_string = not in_string
+                    current += ch
+                elif ch == ',' and not in_string:
+                    parts.append(current.strip())
+                    current = ""
+                else:
+                    current += ch
+            if current.strip():
+                parts.append(current.strip())
+
+            # Get filename
+            filename_expr = parts[0]
+            if filename_expr.startswith('"') and filename_expr.endswith('"'):
+                filename = filename_expr[1:-1]
+            else:
+                filename = str(self.eval_expr(filename_expr))
+                if not self.running:
+                    return False
+
+            # Resolve filename relative to source directory
+            if not os.path.isabs(filename):
+                filename = os.path.join(self.source_dir, filename)
+
+            # Get optional offset (default 0)
+            offset = 0
+            if len(parts) > 1:
+                offset = int(self.eval_expr(parts[1]))
+                if not self.running:
+                    return False
+
+            # Read the BSAVE file
+            with open(filename, 'rb') as f:
+                header = f.read(7)
+                if len(header) < 7 or header[0] != 0xFD:
+                    print(f"Error: Invalid BSAVE file format at PC {pc}")
+                    self.running = False
+                    return False
+
+                # Parse header (little-endian)
+                file_segment = header[1] | (header[2] << 8)
+                file_offset = header[3] | (header[4] << 8)
+                data_length = header[5] | (header[6] << 8)
+
+                # Read the data
+                data = f.read(data_length)
+
+            # Check if loading to video memory (segment 0xA000 for Screen 13)
+            if self.memory_segment == 0xA000:
+                # Load directly to screen surface
+                # Screen 13 is 320x200 with 256 colors (1 byte per pixel)
+                screen_width = 320
+                screen_height = 200
+
+                # Ensure surface exists
+                if self.surface is None:
+                    self.surface = pygame.Surface((self.screen_width, self.screen_height)).convert()
+
+                for i, byte in enumerate(data):
+                    pixel_index = offset + i
+                    x = pixel_index % screen_width
+                    y = pixel_index // screen_width
+                    if 0 <= x < self.screen_width and 0 <= y < self.screen_height:
+                        # Use 256-color VGA palette, with fallback to colors dict
+                        color = self.colors.get(byte, VGA_256_PALETTE.get(byte, (byte, byte, byte)))
+                        self.surface.set_at((x, y), color)
+
+                self.mark_dirty()
+            else:
+                # Load to emulated memory
+                base_addr = (self.memory_segment << 4) + offset
+                for i, byte in enumerate(data):
+                    self.emulated_memory[base_addr + i] = byte
+
+            return False
+        except FileNotFoundError:
+            print(f"Error: File not found in BLOAD at PC {pc}: {filename}")
+            self.running = False
+            return False
+        except Exception as e:
+            print(f"Error in BLOAD at PC {pc}: {e}")
+            self.running = False
+            return False
+
     def _handle_error(self, error_num_expr: str, pc: int) -> bool:
         """Handle ERROR n - trigger a runtime error."""
         try:
@@ -6619,7 +6786,7 @@ def run_interpreter(filename: str) -> None:
         return
 
     print(f"Loading file: {filename}")
-    interpreter.reset(lines)
+    interpreter.reset(lines, source_path=filename)
 
     clock = pygame.time.Clock()
     application_running = True
