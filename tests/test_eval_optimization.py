@@ -427,5 +427,68 @@ class TestGetGraphicsOptimization:
                 assert indices[y * 4 + x] == expected
 
 
+class TestExpressionFastPath:
+    """Test the simple expression fast-path optimization."""
+
+    def test_simple_identifier_fast_path(self):
+        """Test that simple identifiers use the fast-path."""
+        from interpreter import convert_basic_expr, _expr_cache
+        # Clear cache to test fresh conversion
+        _expr_cache.clear()
+
+        result = convert_basic_expr("COUNT%", None)
+        assert result == "COUNT_INT"
+
+        result = convert_basic_expr("MyVar", None)
+        assert result == "MYVAR"
+
+    def test_simple_numeric_fast_path(self):
+        """Test that simple numeric literals use the fast-path."""
+        from interpreter import convert_basic_expr, _expr_cache
+        _expr_cache.clear()
+
+        result = convert_basic_expr("42", None)
+        assert result == "42"
+
+        result = convert_basic_expr("-3.14", None)
+        assert result == "-3.14"
+
+    def test_simple_binary_nospace_fast_path(self):
+        """Test that simple binary expressions without spaces use fast-path."""
+        from interpreter import convert_basic_expr, _expr_cache
+        _expr_cache.clear()
+
+        result = convert_basic_expr("X+1", None)
+        assert result == "X + 1"
+
+        result = convert_basic_expr("COUNT>0", None)
+        assert result == "COUNT > 0"
+
+        result = convert_basic_expr("A*B", None)
+        assert result == "A * B"
+
+    def test_special_keywords_skip_fast_path(self):
+        """Test that special keywords don't use the simple identifier fast-path."""
+        from interpreter import convert_basic_expr, _expr_cache
+        _expr_cache.clear()
+
+        # INKEY$ should become INKEY(), not INKEY_STR
+        result = convert_basic_expr("INKEY$", None)
+        assert result == "INKEY()"
+
+        # TIMER should become TIMER()
+        result = convert_basic_expr("TIMER", None)
+        assert result == "TIMER()"
+
+    def test_expressions_with_spaces_use_regular_path(self):
+        """Test that expressions with spaces fall through to regular path."""
+        from interpreter import convert_basic_expr, _expr_cache
+        _expr_cache.clear()
+
+        # This has spaces, so it uses the regular path
+        result = convert_basic_expr("x = 5", None)
+        assert result == "X  ==  5"
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])

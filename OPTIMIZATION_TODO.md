@@ -79,32 +79,24 @@ Remaining statement parsing opportunities (diminishing returns):
 [ ] Pass up_stmt to handlers to avoid re-uppercasing
 
 ================================================================================
-BOTTLENECK #5: convert_basic_expr() Regex Overhead
+COMPLETED: BOTTLENECK #5 - Simple Expression Fast-Path
 ================================================================================
-Location: interpreter.py:778-861
-Impact: Multiple regex substitutions per expression
+Status: DONE - Fast-path implemented for simple expressions
 
-PROBLEM ANALYSIS:
-- Expression cache helps (4s cumtime vs 80s for eval_expr)
-- But uncached expressions do 15+ regex substitutions
-- While loop at line 824 for integer division is inefficient
-- Identifier regex at line 855 scans full expression
+Fix implemented: Skip heavy regex processing for simple expressions
+- Single identifiers (X, COUNT%, MYVAR$) -> direct conversion
+- Numeric literals (42, -3.14) -> returned unchanged
+- Simple binary ops without spaces (X+1, COUNT>0) -> minimal conversion
+- Special keywords (INKEY$, TIMER, etc.) excluded from fast-path
 
-SUGGESTED FIXES:
-[ ] 1. Single-pass expression tokenizer
-     - Instead of multiple regex.sub() passes
-     - Tokenize once, transform tokens, rejoin
-     - More maintainable and potentially faster
+Files changed:
+- interpreter.py: Added _simple_ident_re, _simple_num_re, _simple_binary_nospace_re,
+  _special_keywords set, and fast-path logic in convert_basic_expr()
+- tests/test_eval_optimization.py: Added TestExpressionFastPath tests
 
-[ ] 2. Pre-tokenize on program load
-     - Parse expressions during program loading
-     - Store AST or token list instead of string
-
-[ ] 3. Simple expression fast-path
-     - For expressions like "X" or "X + 1" or "X > 0"
-     - Skip full conversion machinery
-
-ESTIMATED IMPROVEMENT: 2-3x faster for uncached expressions
+Remaining regex overhead opportunities (diminishing returns):
+[ ] Single-pass expression tokenizer (major rewrite)
+[ ] Pre-tokenize on program load (architectural change)
 
 ================================================================================
 COMPLETED: BOTTLENECK #6 - GET Graphics Optimization
@@ -196,7 +188,7 @@ IMPLEMENTATION PRIORITY ORDER
 [x] 2. Fix #3 (sprite caching) - DONE, caching implemented
 [x] 3. Fix #4 (statement caching) - DONE, 10% improvement
 [x] 4. Fix #6 (GET numpy) - DONE, numpy/memoryview optimization
-[ ] 5. Fix #5 (tokenizer) - Medium impact, higher effort
+[x] 5. Fix #5 (expression fast-path) - DONE, simple expressions optimized
 [ ] 6. Consider #11 (bytecode) for long-term 50x improvement
 
 ================================================================================
@@ -235,6 +227,7 @@ OPTIMIZATIONS COMPLETED
 3. Count-based fingerprint (avoids frozenset creation)
 4. Statement parsing caching (10% improvement)
 5. GET graphics numpy/memoryview optimization
+6. Simple expression fast-path (skips regex for common patterns)
 
 These optimizations are low-risk, well-tested, and provide meaningful speedup
 for real BASIC programs like WETSPOT.BAS.

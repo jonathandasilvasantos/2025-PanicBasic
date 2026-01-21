@@ -202,6 +202,26 @@ _func_or_array_re = re.compile(
 # Note: No trailing \b because $ and % are not word characters
 _identifier_re = re.compile(r'\b([a-zA-Z_][a-zA-Z0-9_.]*[\$%#!&]?)')  # Match identifiers with optional type suffix (QBasic allows dots in names)
 
+# Fast-path patterns for simple expressions (skip heavy regex processing)
+# Single identifier (variable/constant): X, COUNT%, MY.VAR$
+_simple_ident_re = re.compile(r'^([a-zA-Z_][a-zA-Z0-9_.]*[\$%#!&]?)$')
+# Numeric literal: 42, -3.14, 0
+_simple_num_re = re.compile(r'^-?\d+\.?\d*$')
+# Simple binary expression WITHOUT spaces around operator: X+1, COUNT>0, A*B
+# (Expressions with spaces like "X + 1" fall through to regular path for consistent spacing)
+# Operators: + - * / > < >= <= = <>
+_simple_binary_nospace_re = re.compile(
+    r'^([a-zA-Z_][a-zA-Z0-9_.]*[\$%#!&]?|-?\d+\.?\d*)'  # Left operand (no trailing space)
+    r'([+\-*/]|>=?|<=?|<>|=)'  # Operator (no surrounding spaces)
+    r'([a-zA-Z_][a-zA-Z0-9_.]*[\$%#!&]?|-?\d+\.?\d*)$'  # Right operand (no leading space)
+)
+# Keywords that need special handling (should not use simple identifier fast-path)
+_special_keywords = frozenset({
+    'INKEY$', 'TIMER', 'DATE$', 'TIME$', 'RND', 'CSRLIN', 'COMMAND$',
+    'FREEFILE', 'ERL', 'ERR', 'ERDEV$', 'ERDEV', 'IOCTL$', 'MKSMBF$', 'MKDMBF$',
+    'AND', 'OR', 'NOT', 'MOD', 'XOR', 'EQV', 'IMP'  # Also exclude logical operators
+})
+
 
 # --- Command Parsing Patterns (mostly unchanged but reviewed) ---
 # Labels: numeric (100 PRINT), numeric with colon (1:), or identifier with colon (Start:)
@@ -786,6 +806,39 @@ def convert_basic_expr(expr: str, known_identifiers: Optional[set] = None) -> st
     original_expr_for_cache = expr
     if original_expr_for_cache in _expr_cache:
         return _expr_cache[original_expr_for_cache]
+
+    # Fast-path for simple expressions (skip heavy regex processing)
+    # Only applies if: no strings, no parens, no special keywords, no backslash
+    if '"' not in expr and "'" not in expr and '(' not in expr and '\\' not in expr:
+        # Check for single identifier (but not special keywords)
+        m = _simple_ident_re.match(expr)
+        if m and expr.upper() not in _special_keywords:
+            result = _basic_to_python_identifier(m.group(1))
+            _expr_cache[original_expr_for_cache] = result
+            return result
+
+        # Check for simple numeric literal
+        if _simple_num_re.match(expr):
+            _expr_cache[original_expr_for_cache] = expr
+            return expr
+
+        # Check for simple binary expression without spaces (X+1, COUNT>0)
+        m = _simple_binary_nospace_re.match(expr)
+        if m:
+            left, op, right = m.group(1), m.group(2), m.group(3)
+            # Convert operands
+            if left[0].isalpha() or left[0] == '_':
+                left = _basic_to_python_identifier(left)
+            if right[0].isalpha() or right[0] == '_':
+                right = _basic_to_python_identifier(right)
+            # Convert operators (add standard single space around them)
+            if op == '=':
+                op = '=='
+            elif op == '<>':
+                op = '!='
+            result = f"{left} {op} {right}"
+            _expr_cache[original_expr_for_cache] = result
+            return result
 
     # Protect string literals from modification
     expr, strings = _protect_strings(expr)
