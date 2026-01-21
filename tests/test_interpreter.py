@@ -2162,6 +2162,38 @@ class TestCOMStatements(unittest.TestCase):
         self.assertEqual(self.interp.variables.get("RESULT"), 4)
 
 
+class TestINTERRUPTStatements(unittest.TestCase):
+    """Test INTERRUPT and INTERRUPTX statements (emulated no-ops)."""
+
+    def setUp(self):
+        """Create interpreter instance for testing."""
+        _expr_cache.clear()
+        _compiled_expr_cache.clear()
+        _identifier_cache.clear()
+        self.font = pygame.font.Font(None, 16)
+        self.interp = BasicInterpreter(self.font, 800, 600)
+
+    def test_call_interrupt_accepted(self):
+        """Test CALL INTERRUPT is accepted without error."""
+        self.interp.reset([
+            'CALL INTERRUPT(16, inregs, outregs)',
+            'result = 1'
+        ])
+        while self.interp.running and self.interp.pc < len(self.interp.program_lines):
+            self.interp.step()
+        self.assertEqual(self.interp.variables.get("RESULT"), 1)
+
+    def test_call_interruptx_accepted(self):
+        """Test CALL INTERRUPTX is accepted without error."""
+        self.interp.reset([
+            'CALL INTERRUPTX(33, inregs, outregs)',
+            'result = 2'
+        ])
+        while self.interp.running and self.interp.pc < len(self.interp.program_lines):
+            self.interp.step()
+        self.assertEqual(self.interp.variables.get("RESULT"), 2)
+
+
 class TestPMAPFunction(unittest.TestCase):
     """Test PMAP function for coordinate mapping."""
 

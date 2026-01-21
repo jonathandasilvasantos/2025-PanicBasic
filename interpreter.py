@@ -6276,6 +6276,15 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
         """Handle CALL subname[(args)] - call a subroutine."""
         sub_name = match.group(1).upper()
         args_str = match.group(2) or ""
+
+        # Special handling for INTERRUPT and INTERRUPTX (DOS interrupt calls)
+        # These are emulated as no-ops since we can't call real DOS/BIOS interrupts
+        if sub_name == "INTERRUPT" or sub_name == "INTERRUPTX":
+            # Accept the statement but do nothing (DOS interrupts not available)
+            # Syntax: CALL INTERRUPT(intnum, inregs, outregs)
+            # Syntax: CALL INTERRUPTX(intnum, inregs, outregs)
+            return False
+
         return self._handle_call_sub(sub_name, args_str, pc)
 
     def _handle_call_sub(self, sub_name: str, args_str: str, pc: int) -> bool:
