@@ -201,5 +201,57 @@ class TestPerformanceImprovement:
         assert interp._var_py_names.get('V&') == 'V_LNG'
 
 
+class TestSpriteCaching:
+    """Test the sprite render caching optimization."""
+
+    def test_palette_version_increments(self):
+        """Test that _palette_version increments when palette changes."""
+        interp = setup()
+        interp.reset([
+            'SCREEN 13',
+            'PALETTE 0, 0'  # Set color 0 to black
+        ])
+        initial_version = interp._palette_version
+
+        while interp.running and interp.pc < len(interp.program_lines):
+            interp.step()
+
+        # Palette was changed, version should have incremented
+        assert interp._palette_version == initial_version + 1
+
+    def test_palette_reset_increments_version(self):
+        """Test that PALETTE (reset) increments version."""
+        interp = setup()
+        interp.reset([
+            'SCREEN 13',
+            'PALETTE'  # Reset palette
+        ])
+        initial_version = interp._palette_version
+
+        while interp.running and interp.pc < len(interp.program_lines):
+            interp.step()
+
+        # Palette was reset, version should have incremented
+        assert interp._palette_version == initial_version + 1
+
+    def test_sprite_render_cache_cleared_on_reset(self):
+        """Test that sprite render cache is cleared on reset."""
+        interp = setup()
+        # Manually add a cache entry
+        interp._sprite_render_cache['TEST'] = (0, None)
+        assert len(interp._sprite_render_cache) > 0
+
+        # Reset should clear the cache
+        interp.reset(['X = 1'])
+        assert len(interp._sprite_render_cache) == 0
+
+    def test_palette_version_reset_on_program_reset(self):
+        """Test that palette version resets with program reset."""
+        interp = setup()
+        interp._palette_version = 5  # Set non-zero version
+        interp.reset(['X = 1'])
+        assert interp._palette_version == 0
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])

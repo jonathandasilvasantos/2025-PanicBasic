@@ -913,6 +913,10 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
         self._reverse_colors: Dict[Tuple[int, int, int], int] = {
             rgb: num for num, rgb in self.colors.items()
         }
+        # Palette version tracking for sprite render cache invalidation
+        self._palette_version: int = 0
+        # Cache for rendered sprites: sprite_key -> (palette_version, surface)
+        self._sprite_render_cache: Dict[str, Tuple[int, Any]] = {}
         self.current_fg_color: int = DEFAULT_FG_COLOR
         self.current_bg_color: int = DEFAULT_BG_COLOR
         self.lpr: Tuple[int, int] = (0, 0) # Last Point Referenced
@@ -2669,6 +2673,9 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
         self.delay_until = 0
         self.current_fg_color = 7 # Default QBasic white
         self.current_bg_color = 0 # Default QBasic black
+        # Reset palette version and sprite render cache
+        self._palette_version = 0
+        self._sprite_render_cache.clear()
         self.lpr = (self.screen_width // 2, self.screen_height // 2)
         self.last_key = ""
         self.last_rnd_value = None # Reset last RND value
@@ -5049,6 +5056,8 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
                     green = ((color_val >> 8) & 0x3F) * 4
                     red = ((color_val >> 16) & 0x3F) * 4
                     self.colors[attr] = (red, green, blue)
+                # Increment palette version to invalidate sprite render cache
+                self._palette_version += 1
             elif using_array is not None:
                 # PALETTE USING array - set multiple colors from array
                 # Not implemented yet, just ignore
@@ -5059,6 +5068,8 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
                 # For Screen 13, also restore VGA 256-color palette
                 if self._screen_mode == 13:
                     self.colors.update(VGA_256_PALETTE)
+                # Increment palette version to invalidate sprite render cache
+                self._palette_version += 1
 
             # Update reverse lookup for POINT function
             self._reverse_colors = {rgb: num for num, rgb in self.colors.items()}

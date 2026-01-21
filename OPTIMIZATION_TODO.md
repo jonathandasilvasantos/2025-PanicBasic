@@ -21,48 +21,29 @@ Files changed:
 - tests/test_eval_optimization.py: New tests for optimization
 
 ================================================================================
-BOTTLENECK #3: Graphics PUT with Palette Indices
+COMPLETED: BOTTLENECK #3 - Sprite Render Caching
 ================================================================================
-Location: commands/graphics.py:447-459
-Impact: Pixel-by-pixel surface rebuild on EVERY PUT call
+Status: DONE - Caching implemented (38 sprites cached in WETSPOT)
 
-PROBLEM ANALYSIS:
-- When sprite has palette indices, PUT rebuilds surface pixel-by-pixel
-- For 16x16 sprite: 256 iterations + 256 set_at() calls per PUT
-- No caching of rendered surfaces when palette hasn't changed
-- XOR mode also creates temp surfaces and uses surfarray
+Fix implemented: Cache pre-rendered sprite surfaces with palette version
+- Added _palette_version counter (increments on PALETTE changes)
+- Added _sprite_render_cache: sprite_key -> (palette_version, surface)
+- Added _render_sprite_surface helper method
+- Only re-render sprite if palette changed since last render
+- Cleared on reset()
 
-SUGGESTED FIXES:
-[ ] 1. Cache pre-rendered sprite surfaces
-     - Add cache dict: sprite_key -> (palette_version, rendered_surface)
-     - Track palette version number (increment on PALETTE change)
-     - Only rebuild if palette changed since last render
+Files changed:
+- interpreter.py: Added _palette_version and _sprite_render_cache to __init__,
+  updated reset() to clear cache, increment version on PALETTE
+- commands/graphics.py: Added _render_sprite_surface helper, modified PUT
 
-     Example structure:
-     self._sprite_render_cache = {
-         sprite_key: {
-             'palette_version': int,
-             'surface': pygame.Surface
-         }
-     }
+Note: Benefits vary by game. WETSPOT changes palette 515 times during startup,
+causing many cache misses. Games with stable palettes will see larger gains.
 
-[ ] 2. Use numpy for bulk pixel operations
-     - HAS_NUMPY is checked but not used for graphics
-     - Convert indices array to RGB using numpy vectorization:
-       rgb_array = palette_lut[indices_array]
-       pygame.surfarray.blit_array(surface, rgb_array)
-     - Could be 10-100x faster than per-pixel set_at()
-
-[ ] 3. Pre-compute palette lookup tables
-     - Create numpy array: palette_lut[256] = RGB values
-     - Allows vectorized index->RGB conversion
-
-[ ] 4. Optimize XOR mode
-     - Current: subsurface copy -> surfarray -> XOR -> blit
-     - Consider: pygame special blend flags if possible
-     - Or: Use numpy for in-place XOR without copy
-
-ESTIMATED IMPROVEMENT: 10-50x faster for sprite-heavy games
+Remaining sprite optimizations (lower priority):
+[ ] Use numpy for bulk pixel operations in _render_sprite_surface
+[ ] Pre-compute palette lookup tables
+[ ] Optimize XOR mode
 
 ================================================================================
 BOTTLENECK #4: Statement Parsing Overhead

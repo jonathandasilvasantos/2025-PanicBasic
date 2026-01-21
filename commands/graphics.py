@@ -36,6 +36,38 @@ class GraphicsCommandsMixin:
     - variables: Dictionary of BASIC variables
     """
 
+    def _render_sprite_surface(self: 'BasicInterpreter', sprite_indices: bytes,
+                                width: int, height: int) -> pygame.Surface:
+        """Render a sprite from palette indices to a pygame Surface.
+
+        This method creates a surface from palette index data, using the current
+        color palette. The result should be cached to avoid repeated rendering.
+
+        Args:
+            sprite_indices: Bytearray of palette indices (one per pixel).
+            width: Width of the sprite in pixels.
+            height: Height of the sprite in pixels.
+
+        Returns:
+            A pygame.Surface with the sprite rendered using current palette.
+        """
+        sprite_surface = pygame.Surface((width, height)).convert()
+        sprite_surface.fill((0, 0, 0))  # Fill with transparent/black
+
+        for py in range(height):
+            for px in range(width):
+                idx = py * width + px
+                if idx < len(sprite_indices):
+                    palette_idx = sprite_indices[idx]
+                    # Use current colors dict, fall back to VGA_256_PALETTE
+                    color = self.colors.get(
+                        palette_idx,
+                        VGA_256_PALETTE.get(palette_idx, (palette_idx, palette_idx, palette_idx))
+                    )
+                    sprite_surface.set_at((px, py), color)
+
+        return sprite_surface
+
     def _scanline_fill(self: 'BasicInterpreter', x: int, y: int,
                        fill_color: Tuple, border_color: Tuple,
                        target_color: Tuple) -> None:
@@ -445,18 +477,26 @@ class GraphicsCommandsMixin:
             # This allows sprites captured at one palette state to display correctly
             # when the palette has been changed (e.g., after PALETTE reset)
             if sprite_indices is not None and self.surface:
-                # Create a fresh surface using current palette colors
-                sprite_surface = pygame.Surface((width, height)).convert()
-                sprite_surface.fill((0, 0, 0))  # Fill with transparent/black
-
-                for py in range(height):
-                    for px in range(width):
-                        idx = py * width + px
-                        if idx < len(sprite_indices):
-                            palette_idx = sprite_indices[idx]
-                            # Use current colors dict, fall back to VGA_256_PALETTE
-                            color = self.colors.get(palette_idx, VGA_256_PALETTE.get(palette_idx, (palette_idx, palette_idx, palette_idx)))
-                            sprite_surface.set_at((px, py), color)
+                # Check sprite render cache first
+                cache_key = sprite_key
+                cached = self._sprite_render_cache.get(cache_key)
+                if cached is not None:
+                    cached_version, cached_surface = cached
+                    if cached_version == self._palette_version:
+                        # Cache hit - use cached surface
+                        sprite_surface = cached_surface
+                    else:
+                        # Palette changed - need to re-render
+                        sprite_surface = self._render_sprite_surface(
+                            sprite_indices, width, height)
+                        self._sprite_render_cache[cache_key] = (
+                            self._palette_version, sprite_surface)
+                else:
+                    # Cache miss - render and cache
+                    sprite_surface = self._render_sprite_surface(
+                        sprite_indices, width, height)
+                    self._sprite_render_cache[cache_key] = (
+                        self._palette_version, sprite_surface)
             else:
                 sprite_surface = sprite_data['surface']
 
