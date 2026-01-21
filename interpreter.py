@@ -544,6 +544,8 @@ _basic_function_names = {
     'MKI', 'MKL', 'MKS', 'MKD', 'CVI', 'CVL', 'CVS', 'CVD',
     # MS Binary Format conversion (legacy format)
     'CVSMBF', 'CVDMBF', 'MKSMBFSTR', 'MKDMBFSTR',
+    # Coordinate mapping function
+    'PMAP',
     # Memory address functions (emulated)
     'VARPTR', 'VARSEG', 'SADD',
     # Music function (as callable)
@@ -1125,6 +1127,8 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
             "CVDMBF": self._basic_cvdmbf,  # Convert MBF double to IEEE double
             "MKSMBFSTR": self._basic_mksmbf,  # Convert IEEE single to MBF (MKSMBF$ -> MKSMBFSTR)
             "MKDMBFSTR": self._basic_mkdmbf,  # Convert IEEE double to MBF (MKDMBF$ -> MKDMBFSTR)
+            # Coordinate mapping function
+            "PMAP": self._basic_pmap,  # Map between physical and logical coordinates
             # Memory address functions (emulated)
             "VARPTR": self._basic_varptr,  # Get variable address
             "VARSEG": self._basic_varseg,  # Get variable segment
@@ -2162,6 +2166,62 @@ class BasicInterpreter(AudioCommandsMixin, GraphicsCommandsMixin, ControlFlowMix
         result.append(mbf_exp)  # Byte 7: exponent
 
         return bytes(result).decode('latin-1')
+
+    def _basic_pmap(self, coordinate: float, function: int) -> float:
+        """PMAP(coordinate, function) - Map between physical and logical coordinates.
+
+        Function values:
+        0: Maps logical x-coordinate to physical x-coordinate
+        1: Maps logical y-coordinate to physical y-coordinate
+        2: Maps physical x-coordinate to logical x-coordinate
+        3: Maps physical y-coordinate to logical y-coordinate
+        """
+        function = int(function)
+
+        # Get viewport bounds
+        vx1 = self.view_x1
+        vy1 = self.view_y1
+        vx2 = self.view_x2 if self.view_x2 is not None else self.screen_width - 1
+        vy2 = self.view_y2 if self.view_y2 is not None else self.screen_height - 1
+
+        # If no WINDOW set, logical = physical
+        if self.window_x1 is None:
+            return float(coordinate)
+
+        # Viewport and window dimensions
+        vw = vx2 - vx1
+        vh = vy2 - vy1
+        ww = self.window_x2 - self.window_x1
+        wh = self.window_y2 - self.window_y1
+
+        if ww == 0 or wh == 0:
+            return float(coordinate)
+
+        if function == 0:
+            # Logical X to physical X
+            px = vx1 + (coordinate - self.window_x1) * vw / ww
+            return px
+        elif function == 1:
+            # Logical Y to physical Y
+            if self.window_screen_mode:
+                py = vy1 + (coordinate - self.window_y1) * vh / wh
+            else:
+                py = vy2 - (coordinate - self.window_y1) * vh / wh
+            return py
+        elif function == 2:
+            # Physical X to logical X
+            lx = self.window_x1 + (coordinate - vx1) * ww / vw
+            return lx
+        elif function == 3:
+            # Physical Y to logical Y
+            if self.window_screen_mode:
+                ly = self.window_y1 + (coordinate - vy1) * wh / vh
+            else:
+                ly = self.window_y1 + (vy2 - coordinate) * wh / vh
+            return ly
+        else:
+            # Invalid function, return coordinate unchanged
+            return float(coordinate)
 
     def _basic_varptr(self, var_name: Any) -> int:
         """VARPTR(variable) - Get variable address (emulated).

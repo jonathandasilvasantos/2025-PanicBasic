@@ -2037,6 +2037,67 @@ class TestMBFConversionFunctions(unittest.TestCase):
         self.assertAlmostEqual(result, original, places=10)
 
 
+class TestPMAPFunction(unittest.TestCase):
+    """Test PMAP function for coordinate mapping."""
+
+    def setUp(self):
+        """Create interpreter instance for testing."""
+        _expr_cache.clear()
+        _compiled_expr_cache.clear()
+        _identifier_cache.clear()
+        self.font = pygame.font.Font(None, 16)
+        self.interp = BasicInterpreter(self.font, 800, 600)
+
+    def test_pmap_no_window(self):
+        """Test PMAP without WINDOW returns same coordinate."""
+        self.interp.reset([
+            'result0 = PMAP(100, 0)',
+            'result1 = PMAP(100, 1)',
+            'result2 = PMAP(100, 2)',
+            'result3 = PMAP(100, 3)'
+        ])
+        while self.interp.running and self.interp.pc < len(self.interp.program_lines):
+            self.interp.step()
+        # Without WINDOW, logical = physical
+        self.assertEqual(self.interp.variables.get("RESULT0"), 100.0)
+        self.assertEqual(self.interp.variables.get("RESULT1"), 100.0)
+        self.assertEqual(self.interp.variables.get("RESULT2"), 100.0)
+        self.assertEqual(self.interp.variables.get("RESULT3"), 100.0)
+
+    def test_pmap_with_window(self):
+        """Test PMAP with WINDOW coordinate mapping."""
+        self.interp.reset([
+            'SCREEN 13',
+            'WINDOW (0, 0)-(100, 100)',
+            'physX = PMAP(50, 0)',
+            'physY = PMAP(50, 1)'
+        ])
+        while self.interp.running and self.interp.pc < len(self.interp.program_lines):
+            self.interp.step()
+        # Logical 50 should map to middle of screen (approximately)
+        physX = self.interp.variables.get("PHYSX")
+        physY = self.interp.variables.get("PHYSY")
+        # In SCREEN 13 (320x200), logical 50 out of 100 should be around middle
+        self.assertIsNotNone(physX)
+        self.assertIsNotNone(physY)
+
+    def test_pmap_roundtrip(self):
+        """Test PMAP roundtrip conversion."""
+        self.interp.reset([
+            'SCREEN 13',
+            'WINDOW (0, 0)-(100, 100)',
+            'logX = 25',
+            'physX = PMAP(logX, 0)',
+            'backX = PMAP(physX, 2)'
+        ])
+        while self.interp.running and self.interp.pc < len(self.interp.program_lines):
+            self.interp.step()
+        logX = self.interp.variables.get("LOGX")
+        backX = self.interp.variables.get("BACKX")
+        # Should round-trip back to original
+        self.assertAlmostEqual(backX, logX, places=2)
+
+
 class TestClearStatement(unittest.TestCase):
     """Test CLEAR statement."""
 
