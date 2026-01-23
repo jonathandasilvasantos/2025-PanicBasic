@@ -24,6 +24,20 @@ from interpreter import BasicInterpreter, FONT_SIZE
 @pytest.fixture
 def interpreter():
     """Create a BasicInterpreter instance for testing."""
+    # Ensure pygame is fully initialized (may have been quit by another test)
+    if not pygame.get_init():
+        pygame.init()
+    if not pygame.display.get_init():
+        pygame.display.init()
+    # Always ensure a display mode is set
+    try:
+        pygame.display.get_surface()
+    except:
+        pass
+    if pygame.display.get_surface() is None:
+        pygame.display.set_mode((800, 600))
+    if not pygame.font.get_init():
+        pygame.font.init()
     font = pygame.font.Font(None, FONT_SIZE)
     interp = BasicInterpreter(font, 800, 600)
     yield interp

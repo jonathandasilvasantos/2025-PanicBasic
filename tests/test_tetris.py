@@ -1410,7 +1410,7 @@ def test_actual_tetris_file():
     """Test loading and running the actual tetris.bas file."""
     print("Testing actual tetris.bas file...")
     import os
-    tetris_path = os.path.join(os.path.dirname(__file__), 'examples', 'tetris.bas')
+    tetris_path = os.path.join(os.path.dirname(__file__), '..', 'examples', 'tetris.bas')
 
     with open(tetris_path, 'r') as f:
         lines = f.read().splitlines()
